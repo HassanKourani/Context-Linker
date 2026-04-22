@@ -63,6 +63,26 @@ program
     }
   });
 
+// ---------- info ----------
+program
+  .command("info")
+  .description("Show current project's ctx-link config")
+  .action(() => {
+    const cfg = loadProjectConfig();
+    if (!cfg) {
+      console.log("No .ctx-link.json in this directory. This project has no linking.");
+      return;
+    }
+    console.log(`Project:  ${cfg.project_name}`);
+    console.log(`Mode:     ${cfg.mode}`);
+    console.log(`Bundles:  ${cfg.bundles.length === 0 ? "(none)" : ""}`);
+    for (const id of cfg.bundles) {
+      console.log(`  - ${id}`);
+    }
+    console.log(`Auto-push on: ${cfg.auto_push_on.join(", ") || "(none)"}`);
+    console.log(`Debounce: ${cfg.push_debounce_seconds}s`);
+  });
+
 // ---------- create ----------
 program
   .command("create <name>")
