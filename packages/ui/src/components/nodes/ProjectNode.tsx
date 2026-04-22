@@ -40,8 +40,8 @@ export function ProjectNode({ data }: NodeProps) {
             type="source"
             position={Position.Right}
             id={s.id}
-            isConnectable={false}
-            className="!w-2 !h-2 !bg-[#585b70] !border-border"
+            isConnectable={true}
+            className="!w-2.5 !h-2.5 !bg-[#585b70] !border-border hover:!bg-[#a6e3a1] !cursor-grab !transition-colors"
           />
         </div>
       ))}

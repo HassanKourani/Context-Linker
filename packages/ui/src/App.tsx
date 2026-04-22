@@ -43,7 +43,7 @@ export function App() {
       const sourceNode = nodes.find((n) => n.id === connection.source);
       const targetNode = nodes.find((n) => n.id === connection.target);
       if (!sourceNode || !targetNode) return;
-      if (connection.sourceHandle !== "new-connection") return;
+      if (sourceNode.type !== "project" || targetNode.type !== "bundle") return;
 
       const projectName = (sourceNode.data as any).projectName;
       const bundleId = (targetNode.data as any).bundleId;
@@ -58,9 +58,9 @@ export function App() {
 
   const isValidConnection = useCallback(
     (connection: Edge | Connection) => {
-      if (connection.sourceHandle !== "new-connection") return false;
+      const source = nodes.find((n) => n.id === connection.source);
       const target = nodes.find((n) => n.id === connection.target);
-      return target?.type === "bundle";
+      return source?.type === "project" && target?.type === "bundle";
     },
     [nodes]
   );
