@@ -3,17 +3,18 @@ import {
   listMyTeams,
   listBundleSessions,
   listAllLocalBundleDetails,
+  listTeamBundles,
+  bundleStatus,
 } from "@ctx-link/core";
-import { listTeamBundles } from "@ctx-link/core";
-import { bundleStatus } from "@ctx-link/core";
 
 const server = Bun.serve({
+  hostname: "127.0.0.1",
   port: 5174,
   async fetch(req) {
     const url = new URL(req.url);
 
     const corsHeaders = {
-      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Origin": "http://localhost:5173",
       "Access-Control-Allow-Methods": "GET, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
     };

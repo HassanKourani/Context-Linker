@@ -161,7 +161,7 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
         source: `project-${groupId}-${projectName}`,
         sourceHandle: s.sessionId,
         target: `bundle-${s.bundleId}`,
-        type: "smoothstep",
+        type: "default",
         animated: true,
         style: { stroke: "#585b70", strokeWidth: 2 },
       });
