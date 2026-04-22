@@ -143,3 +143,28 @@ export function listMyTeams(): TeamInfo[] {
   const store = loadTeamStore();
   return Object.values(store);
 }
+
+export interface TeamBundleInfo {
+  bundle_id: string;
+  name: string;
+  created_at: string;
+}
+
+export async function listTeamBundles(teamId: string): Promise<TeamBundleInfo[]> {
+  await assertTeamMember(teamId);
+  const sb = getSupabase();
+
+  const { data, error } = await sb
+    .from("bundles")
+    .select("id, name, created_at")
+    .eq("team_id", teamId)
+    .order("created_at", { ascending: false });
+
+  if (error) throw new Error(`listTeamBundles failed: ${error.message}`);
+
+  return (data ?? []).map((b) => ({
+    bundle_id: b.id,
+    name: b.name,
+    created_at: b.created_at,
+  }));
+}

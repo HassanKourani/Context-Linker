@@ -30,6 +30,7 @@ import {
   createTeam,
   joinTeam,
   listMyTeams,
+  listTeamBundles,
   type RewindStrategy,
 } from "@ctx-link/core";
 
@@ -77,6 +78,20 @@ program
     }
     for (const t of teams) {
       console.log(`${t.team_id}  ${t.name}  (joined ${t.joined_at})`);
+    }
+  });
+
+program
+  .command("team-bundles <team_id>")
+  .description("List all bundles in a team")
+  .action(async (teamId: string) => {
+    const bundles = await listTeamBundles(teamId);
+    if (bundles.length === 0) {
+      console.log("No bundles in this team.");
+      return;
+    }
+    for (const b of bundles) {
+      console.log(`${b.bundle_id}  ${b.name}  (created ${b.created_at})`);
     }
   });
 
