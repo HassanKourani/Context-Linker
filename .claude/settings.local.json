@@ -14,7 +14,9 @@
       "Bash(xargs kill:*)",
       "Bash(bunx vite:*)",
       "Bash(npx shadcn@latest:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(xargs cat:*)",
+      "Bash(grep -r \"checked\\\\|defaultChecked\\\\|onCheckedChange\\\\|onChange\" node_modules/@base-ui/react/dist/checkbox*)"
     ]
   }
 }

@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { z } from "zod";
@@ -150,6 +150,57 @@ export function loadSessionLog(): SessionLogEntry[] {
   const path = sessionLogPath();
   if (!existsSync(path)) return [];
   return JSON.parse(readFileSync(path, "utf8"));
+}
+
+// ---------- Active Sessions ----------
+
+export interface ActiveSession {
+  session_id: string;
+  project_name: string;
+  project_path: string;
+  bundles: Array<{ bundle_id: string; mode: "local" | "cloud" }>;
+  started_at: string;
+  branch: string | null;
+}
+
+function activeSessionsDir(): string {
+  return join(globalConfigDir(), "active-sessions");
+}
+
+function activeSessionPath(sessionId: string): string {
+  return join(activeSessionsDir(), `${sessionId}.json`);
+}
+
+export function saveActiveSession(session: ActiveSession): void {
+  const dir = activeSessionsDir();
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+  writeFileSync(activeSessionPath(session.session_id), JSON.stringify(session, null, 2));
+}
+
+export function loadActiveSession(sessionId: string): ActiveSession | null {
+  const path = activeSessionPath(sessionId);
+  if (!existsSync(path)) return null;
+  return JSON.parse(readFileSync(path, "utf8"));
+}
+
+/** Read the active session_id from .cxtl-active-session marker file in CWD */
+export function getActiveSessionId(cwd: string = process.cwd()): string | null {
+  const marker = join(cwd, ".cxtl-active-session");
+  if (!existsSync(marker)) return null;
+  return readFileSync(marker, "utf8").trim();
+}
+
+/** Write the active session_id marker file in the project directory */
+export function setActiveSessionId(sessionId: string, cwd: string = process.cwd()): void {
+  writeFileSync(join(cwd, ".cxtl-active-session"), sessionId);
+}
+
+/** List all active sessions across all projects */
+export function listActiveSessions(): ActiveSession[] {
+  const dir = activeSessionsDir();
+  if (!existsSync(dir)) return [];
+  const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
+  return files.map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")));
 }
 
 export function storeBundleToken(

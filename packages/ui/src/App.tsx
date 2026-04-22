@@ -18,6 +18,9 @@ import { TopBar } from "./components/TopBar";
 import { CreateBundleDialog } from "./components/CreateBundleDialog";
 import { DeleteBundleDialog } from "./components/DeleteBundleDialog";
 import { EntryPanel } from "./components/EntryPanel";
+import { PushEntryDialog } from "./components/PushEntryForm";
+import { RewindDialog } from "./components/RewindDialog";
+import { TeamManagementDialog } from "./components/TeamManagementDialog";
 
 const nodeTypes: NodeTypes = {
   project: ProjectNode,
@@ -99,6 +102,9 @@ export function App() {
       <CreateBundleDialog />
       <DeleteBundleDialog />
       <EntryPanel />
+      <PushEntryDialog />
+      <RewindDialog />
+      <TeamManagementDialog />
     </div>
   );
 }

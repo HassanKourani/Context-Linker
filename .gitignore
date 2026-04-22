@@ -13,8 +13,8 @@ build/
 *.pem
 
 # ctx-link local project state
-# (bundle IDs are UUIDs, not secrets, but project configs are machine-specific)
 .ctx-link.json
+.cxtl-active-session
 
 # Last-push timestamp (written by post-commit hook)
 .ctx-link-last-push

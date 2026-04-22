@@ -17,16 +17,19 @@ import {
   rewindProject,
   restoreRewound,
   listRewinds,
-  loadProjectConfig,
+  getActiveSessionId,
+  loadActiveSession,
+  saveActiveSession,
+  type ActiveSession,
   type RewindStrategy,
 } from "@ctx-link/core";
 import { z } from "zod";
 
-/** Read mode from .ctx-link.json in CWD. Falls back to "cloud". */
-function getProjectMode(): "local" | "cloud" {
-  const cfg = loadProjectConfig();
-  if (cfg?.mode === "local" || cfg?.mode === "cloud") return cfg.mode;
-  return "cloud";
+/** Get the active session for the current CWD. Returns null if no session. */
+function getSession(): ActiveSession | null {
+  const sessionId = getActiveSessionId();
+  if (!sessionId) return null;
+  return loadActiveSession(sessionId);
 }
 
 const server = new Server(
@@ -226,6 +229,39 @@ const tools = [
       required: ["bundle_id"],
     },
   },
+  {
+    name: "session_connect",
+    description:
+      "Connect the current Claude Code session to a bundle. A session can connect to multiple bundles. " +
+      "Push/pull will then operate on all connected bundles.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bundle_id: { type: "string", description: "The bundle to connect to" },
+        mode: { type: "string", enum: ["local", "cloud"], description: "Storage mode for this bundle" },
+      },
+      required: ["bundle_id"],
+    },
+  },
+  {
+    name: "session_disconnect",
+    description: "Disconnect the current session from a bundle. The bundle still exists.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bundle_id: { type: "string" },
+      },
+      required: ["bundle_id"],
+    },
+  },
+  {
+    name: "session_info",
+    description: "Show the current session: project name, branch, connected bundles.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
 ];
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
@@ -314,15 +350,13 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     switch (name) {
       case "bundle_create": {
         const a = BundleCreateArgs.parse(args);
-        const mode = getProjectMode();
-        const r = await createBundle(a.name, mode);
+        const r = await createBundle(a.name, "local");
         return ok(r);
       }
 
       case "bundle_join": {
         const a = BundleJoinArgs.parse(args);
-        const mode = getProjectMode();
-        const r = await joinBundle(a.bundle_id, a.join_token, a.project_name, mode);
+        const r = await joinBundle(a.bundle_id, a.join_token, a.project_name, "local");
         return ok(r);
       }
 
@@ -332,40 +366,94 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       case "bundle_status": {
         const a = BundleStatusArgs.parse(args);
-        const mode = getProjectMode();
-        return ok(await bundleStatus(a.bundle_id, mode));
+        const session = getSession();
+        const b = session?.bundles.find((x) => x.bundle_id === a.bundle_id);
+        return ok(await bundleStatus(a.bundle_id, b?.mode ?? "local"));
       }
 
       case "context_push": {
         const a = ContextPushArgs.parse(args);
-        const mode = getProjectMode();
-        const r = await pushEntry({
-          bundle_id: a.bundle_id,
-          project_name: a.project_name,
-          event_type: a.event_type,
-          trigger_ref: a.trigger_ref ?? null,
-          raw_context: a.raw_context,
-          summary: a.summary,
-          files_touched: a.files_touched,
-          decisions: a.decisions,
-          store_raw: a.store_raw ?? false,
-          mode,
-        });
-        return ok(r);
+        const session = getSession();
+
+        // If bundle_id is provided, push to that specific bundle
+        if (a.bundle_id) {
+          const b = session?.bundles.find((x) => x.bundle_id === a.bundle_id);
+          const r = await pushEntry({
+            bundle_id: a.bundle_id,
+            project_name: a.project_name,
+            event_type: a.event_type,
+            trigger_ref: a.trigger_ref ?? null,
+            raw_context: a.raw_context,
+            summary: a.summary,
+            files_touched: a.files_touched,
+            decisions: a.decisions,
+            store_raw: a.store_raw ?? false,
+            mode: b?.mode ?? "local",
+          });
+          return ok(r);
+        }
+
+        // Otherwise push to ALL session bundles
+        if (!session || session.bundles.length === 0) {
+          return fail("No bundles connected to this session. Use session_connect first.");
+        }
+        const results = [];
+        for (const b of session.bundles) {
+          const r = await pushEntry({
+            bundle_id: b.bundle_id,
+            project_name: a.project_name,
+            event_type: a.event_type,
+            trigger_ref: a.trigger_ref ?? null,
+            raw_context: a.raw_context,
+            summary: a.summary,
+            files_touched: a.files_touched,
+            decisions: a.decisions,
+            store_raw: a.store_raw ?? false,
+            mode: b.mode,
+          });
+          results.push(r);
+        }
+        return ok({ pushed_to: results.length, results });
       }
 
       case "context_pull": {
         const a = ContextPullArgs.parse(args);
-        const mode = getProjectMode();
-        const rows = await pullEntries({
-          bundle_id: a.bundle_id,
-          since: a.since ?? null,
-          limit: a.limit,
-          exclude_project: a.exclude_project,
-          mode,
-        });
-        const rendered = renderEntriesForClaude(rows);
-        return ok({ count: rows.length, rendered, entries: rows });
+        const session = getSession();
+
+        // If bundle_id is provided, pull from that specific bundle
+        if (a.bundle_id) {
+          const b = session?.bundles.find((x) => x.bundle_id === a.bundle_id);
+          const rows = await pullEntries({
+            bundle_id: a.bundle_id,
+            since: a.since ?? null,
+            limit: a.limit,
+            exclude_project: a.exclude_project,
+            mode: b?.mode ?? "local",
+          });
+          const rendered = renderEntriesForClaude(rows);
+          return ok({ count: rows.length, rendered, entries: rows });
+        }
+
+        // Otherwise pull from ALL session bundles (aggregated)
+        if (!session || session.bundles.length === 0) {
+          return fail("No bundles connected to this session. Use session_connect first.");
+        }
+        const allRows = [];
+        for (const b of session.bundles) {
+          const rows = await pullEntries({
+            bundle_id: b.bundle_id,
+            since: a.since ?? null,
+            limit: a.limit,
+            exclude_project: a.exclude_project,
+            mode: b.mode,
+          });
+          allRows.push(...rows);
+        }
+        // Sort by created_at descending and limit
+        allRows.sort((x, y) => y.created_at.localeCompare(x.created_at));
+        const limited = allRows.slice(0, a.limit ?? 20);
+        const rendered = renderEntriesForClaude(limited);
+        return ok({ count: limited.length, rendered, entries: limited });
       }
 
       case "context_rewind": {
@@ -395,9 +483,37 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       case "bundle_delete": {
         const a = z.object({ bundle_id: z.string() }).parse(args);
-        const mode = getProjectMode();
-        await deleteBundle(a.bundle_id, mode);
+        const session = getSession();
+        const b = session?.bundles.find((x) => x.bundle_id === a.bundle_id);
+        await deleteBundle(a.bundle_id, b?.mode ?? "local");
         return ok({ deleted: true, bundle_id: a.bundle_id });
+      }
+
+      case "session_connect": {
+        const a = z.object({ bundle_id: z.string(), mode: z.enum(["local", "cloud"]).default("local") }).parse(args);
+        const session = getSession();
+        if (!session) return fail("No active session. Open Claude Code in a project first.");
+        if (session.bundles.some((b) => b.bundle_id === a.bundle_id)) {
+          return ok({ already_connected: true, bundle_id: a.bundle_id });
+        }
+        session.bundles.push({ bundle_id: a.bundle_id, mode: a.mode });
+        saveActiveSession(session);
+        return ok({ connected: true, bundle_id: a.bundle_id, total_bundles: session.bundles.length });
+      }
+
+      case "session_disconnect": {
+        const a = z.object({ bundle_id: z.string() }).parse(args);
+        const session = getSession();
+        if (!session) return fail("No active session.");
+        session.bundles = session.bundles.filter((b) => b.bundle_id !== a.bundle_id);
+        saveActiveSession(session);
+        return ok({ disconnected: true, bundle_id: a.bundle_id, total_bundles: session.bundles.length });
+      }
+
+      case "session_info": {
+        const session = getSession();
+        if (!session) return ok({ active: false });
+        return ok({ active: true, ...session });
       }
 
       case "rewind_history": {

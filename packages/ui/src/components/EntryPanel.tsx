@@ -5,6 +5,7 @@ import { useUIStore } from "@/stores/uiStore";
 import { useEntries } from "@/hooks/useEntries";
 import { useGraphData } from "@/hooks/useGraphData";
 import { EntryCard } from "./EntryCard";
+import { RewindHistoryTab } from "./RewindHistoryTab";
 
 export function EntryPanel() {
   const selectedBundleId = useUIStore((s) => s.selectedBundleId);
@@ -105,11 +106,7 @@ export function EntryPanel() {
               ))}
             </>
           )}
-          {panelTab === "rewinds" && (
-            <div className="p-4 text-center text-muted-foreground text-sm">
-              Rewind history coming soon.
-            </div>
-          )}
+          {panelTab === "rewinds" && <RewindHistoryTab />}
         </div>
       </SheetContent>
     </Sheet>

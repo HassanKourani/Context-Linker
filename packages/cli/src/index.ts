@@ -26,6 +26,11 @@ import {
   pullEntries,
   logSession,
   loadSessionLog,
+  saveActiveSession,
+  loadActiveSession,
+  getActiveSessionId,
+  setActiveSessionId,
+  listActiveSessions,
   renderEntriesForClaude,
   rewindProject,
   restoreRewound,
@@ -145,16 +150,18 @@ program
     "Shows: project name, mode, active bundle ID, auto-push settings."
   )
   .action(() => {
-    const cfg = loadProjectConfig();
-    if (!cfg) {
-      console.log("No .cxtl.json in this directory. Run 'cxtl create' or 'cxtl join' to set up.");
-      return;
+    const sessionId = getActiveSessionId();
+    const session = sessionId ? loadActiveSession(sessionId) : null;
+
+    console.log(`Project:  ${session?.project_name ?? detectProjectName()}`);
+    console.log(`Session:  ${sessionId ?? "(none — not in a Claude Code session)"}`);
+    console.log(`Branch:   ${session?.branch ?? "unknown"}`);
+    console.log(`Bundles:  ${!session || session.bundles.length === 0 ? "(none — run 'cxtl connect <bundle_id>')" : ""}`);
+    if (session) {
+      for (const b of session.bundles) {
+        console.log(`  - ${b.bundle_id} [${b.mode}]`);
+      }
     }
-    console.log(`Project:  ${cfg.project_name}`);
-    console.log(`Mode:     ${cfg.mode}`);
-    console.log(`Bundle:   ${cfg.bundle ?? "(none)"}`);
-    console.log(`Auto-push on: ${cfg.auto_push_on.join(", ") || "(none)"}`);
-    console.log(`Debounce: ${cfg.push_debounce_seconds}s`);
   });
 
 // ==================== SESSION TRACKING ====================
@@ -162,10 +169,11 @@ program
 program
   .command("session-log")
   .description(
-    "Record the current project as an active session. Called automatically by the SessionStart hook.\n" +
-    "You don't need to run this manually."
+    "Record the current project as an active session. Called by SessionStart hook.\n" +
+    "Captures Claude Code's session_id and creates an active session record."
   )
-  .action(async () => {
+  .option("--session-id <id>", "Claude Code session ID (from hook input)")
+  .action(async (opts) => {
     const cfg = loadProjectConfig();
     const globalCfg = loadGlobalConfig();
     const projectName = cfg?.project_name ?? detectProjectName();
@@ -174,33 +182,31 @@ program
       branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf8" }).trim();
     } catch {}
 
+    const sessionId = opts.sessionId ?? `local-${Date.now()}`;
+
+    // Log to session history
     logSession({
       project_name: projectName,
       project_path: process.cwd(),
       machine_id: globalCfg.machine_id,
       started_at: new Date().toISOString(),
       branch,
-      bundle: cfg?.bundle ?? null,
-      mode: cfg?.mode ?? "off",
+      bundle: null,
+      mode: cfg?.mode ?? "local",
     });
 
-    // Auto-push session_start entry if project has an active bundle
-    if (cfg?.bundle && cfg.mode !== "off") {
-      try {
-        const mode = (cfg.mode === "local" || cfg.mode === "cloud") ? cfg.mode : "cloud";
-        await pushEntry({
-          bundle_id: cfg.bundle,
-          project_name: projectName,
-          event_type: "manual",
-          trigger_ref: branch,
-          raw_context: `New Claude Code session started in ${projectName} on branch ${branch ?? "unknown"} at ${process.cwd()}`,
-          summary: `Session started: ${projectName} (${branch ?? "no branch"})`,
-          mode,
-        });
-      } catch {
-        // Non-fatal — don't block session start if push fails
-      }
-    }
+    // Create active session record
+    saveActiveSession({
+      session_id: sessionId,
+      project_name: projectName,
+      project_path: process.cwd(),
+      bundles: [],
+      started_at: new Date().toISOString(),
+      branch,
+    });
+
+    // Write marker file so MCP server and hooks can find the session
+    setActiveSessionId(sessionId);
   });
 
 program
@@ -225,6 +231,67 @@ program
       console.log(`${s.started_at}  ${s.project_name}  [${s.mode}]  ${s.branch ?? "no-branch"}${bundleInfo}`);
       console.log(`  ${s.project_path}`);
     }
+  });
+
+// ==================== CONNECT / DISCONNECT ====================
+
+program
+  .command("connect <bundle_id>")
+  .description(
+    "Connect the current Claude Code session to a bundle.\n" +
+    "A session can be connected to multiple bundles. Push/pull operates on all of them.\n\n" +
+    "Examples:\n" +
+    "  $ cxtl connect abc-123\n" +
+    "  $ cxtl connect abc-123 --mode cloud"
+  )
+  .option("--mode <mode>", "local | cloud", "local")
+  .action(async (bundleId: string, opts) => {
+    const sessionId = getActiveSessionId();
+    if (!sessionId) {
+      console.error("No active session. This command must be run inside a Claude Code session.");
+      process.exit(1);
+    }
+    const session = loadActiveSession(sessionId);
+    if (!session) {
+      console.error(`Session ${sessionId} not found.`);
+      process.exit(1);
+    }
+    const mode = (opts.mode === "local" || opts.mode === "cloud") ? opts.mode : "local";
+
+    // Don't add duplicates
+    if (session.bundles.some((b) => b.bundle_id === bundleId)) {
+      console.log(`Already connected to bundle ${bundleId}.`);
+      return;
+    }
+
+    session.bundles.push({ bundle_id: bundleId, mode });
+    saveActiveSession(session);
+    console.log(`Connected session ${sessionId.slice(0, 8)}... to bundle ${bundleId}`);
+    console.log(`Session now has ${session.bundles.length} bundle(s).`);
+  });
+
+program
+  .command("disconnect <bundle_id>")
+  .description(
+    "Disconnect the current session from a bundle.\n" +
+    "The bundle still exists — you just stop pushing/pulling to it."
+  )
+  .action((bundleId: string) => {
+    const sessionId = getActiveSessionId();
+    if (!sessionId) {
+      console.error("No active session.");
+      process.exit(1);
+    }
+    const session = loadActiveSession(sessionId);
+    if (!session) {
+      console.error(`Session ${sessionId} not found.`);
+      process.exit(1);
+    }
+
+    session.bundles = session.bundles.filter((b) => b.bundle_id !== bundleId);
+    saveActiveSession(session);
+    console.log(`Disconnected from bundle ${bundleId}.`);
+    console.log(`Session now has ${session.bundles.length} bundle(s).`);
   });
 
 // ==================== BUNDLES ====================
@@ -355,9 +422,12 @@ program
   .option("--message <text>", "summary text (also used as raw context when --diff is not set)")
   .option("--summary <text>", "explicit summary (use with --diff)")
   .action(async (opts) => {
-    const cfg = loadProjectConfig();
-    if (!cfg || !cfg.bundle) {
-      console.error("No bundle configured. Run 'cxtl create' or 'cxtl join' first.");
+    // Get bundles from active session
+    const sessionId = getActiveSessionId();
+    const session = sessionId ? loadActiveSession(sessionId) : null;
+
+    if (!session || session.bundles.length === 0) {
+      console.error("No bundles connected to this session. Run 'cxtl connect <bundle_id>' first.");
       process.exit(1);
     }
 
@@ -393,18 +463,20 @@ program
       summary = opts.summary ?? opts.message;
     }
 
-    const mode = (cfg.mode === "local" || cfg.mode === "cloud") ? cfg.mode : "cloud";
-    const r = await pushEntry({
-      bundle_id: cfg.bundle,
-      project_name: cfg.project_name,
-      event_type: opts.event,
-      trigger_ref: opts.ref ?? null,
-      raw_context: raw,
-      summary,
-      mode,
-    });
-    console.log(`[${cfg.bundle}] pushed entry ${r.entry_id}`);
-    console.log(`  ${r.summary}`);
+    // Push to ALL connected bundles
+    for (const b of session.bundles) {
+      const r = await pushEntry({
+        bundle_id: b.bundle_id,
+        project_name: session.project_name,
+        event_type: opts.event,
+        trigger_ref: opts.ref ?? null,
+        raw_context: raw,
+        summary,
+        mode: b.mode,
+      });
+      console.log(`[${b.bundle_id}] pushed entry ${r.entry_id}`);
+      console.log(`  ${r.summary}`);
+    }
   });
 
 program
@@ -422,24 +494,42 @@ program
   .option("--limit <n>", "max entries to return", "20")
   .option("--include-self", "include your own project's entries", false)
   .action(async (bundleId: string | undefined, opts) => {
-    const cfg = loadProjectConfig();
-    const bid = bundleId ?? cfg?.bundle;
+    const sessionId = getActiveSessionId();
+    const session = sessionId ? loadActiveSession(sessionId) : null;
 
-    if (!bid) {
-      console.error("No bundle specified and none configured. Run 'cxtl create' or 'cxtl join' first.");
+    // If a specific bundle_id is given, pull just from that
+    if (bundleId) {
+      const mode = session?.bundles.find((b) => b.bundle_id === bundleId)?.mode ?? "local";
+      const rows = await pullEntries({
+        bundle_id: bundleId,
+        since: opts.since,
+        limit: Number(opts.limit),
+        exclude_project: opts.includeSelf ? undefined : session?.project_name,
+        mode,
+      });
+      console.log(`=== ${bundleId} (${rows.length} entries) ===`);
+      console.log(renderEntriesForClaude(rows));
+      return;
+    }
+
+    // Otherwise pull from all session bundles
+    if (!session || session.bundles.length === 0) {
+      console.error("No bundles connected to this session. Run 'cxtl connect <bundle_id>' first.");
       process.exit(1);
     }
 
-    const mode = (cfg?.mode === "local" || cfg?.mode === "cloud") ? cfg.mode : "cloud";
-    const rows = await pullEntries({
-      bundle_id: bid,
-      since: opts.since,
-      limit: Number(opts.limit),
-      exclude_project: opts.includeSelf ? undefined : cfg?.project_name,
-      mode,
-    });
-    console.log(`=== ${bid} (${rows.length} entries) ===`);
-    console.log(renderEntriesForClaude(rows));
+    for (const b of session.bundles) {
+      const rows = await pullEntries({
+        bundle_id: b.bundle_id,
+        since: opts.since,
+        limit: Number(opts.limit),
+        exclude_project: opts.includeSelf ? undefined : session.project_name,
+        mode: b.mode,
+      });
+      console.log(`=== ${b.bundle_id} (${rows.length} entries) ===`);
+      console.log(renderEntriesForClaude(rows));
+      console.log("");
+    }
   });
 
 // ==================== REWIND / RESTORE ====================
