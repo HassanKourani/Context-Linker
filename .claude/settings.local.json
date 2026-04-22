@@ -13,7 +13,8 @@
       "Bash(lsof -ti:5173 -ti:5174)",
       "Bash(xargs kill:*)",
       "Bash(bunx vite:*)",
-      "Bash(npx shadcn@latest:*)"
+      "Bash(npx shadcn@latest:*)",
+      "Bash(git commit:*)"
     ]
   }
 }

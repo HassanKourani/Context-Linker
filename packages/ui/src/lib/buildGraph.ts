@@ -23,10 +23,11 @@ interface GroupInput {
   bundles: BundleGraphData[];
   machineId: string;
   isLocal: boolean;
+  extraProjects?: Map<string, { started_at: string; branch: string | null }>;
 }
 
 function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
-  const { groupId, groupName, color, bundles, machineId, isLocal } = input;
+  const { groupId, groupName, color, bundles, machineId, isLocal, extraProjects } = input;
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
@@ -63,6 +64,20 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
     }
   }
 
+  // Add extra projects from session log (not already in bundle sessions)
+  if (extraProjects) {
+    for (const [projectName, info] of extraProjects) {
+      if (!projectSessions.has(projectName)) {
+        projectSessions.set(projectName, [{
+          sessionId: `session-${groupId}-${projectName}`,
+          machineId: machineId,
+          lastActiveAt: info.started_at,
+          bundleId: "",
+        }]);
+      }
+    }
+  }
+
   // Build layout nodes
   const layoutNodes: LayoutNode[] = [];
   const layoutEdges: LayoutEdge[] = [];
@@ -77,10 +92,12 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
     });
 
     for (const s of sessions) {
-      layoutEdges.push({
-        source: nodeId,
-        target: `bundle-${s.bundleId}`,
-      });
+      if (s.bundleId) {
+        layoutEdges.push({
+          source: nodeId,
+          target: `bundle-${s.bundleId}`,
+        });
+      }
     }
   }
 
@@ -153,18 +170,20 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
     });
   }
 
-  // Edges
+  // Edges (only for sessions connected to a bundle)
   for (const [projectName, sessions] of projectSessions) {
     for (const s of sessions) {
-      edges.push({
-        id: `edge-${s.sessionId}`,
-        source: `project-${groupId}-${projectName}`,
-        sourceHandle: s.sessionId,
-        target: `bundle-${s.bundleId}`,
-        type: "default",
-        animated: true,
-        style: { stroke: "#585b70", strokeWidth: 2 },
-      });
+      if (s.bundleId) {
+        edges.push({
+          id: `edge-${s.sessionId}`,
+          source: `project-${groupId}-${projectName}`,
+          sourceHandle: s.sessionId,
+          target: `bundle-${s.bundleId}`,
+          type: "default",
+          animated: true,
+          style: { stroke: "#585b70", strokeWidth: 2 },
+        });
+      }
     }
   }
 
@@ -178,8 +197,44 @@ export function buildFlowGraph(
   const allEdges: Edge[] = [];
   let yOffset = 0;
 
+  // Track which projects are already shown via bundle sessions
+  const shownProjects = new Set<string>();
+
+  // Collect session-log projects grouped by where they belong
+  // key: team_id or "local" or "unlinked" → project sessions
+  const sessionsByGroup = new Map<string, Map<string, { started_at: string; branch: string | null }>>();
+
+  // Build a bundle→team lookup from the graph data
+  const bundleToTeam = new Map<string, string>();
+  for (const team of data.teams) {
+    for (const bundle of team.bundles) {
+      bundleToTeam.set(bundle.bundle_id, team.team_id);
+    }
+  }
+
+  // Categorize session-log entries — everything is either in a team (cloud) or local
+  if (data.sessions) {
+    for (const session of data.sessions) {
+      let groupKey: string;
+      if (session.bundle && bundleToTeam.has(session.bundle)) {
+        groupKey = bundleToTeam.get(session.bundle)!;
+      } else {
+        // Everything not in a team goes under "local" — there is no "off" in the UI
+        groupKey = "local";
+      }
+      if (!sessionsByGroup.has(groupKey)) sessionsByGroup.set(groupKey, new Map());
+      const groupMap = sessionsByGroup.get(groupKey)!;
+      if (!groupMap.has(session.project_name)) {
+        groupMap.set(session.project_name, { started_at: session.started_at, branch: session.branch });
+      }
+    }
+  }
+
   // Team groups
   for (const team of data.teams) {
+    // Inject session-log projects that belong to this team but aren't in bundle sessions
+    const extraSessions = sessionsByGroup.get(team.team_id);
+
     const { nodes, edges } = buildGroup({
       groupId: `team-${team.team_id}`,
       groupName: team.team_name,
@@ -187,9 +242,17 @@ export function buildFlowGraph(
       bundles: team.bundles,
       machineId: data.machine_id,
       isLocal: false,
+      extraProjects: extraSessions,
     });
 
-    // Offset group position
+    // Track shown projects
+    for (const bundle of team.bundles) {
+      for (const s of bundle.sessions) shownProjects.add(s.project_name);
+    }
+    if (extraSessions) {
+      for (const name of extraSessions.keys()) shownProjects.add(name);
+    }
+
     const groupNode = nodes.find((n) => n.id === `team-${team.team_id}`);
     if (groupNode) {
       groupNode.position = { x: 0, y: yOffset };
@@ -201,79 +264,11 @@ export function buildFlowGraph(
     allEdges.push(...edges);
   }
 
-  // Standalone sessions (projects not connected to any bundle)
-  if (data.sessions && data.sessions.length > 0) {
-    // Collect unique projects from sessions that aren't already shown via bundles
-    const linkedProjects = new Set<string>();
-    for (const team of data.teams) {
-      for (const bundle of team.bundles) {
-        for (const s of bundle.sessions) {
-          linkedProjects.add(s.project_name);
-        }
-      }
-    }
-    for (const lb of data.local.bundles) {
-      for (const p of (lb as any).projects ?? []) {
-        linkedProjects.add(p.project_name);
-      }
-    }
+  // Local group — all non-team projects go here
+  const localSessions = sessionsByGroup.get("local");
+  const hasLocalContent = data.local.bundles.length > 0 || (localSessions && localSessions.size > 0);
 
-    const standaloneProjects = new Map<string, { started_at: string; branch: string | null; mode: string }>();
-    for (const session of data.sessions) {
-      if (!linkedProjects.has(session.project_name) && !standaloneProjects.has(session.project_name)) {
-        standaloneProjects.set(session.project_name, {
-          started_at: session.started_at,
-          branch: session.branch,
-          mode: session.mode,
-        });
-      }
-    }
-
-    if (standaloneProjects.size > 0) {
-      const groupId = "standalone";
-      const standaloneNodes: Node[] = [];
-
-      // Group node
-      const nodeWidth = PROJECT_NODE_WIDTH + GROUP_PADDING * 2;
-      const nodeHeight = GROUP_HEADER + GROUP_PADDING * 2 + standaloneProjects.size * (PROJECT_NODE_HEADER + PROJECT_NODE_ROW + 16);
-
-      standaloneNodes.push({
-        id: groupId,
-        type: "teamGroup",
-        position: { x: 0, y: yOffset },
-        data: { teamName: "Unlinked Projects", color: "#6c7086" },
-        style: { width: nodeWidth, height: nodeHeight },
-      });
-
-      let pY = GROUP_HEADER + GROUP_PADDING;
-      for (const [projectName, info] of standaloneProjects) {
-        const nodeId = `project-${groupId}-${projectName}`;
-        standaloneNodes.push({
-          id: nodeId,
-          type: "project",
-          position: { x: GROUP_PADDING, y: pY },
-          parentId: groupId,
-          extent: "parent" as const,
-          data: {
-            projectName,
-            sessions: [{
-              id: `standalone-${projectName}`,
-              machineId: data.machine_id,
-              lastActiveAt: info.started_at,
-              isYou: true,
-            }],
-          },
-        });
-        pY += PROJECT_NODE_HEADER + PROJECT_NODE_ROW + 16;
-      }
-
-      yOffset += nodeHeight + GROUP_GAP;
-      allNodes.push(...standaloneNodes);
-    }
-  }
-
-  // Local group
-  if (data.local.bundles.length > 0) {
+  if (hasLocalContent) {
     const { nodes, edges } = buildGroup({
       groupId: "local",
       groupName: "Local",
@@ -281,11 +276,14 @@ export function buildFlowGraph(
       bundles: data.local.bundles as any,
       machineId: data.machine_id,
       isLocal: true,
+      extraProjects: localSessions,
     });
 
     const groupNode = nodes.find((n) => n.id === "local");
     if (groupNode) {
       groupNode.position = { x: 0, y: yOffset };
+      const h = (groupNode.style as any)?.height ?? 200;
+      yOffset += h + GROUP_GAP;
     }
 
     allNodes.push(...nodes);
