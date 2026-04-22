@@ -18,7 +18,6 @@ export const GlobalConfigSchema = z.object({
       service_role_key: z.string().min(1),
     })
     .nullable(),
-  anthropic_api_key: z.string().min(1).nullable(),
   // Each machine gets a stable random ID for informational purposes
   // (who joined which bundle). Not used for auth.
   machine_id: z.string().min(1),
@@ -30,7 +29,6 @@ export const ProjectConfigSchema = z.object({
   bundles: z.array(z.string().uuid()).default([]),
   project_name: z.string().min(1),
   auto_push_on: z.array(z.enum(["commit", "pr_open"])).default(["commit"]),
-  summarize_model: z.string().default("claude-sonnet-4-5"),
   // Debounce pushes from the same event source in seconds.
   push_debounce_seconds: z.number().int().nonnegative().default(600),
 });

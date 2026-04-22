@@ -5,7 +5,6 @@
   "description": "Connect Claude Code sessions across projects via shared context bundles",
   "workspaces": ["packages/*"],
   "scripts": {
-    "build": "bun run --filter '*' build",
     "dev:mcp": "bun --watch packages/mcp-server/src/index.ts",
     "cli": "bun packages/cli/src/index.ts",
     "typecheck": "bun run --filter '*' typecheck"

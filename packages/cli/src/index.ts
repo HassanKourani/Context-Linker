@@ -27,10 +27,9 @@ program.name("ctx-link").description("Connect Claude Code sessions across projec
 // ---------- init ----------
 program
   .command("init")
-  .description("Create global config with Supabase + Anthropic credentials")
+  .description("Create global config with Supabase credentials")
   .requiredOption("--supabase-url <url>")
   .requiredOption("--supabase-key <key>", "service_role key")
-  .requiredOption("--anthropic-key <key>")
   .option("--mode <mode>", "local | cloud", "local")
   .action((opts) => {
     const machineId = customAlphabet(
@@ -41,7 +40,6 @@ program
       mode: opts.mode,
       cloud_endpoint: null,
       supabase: { url: opts.supabaseUrl, service_role_key: opts.supabaseKey },
-      anthropic_api_key: opts.anthropicKey,
       machine_id: machineId,
     });
     console.log(`Wrote ${globalConfigPath()}`);
@@ -58,7 +56,6 @@ program
       project_name: detectProjectName(),
       bundles: [],
       auto_push_on: ["commit"],
-      summarize_model: "claude-sonnet-4-5",
       push_debounce_seconds: 600,
     };
     if (!cfg.bundles.includes(r.bundle_id)) cfg.bundles.push(r.bundle_id);
@@ -84,7 +81,6 @@ program
       project_name: projectName,
       bundles: [],
       auto_push_on: ["commit"],
-      summarize_model: "claude-sonnet-4-5",
       push_debounce_seconds: 600,
     };
     if (!cfg.bundles.includes(r.bundle_id)) cfg.bundles.push(r.bundle_id);
@@ -119,11 +115,12 @@ program
 // ---------- push ----------
 program
   .command("push")
-  .description("Manually push context from the current repo to its bundles")
+  .description("Push context from the current repo to its bundles")
   .option("--event <type>", "commit | pr_open | manual | session_end", "manual")
   .option("--ref <ref>", "commit sha / PR number / reference")
-  .option("--diff", "use `git diff HEAD~1` as raw_context", false)
-  .option("--message <msg>", "use this string as raw_context")
+  .option("--diff", "capture git diff as raw_context (requires --summary)", false)
+  .option("--message <text>", "summary text; also used as raw_context when --diff is not set")
+  .option("--summary <text>", "explicit summary when using --diff")
   .action(async (opts) => {
     const cfg = loadProjectConfig();
     if (!cfg || cfg.bundles.length === 0) {
@@ -131,12 +128,27 @@ program
       process.exit(1);
     }
 
-    const raw = opts.diff
-      ? execSync("git diff HEAD~1", { encoding: "utf8" })
-      : opts.message ?? "";
-    if (!raw.trim()) {
-      console.error("No raw_context (use --diff or --message).");
-      process.exit(1);
+    let raw: string;
+    let summary: string;
+
+    if (opts.diff) {
+      if (!opts.summary) {
+        console.error("--diff requires --summary (no AI in the CLI loop to generate one).");
+        process.exit(1);
+      }
+      try {
+        raw = execSync("git diff HEAD~1", { encoding: "utf8" });
+      } catch {
+        raw = execSync("git diff --cached", { encoding: "utf8" });
+      }
+      summary = opts.summary;
+    } else {
+      if (!opts.message) {
+        console.error("Provide --message <text> or use --diff --summary <text>.");
+        process.exit(1);
+      }
+      raw = opts.message;
+      summary = opts.summary ?? opts.message;
     }
 
     for (const bundleId of cfg.bundles) {
@@ -146,7 +158,7 @@ program
         event_type: opts.event,
         trigger_ref: opts.ref ?? null,
         raw_context: raw,
-        model: cfg.summarize_model,
+        summary,
       });
       console.log(`[${bundleId}] pushed entry ${r.entry_id}`);
       console.log(`  ${r.summary}`);
@@ -295,4 +307,7 @@ function detectProjectName(): string {
   return process.cwd().split("/").pop() ?? "unknown";
 }
 
-program.parseAsync();
+program.parseAsync().catch((err) => {
+  console.error(err?.message ?? String(err));
+  process.exit(1);
+});

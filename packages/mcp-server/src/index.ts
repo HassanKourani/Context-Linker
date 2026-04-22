@@ -78,7 +78,11 @@ const tools = [
   {
     name: "context_push",
     description:
-      "Push context to a bundle. The raw_context (e.g. a git diff) is summarized by Claude and stored. Other sessions in the bundle can then pull it.",
+      "Push a cross-project context handoff note to a bundle. " +
+      "YOU (Claude) must generate the summary before calling this tool — do NOT rely on the server to call the Anthropic API. " +
+      "Read the raw_context, write a 2-4 sentence summary focused on cross-project impact (API shapes, contracts, breaking changes), " +
+      "list files_touched, and list decisions with an affects array (e.g. ['frontend', 'mobile']). " +
+      "Skip internal refactors with no external impact. Pass your summary directly in the summary field.",
     inputSchema: {
       type: "object",
       properties: {
@@ -94,14 +98,36 @@ const tools = [
         },
         raw_context: {
           type: "string",
-          description: "The actual content to summarize (git diff, notes, etc).",
+          description: "The raw content (git diff, notes, etc) you are summarizing.",
+        },
+        summary: {
+          type: "string",
+          description: "YOUR summary of the context (2-4 sentences, cross-project impact focus). Required when calling from Claude Code.",
+        },
+        files_touched: {
+          type: "array",
+          items: { type: "string" },
+          description: "File paths changed, as you identified them from raw_context.",
+        },
+        decisions: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              decision: { type: "string" },
+              rationale: { type: "string" },
+              affects: { type: "array", items: { type: "string" } },
+            },
+            required: ["decision"],
+          },
+          description: "Key decisions and which projects/consumers they affect.",
         },
         store_raw: {
           type: "boolean",
           description: "If true, also stores the raw context in the DB. Default false.",
         },
       },
-      required: ["bundle_id", "project_name", "event_type", "raw_context"],
+      required: ["bundle_id", "project_name", "event_type", "raw_context", "summary"],
     },
   },
   {
@@ -198,6 +224,13 @@ const ContextPushArgs = z.object({
   event_type: z.enum(["commit", "pr_open", "manual", "session_end"]),
   trigger_ref: z.string().optional(),
   raw_context: z.string(),
+  summary: z.string(),
+  files_touched: z.array(z.string()).optional(),
+  decisions: z.array(z.object({
+    decision: z.string(),
+    rationale: z.string().optional(),
+    affects: z.array(z.string()).default([]),
+  })).optional(),
   store_raw: z.boolean().optional(),
 });
 const ContextPullArgs = z.object({
@@ -291,6 +324,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           event_type: a.event_type,
           trigger_ref: a.trigger_ref ?? null,
           raw_context: a.raw_context,
+          summary: a.summary,
+          files_touched: a.files_touched,
+          decisions: a.decisions,
           store_raw: a.store_raw ?? false,
         });
         return ok(r);

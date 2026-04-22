@@ -127,7 +127,7 @@ export async function bundleStatus(bundleId: string): Promise<BundleStatus> {
   await assertTokenValid(bundleId);
   const sb = getSupabase();
 
-  const [{ data: bundle }, { count: sCount }, { data: entries }] =
+  const [{ data: bundle }, { count: sCount }, { data: entries }, { count: eCount }] =
     await Promise.all([
       sb.from("bundles").select("id, name").eq("id", bundleId).single(),
       sb
@@ -140,6 +140,10 @@ export async function bundleStatus(bundleId: string): Promise<BundleStatus> {
         .eq("bundle_id", bundleId)
         .order("created_at", { ascending: false })
         .limit(1),
+      sb
+        .from("entries")
+        .select("*", { count: "exact", head: true })
+        .eq("bundle_id", bundleId),
     ]);
 
   if (!bundle) throw new Error("Bundle not found.");
@@ -148,7 +152,7 @@ export async function bundleStatus(bundleId: string): Promise<BundleStatus> {
     bundle_id: bundle.id,
     name: bundle.name,
     session_count: sCount ?? 0,
-    entry_count: entries?.length ?? 0,
+    entry_count: eCount ?? 0,
     last_entry_at: entries?.[0]?.created_at ?? null,
   };
 }

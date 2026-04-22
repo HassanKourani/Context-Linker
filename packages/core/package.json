@@ -8,13 +8,12 @@
     "./config": "./src/config.ts",
     "./bundles": "./src/bundles.ts",
     "./entries": "./src/entries.ts",
-    "./summarize": "./src/summarize.ts"
+    "./rewind": "./src/rewind.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.30.0",
     "@supabase/supabase-js": "^2.45.0",
     "argon2": "^0.41.0",
     "nanoid": "^5.0.0",

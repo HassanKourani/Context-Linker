@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-bun.lockb
 
 # Build output
 dist/
@@ -19,6 +18,9 @@ build/
 
 # Last-push timestamp (written by post-commit hook)
 .ctx-link-last-push
+
+# Supabase local dev artifacts
+.supabase/
 
 # Editor / OS
 .DS_Store
