@@ -6,6 +6,8 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "dev:mcp": "bun --watch packages/mcp-server/src/index.ts",
+    "dev:ui": "bun run --cwd packages/ui dev",
+    "dev:ui-api": "bun packages/ui/server.ts",
     "cli": "bun packages/cli/src/index.ts",
     "typecheck": "bun run --filter '*' typecheck"
   },
