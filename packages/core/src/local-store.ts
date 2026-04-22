@@ -3,7 +3,7 @@
  * Stores bundles and entries in ~/.ctx-link/local/<bundle_id>/
  * No Supabase, no network, no tokens — just JSON files on disk.
  */
-import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { globalConfigDir } from "./config.js";
@@ -155,4 +155,50 @@ export function localPullEntries(input: PullInput): EntryRow[] {
     files_touched: e.files_touched,
     decisions: e.decisions,
   }));
+}
+
+export interface LocalBundleDetail {
+  bundle_id: string;
+  bundle_name: string;
+  entry_count: number;
+  last_entry_at: string | null;
+  projects: Array<{
+    project_name: string;
+    last_entry_at: string | null;
+  }>;
+}
+
+export function listAllLocalBundleDetails(): LocalBundleDetail[] {
+  const dir = localDir();
+  if (!existsSync(dir)) return [];
+
+  const bundleIds = readdirSync(dir).filter((name) =>
+    existsSync(join(dir, name, "meta.json"))
+  );
+
+  return bundleIds.map((id) => {
+    const meta = readMeta(id);
+    const entries = readEntries(id).filter((e) => !e.superseded_at);
+    const sorted = entries.sort((a, b) =>
+      b.created_at.localeCompare(a.created_at)
+    );
+
+    const projectMap = new Map<string, string>();
+    for (const entry of sorted) {
+      if (!projectMap.has(entry.project_name)) {
+        projectMap.set(entry.project_name, entry.created_at);
+      }
+    }
+
+    return {
+      bundle_id: meta.id,
+      bundle_name: meta.name,
+      entry_count: entries.length,
+      last_entry_at: sorted[0]?.created_at ?? null,
+      projects: Array.from(projectMap.entries()).map(([name, lastAt]) => ({
+        project_name: name,
+        last_entry_at: lastAt,
+      })),
+    };
+  });
 }

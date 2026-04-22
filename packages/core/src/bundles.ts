@@ -201,3 +201,32 @@ export function listLocalBundles(): LocalBundleInfo[] {
     joined_at: v.joined_at,
   }));
 }
+
+export interface SessionInfo {
+  session_id: string;
+  project_name: string;
+  machine_id: string;
+  last_active_at: string | null;
+}
+
+export async function listBundleSessions(
+  bundleId: string
+): Promise<SessionInfo[]> {
+  await assertTokenValid(bundleId);
+  const sb = getSupabase();
+
+  const { data, error } = await sb
+    .from("sessions")
+    .select("id, project_name, machine_id, last_active_at")
+    .eq("bundle_id", bundleId)
+    .order("last_active_at", { ascending: false, nullsFirst: false });
+
+  if (error) throw new Error(`listBundleSessions failed: ${error.message}`);
+
+  return (data ?? []).map((s: any) => ({
+    session_id: s.id,
+    project_name: s.project_name,
+    machine_id: s.machine_id,
+    last_active_at: s.last_active_at,
+  }));
+}
