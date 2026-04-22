@@ -16,23 +16,69 @@ import {
   rewindProject,
   restoreRewound,
   listRewinds,
+  createTeam,
+  joinTeam,
+  listMyTeams,
   type RewindStrategy,
 } from "@ctx-link/core";
 
 const program = new Command();
 program.name("ctx-link").description("Connect Claude Code sessions across projects").version("0.1.0");
 
+// ---------- team ----------
+program
+  .command("team-create <name>")
+  .description("Create a new team (others join with the name + password)")
+  .requiredOption("--password <password>")
+  .action(async (name: string, opts) => {
+    const r = await createTeam(name, opts.password);
+    console.log(`Team created.`);
+    console.log(`  Name: ${r.name}`);
+    console.log(`  ID:   ${r.team_id}`);
+    console.log("");
+    console.log("Others can join with:");
+    console.log(`  ctx-link team-join ${r.name} --password <password>`);
+  });
+
+program
+  .command("team-join <name>")
+  .description("Join an existing team")
+  .requiredOption("--password <password>")
+  .action(async (name: string, opts) => {
+    const r = await joinTeam(name, opts.password);
+    console.log(`Joined team ${r.name} (${r.team_id}).`);
+  });
+
+program
+  .command("team-list")
+  .description("List teams you belong to")
+  .action(() => {
+    const teams = listMyTeams();
+    if (teams.length === 0) {
+      console.log("Not a member of any teams.");
+      return;
+    }
+    for (const t of teams) {
+      console.log(`${t.team_id}  ${t.name}  (joined ${t.joined_at})`);
+    }
+  });
+
 // ---------- create ----------
 program
   .command("create <name>")
   .description("Create a new bundle in the current repo")
   .requiredOption("--mode <mode>", "local | cloud")
+  .option("--team <team_id>", "team ID (required for cloud mode)")
   .action(async (name: string, opts) => {
     if (opts.mode !== "local" && opts.mode !== "cloud") {
       console.error("--mode must be 'local' or 'cloud'.");
       process.exit(1);
     }
-    const r = await createBundle(name, opts.mode);
+    if (opts.mode === "cloud" && !opts.team) {
+      console.error("Cloud bundles require --team <team_id>. Run 'ctx-link team-list' to see your teams.");
+      process.exit(1);
+    }
+    const r = await createBundle(name, opts.mode, opts.team);
     const cfg = loadProjectConfig() ?? {
       mode: "off" as const,
       project_name: detectProjectName(),
@@ -47,24 +93,23 @@ program
     console.log(`Bundle created (mode: ${opts.mode}).`);
     console.log(`  ID:    ${r.bundle_id}`);
     console.log(`  Name:  ${r.name}`);
-    console.log(`  Token: ${r.join_token}`);
     console.log("");
-    console.log("Share the ID + token with another session via:");
-    console.log(`  ctx-link join ${r.bundle_id} ${r.join_token} --mode ${opts.mode}`);
+    console.log("Team members can join with:");
+    console.log(`  ctx-link join ${r.bundle_id} --mode ${opts.mode}`);
   });
 
 // ---------- join ----------
 program
-  .command("join <bundle_id> <token>")
-  .description("Join an existing bundle from the current repo")
+  .command("join <bundle_id> [token]")
+  .description("Join an existing bundle from the current repo (cloud: no token needed if in the team)")
   .requiredOption("--mode <mode>", "local | cloud")
-  .action(async (bundleId: string, token: string, opts) => {
+  .action(async (bundleId: string, token: string | undefined, opts) => {
     if (opts.mode !== "local" && opts.mode !== "cloud") {
       console.error("--mode must be 'local' or 'cloud'.");
       process.exit(1);
     }
     const projectName = detectProjectName();
-    const r = await joinBundle(bundleId, token, projectName, opts.mode);
+    const r = await joinBundle(bundleId, token ?? "", projectName, opts.mode);
     const cfg = loadProjectConfig() ?? {
       mode: "off" as const,
       project_name: projectName,

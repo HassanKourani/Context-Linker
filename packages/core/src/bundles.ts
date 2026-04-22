@@ -39,7 +39,7 @@ export interface CreateBundleResult {
   join_token: string;
 }
 
-export async function createBundle(name: string, mode: "local" | "cloud" = "cloud"): Promise<CreateBundleResult> {
+export async function createBundle(name: string, mode: "local" | "cloud" = "cloud", teamId?: string): Promise<CreateBundleResult> {
   if (mode === "local") {
     const { localCreateBundle } = await import("./local-store.js");
     const r = localCreateBundle(name);
@@ -47,22 +47,26 @@ export async function createBundle(name: string, mode: "local" | "cloud" = "clou
     return r;
   }
 
+  if (!teamId) throw new Error("Cloud bundles require --team. Create or join a team first.");
+
+  // Verify caller is a member of the team
+  const { assertTeamMember } = await import("./teams.js");
+  await assertTeamMember(teamId);
+
   const cfg = loadGlobalConfig();
   const sb = getSupabase();
-  const token = generateJoinToken();
-  const token_hash = await hashToken(token);
 
   const { data, error } = await sb
     .from("bundles")
-    .insert({ name, token_hash, created_by: cfg.machine_id })
+    .insert({ name, team_id: teamId, created_by: cfg.machine_id })
     .select("id, name")
     .single();
 
   if (error) throw new Error(`createBundle failed: ${error.message}`);
 
-  storeBundleToken(data.id, token, data.name);
+  storeBundleToken(data.id, `team_${teamId}`, data.name);
 
-  return { bundle_id: data.id, name: data.name, join_token: token };
+  return { bundle_id: data.id, name: data.name, join_token: `team_${teamId}` };
 }
 
 export interface JoinBundleResult {
@@ -86,21 +90,20 @@ export async function joinBundle(
     return r;
   }
 
+  // Cloud mode: verify team membership
+  const { assertBundleTeamAccess } = await import("./teams.js");
+  await assertBundleTeamAccess(bundleId);
+
   const cfg = loadGlobalConfig();
   const sb = getSupabase();
 
   const { data: bundle, error } = await sb
     .from("bundles")
-    .select("id, name, token_hash")
+    .select("id, name, team_id")
     .eq("id", bundleId)
     .single();
 
-  if (error || !bundle) {
-    throw new Error("Bundle not found or token invalid.");
-  }
-
-  const ok = await verifyToken(token, bundle.token_hash);
-  if (!ok) throw new Error("Bundle not found or token invalid.");
+  if (error || !bundle) throw new Error("Bundle not found.");
 
   const { error: sErr } = await sb.from("sessions").insert({
     bundle_id: bundle.id,
@@ -109,25 +112,15 @@ export async function joinBundle(
   });
   if (sErr) throw new Error(`joinBundle session insert failed: ${sErr.message}`);
 
-  storeBundleToken(bundle.id, token, bundle.name);
+  storeBundleToken(bundle.id, `team_${bundle.team_id}`, bundle.name);
 
   return { bundle_id: bundle.id, name: bundle.name };
 }
 
 export async function assertTokenValid(bundleId: string): Promise<void> {
-  const token = getBundleToken(bundleId);
-  if (!token) throw new Error(`No local token for bundle ${bundleId}. Run 'ctx-link join'.`);
-
-  const sb = getSupabase();
-  const { data, error } = await sb
-    .from("bundles")
-    .select("token_hash")
-    .eq("id", bundleId)
-    .single();
-
-  if (error || !data) throw new Error("Bundle not found.");
-  const ok = await verifyToken(token, data.token_hash);
-  if (!ok) throw new Error("Stored token is invalid for this bundle.");
+  // For team-based bundles, check team membership instead of per-bundle token
+  const { assertBundleTeamAccess } = await import("./teams.js");
+  await assertBundleTeamAccess(bundleId);
 }
 
 export interface BundleStatus {
@@ -182,7 +175,8 @@ export async function deleteBundle(bundleId: string, mode: "local" | "cloud" = "
     const { localDeleteBundle } = await import("./local-store.js");
     localDeleteBundle(bundleId);
   } else {
-    await assertTokenValid(bundleId);
+    const { assertBundleTeamAccess } = await import("./teams.js");
+    await assertBundleTeamAccess(bundleId);
     const sb = getSupabase();
     const { error } = await sb.from("bundles").delete().eq("id", bundleId);
     if (error) throw new Error(`deleteBundle failed: ${error.message}`);
