@@ -25,8 +25,8 @@ export function ProjectNode({ data }: NodeProps) {
           key={s.id}
           className="px-3 py-1.5 flex items-center gap-2 text-xs text-muted-foreground relative"
         >
-          <span className="font-mono text-[11px]">
-            {s.machineId.slice(0, 8)}
+          <span className="font-mono text-[11px]" title={s.id}>
+            {s.id.slice(0, 8)}
           </span>
           {s.isYou && (
             <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#a6e3a1]/20 text-[#a6e3a1]">
