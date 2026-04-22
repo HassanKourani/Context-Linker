@@ -1,5 +1,4 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { Plus } from "lucide-react";
 import { relativeTime } from "@/lib/time";
 
 interface SessionData {
@@ -45,16 +44,6 @@ export function ProjectNode({ data }: NodeProps) {
           />
         </div>
       ))}
-      <div className="px-3 py-1.5 flex items-center justify-center border-t border-border">
-        <Handle
-          type="source"
-          position={Position.Right}
-          id="new-connection"
-          isConnectable={true}
-          className="!w-3 !h-3 !bg-[#a6e3a1] !border-[#a6e3a1]/50 !right-[-6px]"
-        />
-        <Plus className="w-3 h-3 text-muted-foreground/40" />
-      </div>
     </div>
   );
 }
