@@ -1,6 +1,7 @@
 import {
   loadGlobalConfig,
   loadSessionLog,
+  listActiveSessions,
   listMyTeams,
   listBundleSessions,
   listAllLocalBundleDetails,
@@ -73,7 +74,7 @@ const server = Bun.serve({
         );
 
         const localBundles = listAllLocalBundleDetails();
-        const sessions = loadSessionLog().slice(-50).reverse();
+        const sessions = listActiveSessions();
 
         return Response.json(
           {
@@ -309,10 +310,9 @@ const server = Bun.serve({
     // ── GET /api/sessions ──────────────────────────────────────────────────
     if (url.pathname === "/api/sessions" && req.method === "GET") {
       try {
-        const limit = parseInt(url.searchParams.get("limit") || "50");
-        const sessions = loadSessionLog();
-        const limited = sessions.slice(-limit).reverse();
-        return Response.json(limited, { headers: corsHeaders });
+        // Return active sessions (with bundle connections) from ~/.ctx-link/active-sessions/
+        const activeSessions = listActiveSessions();
+        return Response.json(activeSessions, { headers: corsHeaders });
       } catch (err: any) {
         return Response.json(
           { error: err.message ?? String(err) },

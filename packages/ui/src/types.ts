@@ -1,18 +1,17 @@
-export interface SessionLogEntry {
+export interface ActiveSessionData {
+  session_id: string;
   project_name: string;
   project_path: string;
-  machine_id: string;
+  bundles: Array<{ bundle_id: string; mode: "local" | "cloud" }>;
   started_at: string;
   branch: string | null;
-  bundle: string | null;
-  mode: string;
 }
 
 export interface GraphData {
   machine_id: string;
   teams: TeamGraphData[];
   local: { bundles: LocalBundleGraphData[] };
-  sessions?: SessionLogEntry[];
+  sessions?: ActiveSessionData[];
 }
 
 export interface TeamGraphData {

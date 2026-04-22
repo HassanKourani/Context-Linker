@@ -1,5 +1,5 @@
 import type { Node, Edge } from "@xyflow/react";
-import type { GraphData, BundleGraphData } from "../types";
+import type { GraphData, BundleGraphData, ActiveSessionData } from "../types";
 import { computeLayout, type LayoutNode, type LayoutEdge } from "./layout";
 import { teamColor, LOCAL_GROUP_COLOR } from "./colors";
 
@@ -23,11 +23,11 @@ interface GroupInput {
   bundles: BundleGraphData[];
   machineId: string;
   isLocal: boolean;
-  extraProjects?: Map<string, { started_at: string; branch: string | null }>;
+  activeSessions?: ActiveSessionData[];
 }
 
 function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
-  const { groupId, groupName, color, bundles, machineId, isLocal, extraProjects } = input;
+  const { groupId, groupName, color, bundles, machineId, isLocal, activeSessions } = input;
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
@@ -64,16 +64,29 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
     }
   }
 
-  // Add extra projects from session log (not already in bundle sessions)
-  if (extraProjects) {
-    for (const [projectName, info] of extraProjects) {
-      if (!projectSessions.has(projectName)) {
-        projectSessions.set(projectName, [{
-          sessionId: `session-${groupId}-${projectName}`,
+  // Add active sessions (each Claude Code session becomes a row under its project)
+  if (activeSessions) {
+    for (const as of activeSessions) {
+      const key = as.project_name;
+      if (!projectSessions.has(key)) projectSessions.set(key, []);
+      const existing = projectSessions.get(key)!;
+      // Don't add if this session is already represented
+      if (!existing.some((e) => e.sessionId === as.session_id)) {
+        existing.push({
+          sessionId: as.session_id,
           machineId: machineId,
-          lastActiveAt: info.started_at,
-          bundleId: "",
-        }]);
+          lastActiveAt: as.started_at,
+          bundleId: "", // no bundle edge from session log — edges come from session.bundles
+        });
+        // Add edges for each bundle this session is connected to
+        for (const b of as.bundles) {
+          existing.push({
+            sessionId: `${as.session_id}-${b.bundle_id}`,
+            machineId: machineId,
+            lastActiveAt: as.started_at,
+            bundleId: b.bundle_id,
+          });
+        }
       }
     }
   }
@@ -199,14 +212,7 @@ export function buildFlowGraph(
   const allEdges: Edge[] = [];
   let yOffset = 0;
 
-  // Track which projects are already shown via bundle sessions
-  const shownProjects = new Set<string>();
-
-  // Collect session-log projects grouped by where they belong
-  // key: team_id or "local" or "unlinked" → project sessions
-  const sessionsByGroup = new Map<string, Map<string, { started_at: string; branch: string | null }>>();
-
-  // Build a bundle→team lookup from the graph data
+  // Group active sessions by team or local
   const bundleToTeam = new Map<string, string>();
   for (const team of data.teams) {
     for (const bundle of team.bundles) {
@@ -214,28 +220,30 @@ export function buildFlowGraph(
     }
   }
 
-  // Categorize session-log entries — everything is either in a team (cloud) or local
+  // Categorize active sessions into team groups or local
+  const sessionsByTeam = new Map<string, ActiveSessionData[]>();
+  const localActiveSessions: ActiveSessionData[] = [];
+
   if (data.sessions) {
     for (const session of data.sessions) {
-      let groupKey: string;
-      if (session.bundle && bundleToTeam.has(session.bundle)) {
-        groupKey = bundleToTeam.get(session.bundle)!;
-      } else {
-        // Everything not in a team goes under "local" — there is no "off" in the UI
-        groupKey = "local";
+      // Check if any of the session's bundles belong to a team
+      let assignedTeam: string | null = null;
+      for (const b of session.bundles) {
+        const teamId = bundleToTeam.get(b.bundle_id);
+        if (teamId) { assignedTeam = teamId; break; }
       }
-      if (!sessionsByGroup.has(groupKey)) sessionsByGroup.set(groupKey, new Map());
-      const groupMap = sessionsByGroup.get(groupKey)!;
-      if (!groupMap.has(session.project_name)) {
-        groupMap.set(session.project_name, { started_at: session.started_at, branch: session.branch });
+      if (assignedTeam) {
+        if (!sessionsByTeam.has(assignedTeam)) sessionsByTeam.set(assignedTeam, []);
+        sessionsByTeam.get(assignedTeam)!.push(session);
+      } else {
+        localActiveSessions.push(session);
       }
     }
   }
 
   // Team groups
   for (const team of data.teams) {
-    // Inject session-log projects that belong to this team but aren't in bundle sessions
-    const extraSessions = sessionsByGroup.get(team.team_id);
+    const teamActiveSessions = sessionsByTeam.get(team.team_id) ?? [];
 
     const { nodes, edges } = buildGroup({
       groupId: `team-${team.team_id}`,
@@ -244,16 +252,8 @@ export function buildFlowGraph(
       bundles: team.bundles,
       machineId: data.machine_id,
       isLocal: false,
-      extraProjects: extraSessions,
+      activeSessions: teamActiveSessions,
     });
-
-    // Track shown projects
-    for (const bundle of team.bundles) {
-      for (const s of bundle.sessions) shownProjects.add(s.project_name);
-    }
-    if (extraSessions) {
-      for (const name of extraSessions.keys()) shownProjects.add(name);
-    }
 
     const groupNode = nodes.find((n) => n.id === `team-${team.team_id}`);
     if (groupNode) {
@@ -266,9 +266,8 @@ export function buildFlowGraph(
     allEdges.push(...edges);
   }
 
-  // Local group — all non-team projects go here
-  const localSessions = sessionsByGroup.get("local");
-  const hasLocalContent = data.local.bundles.length > 0 || (localSessions && localSessions.size > 0);
+  // Local group — all non-team sessions + local bundles
+  const hasLocalContent = data.local.bundles.length > 0 || localActiveSessions.length > 0;
 
   if (hasLocalContent) {
     const { nodes, edges } = buildGroup({
@@ -278,7 +277,7 @@ export function buildFlowGraph(
       bundles: data.local.bundles as any,
       machineId: data.machine_id,
       isLocal: true,
-      extraProjects: localSessions,
+      activeSessions: localActiveSessions,
     });
 
     const groupNode = nodes.find((n) => n.id === "local");
