@@ -17,9 +17,17 @@ import {
   rewindProject,
   restoreRewound,
   listRewinds,
+  loadProjectConfig,
   type RewindStrategy,
 } from "@ctx-link/core";
 import { z } from "zod";
+
+/** Read mode from .ctx-link.json in CWD. Falls back to "cloud". */
+function getProjectMode(): "local" | "cloud" {
+  const cfg = loadProjectConfig();
+  if (cfg?.mode === "local" || cfg?.mode === "cloud") return cfg.mode;
+  return "cloud";
+}
 
 const server = new Server(
   { name: "ctx-link", version: "0.1.0" },
@@ -306,17 +314,15 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     switch (name) {
       case "bundle_create": {
         const a = BundleCreateArgs.parse(args);
-        const r = await createBundle(a.name);
-        return ok({
-          ...r,
-          note:
-            "Save the join_token securely. Share it over a private channel to link another session.",
-        });
+        const mode = getProjectMode();
+        const r = await createBundle(a.name, mode);
+        return ok(r);
       }
 
       case "bundle_join": {
         const a = BundleJoinArgs.parse(args);
-        const r = await joinBundle(a.bundle_id, a.join_token, a.project_name);
+        const mode = getProjectMode();
+        const r = await joinBundle(a.bundle_id, a.join_token, a.project_name, mode);
         return ok(r);
       }
 
@@ -326,11 +332,13 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       case "bundle_status": {
         const a = BundleStatusArgs.parse(args);
-        return ok(await bundleStatus(a.bundle_id));
+        const mode = getProjectMode();
+        return ok(await bundleStatus(a.bundle_id, mode));
       }
 
       case "context_push": {
         const a = ContextPushArgs.parse(args);
+        const mode = getProjectMode();
         const r = await pushEntry({
           bundle_id: a.bundle_id,
           project_name: a.project_name,
@@ -341,17 +349,20 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           files_touched: a.files_touched,
           decisions: a.decisions,
           store_raw: a.store_raw ?? false,
+          mode,
         });
         return ok(r);
       }
 
       case "context_pull": {
         const a = ContextPullArgs.parse(args);
+        const mode = getProjectMode();
         const rows = await pullEntries({
           bundle_id: a.bundle_id,
           since: a.since ?? null,
           limit: a.limit,
           exclude_project: a.exclude_project,
+          mode,
         });
         const rendered = renderEntriesForClaude(rows);
         return ok({ count: rows.length, rendered, entries: rows });
@@ -384,7 +395,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       case "bundle_delete": {
         const a = z.object({ bundle_id: z.string() }).parse(args);
-        await deleteBundle(a.bundle_id);
+        const mode = getProjectMode();
+        await deleteBundle(a.bundle_id, mode);
         return ok({ deleted: true, bundle_id: a.bundle_id });
       }
 
