@@ -39,7 +39,14 @@ export interface CreateBundleResult {
   join_token: string;
 }
 
-export async function createBundle(name: string): Promise<CreateBundleResult> {
+export async function createBundle(name: string, mode: "local" | "cloud" = "cloud"): Promise<CreateBundleResult> {
+  if (mode === "local") {
+    const { localCreateBundle } = await import("./local-store.js");
+    const r = localCreateBundle(name);
+    storeBundleToken(r.bundle_id, r.join_token, r.name);
+    return r;
+  }
+
   const cfg = loadGlobalConfig();
   const sb = getSupabase();
   const token = generateJoinToken();
@@ -69,8 +76,16 @@ export interface JoinBundleResult {
 export async function joinBundle(
   bundleId: string,
   token: string,
-  projectName: string
+  projectName: string,
+  mode: "local" | "cloud" = "cloud"
 ): Promise<JoinBundleResult> {
+  if (mode === "local") {
+    const { localJoinBundle } = await import("./local-store.js");
+    const r = localJoinBundle(bundleId);
+    storeBundleToken(r.bundle_id, `local_${r.bundle_id}`, r.name);
+    return r;
+  }
+
   const cfg = loadGlobalConfig();
   const sb = getSupabase();
 
@@ -87,7 +102,6 @@ export async function joinBundle(
   const ok = await verifyToken(token, bundle.token_hash);
   if (!ok) throw new Error("Bundle not found or token invalid.");
 
-  // Create a session record (informational)
   const { error: sErr } = await sb.from("sessions").insert({
     bundle_id: bundle.id,
     project_name: projectName,
@@ -124,7 +138,12 @@ export interface BundleStatus {
   last_entry_at: string | null;
 }
 
-export async function bundleStatus(bundleId: string): Promise<BundleStatus> {
+export async function bundleStatus(bundleId: string, mode: "local" | "cloud" = "cloud"): Promise<BundleStatus> {
+  if (mode === "local") {
+    const { localBundleStatus } = await import("./local-store.js");
+    return localBundleStatus(bundleId);
+  }
+
   await assertTokenValid(bundleId);
   const sb = getSupabase();
 
@@ -158,13 +177,17 @@ export async function bundleStatus(bundleId: string): Promise<BundleStatus> {
   };
 }
 
-export async function deleteBundle(bundleId: string): Promise<void> {
-  await assertTokenValid(bundleId);
-  const sb = getSupabase();
-  const { error } = await sb.from("bundles").delete().eq("id", bundleId);
-  if (error) throw new Error(`deleteBundle failed: ${error.message}`);
+export async function deleteBundle(bundleId: string, mode: "local" | "cloud" = "cloud"): Promise<void> {
+  if (mode === "local") {
+    const { localDeleteBundle } = await import("./local-store.js");
+    localDeleteBundle(bundleId);
+  } else {
+    await assertTokenValid(bundleId);
+    const sb = getSupabase();
+    const { error } = await sb.from("bundles").delete().eq("id", bundleId);
+    if (error) throw new Error(`deleteBundle failed: ${error.message}`);
+  }
 
-  // Clean up local token store
   const store = loadTokenStore();
   delete store[bundleId];
   saveTokenStore(store);

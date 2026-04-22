@@ -57,7 +57,7 @@ program
       console.error("--mode must be 'local' or 'cloud'.");
       process.exit(1);
     }
-    const r = await createBundle(name);
+    const r = await createBundle(name, opts.mode);
     const cfg = loadProjectConfig() ?? {
       mode: "off" as const,
       project_name: detectProjectName(),
@@ -89,7 +89,7 @@ program
       process.exit(1);
     }
     const projectName = detectProjectName();
-    const r = await joinBundle(bundleId, token, projectName);
+    const r = await joinBundle(bundleId, token, projectName, opts.mode);
     const cfg = loadProjectConfig() ?? {
       mode: "off" as const,
       project_name: projectName,
@@ -123,7 +123,8 @@ program
   .command("status <bundle_id>")
   .description("Show status of a bundle")
   .action(async (bundleId: string) => {
-    const s = await bundleStatus(bundleId);
+    const cfg = loadProjectConfig();
+    const s = await bundleStatus(bundleId, (cfg?.mode === "local" || cfg?.mode === "cloud") ? cfg.mode : "cloud");
     console.log(JSON.stringify(s, null, 2));
   });
 
@@ -184,6 +185,7 @@ program
         trigger_ref: opts.ref ?? null,
         raw_context: raw,
         summary,
+        mode: (cfg.mode === "local" || cfg.mode === "cloud") ? cfg.mode : "cloud",
       });
       console.log(`[${bundleId}] pushed entry ${r.entry_id}`);
       console.log(`  ${r.summary}`);
@@ -214,6 +216,7 @@ program
         since: opts.since,
         limit: Number(opts.limit),
         exclude_project: opts.includeSelf ? undefined : cfg?.project_name,
+        mode: (cfg?.mode === "local" || cfg?.mode === "cloud") ? cfg.mode : "cloud",
       });
       console.log(`=== ${bid} (${rows.length} entries) ===`);
       console.log(renderEntriesForClaude(rows));
@@ -325,9 +328,9 @@ program
   .command("delete-bundle <bundle_id>")
   .description("Permanently delete a bundle and all its entries (irreversible)")
   .action(async (bundleId: string) => {
-    await deleteBundle(bundleId);
-    // Also remove from project config if present
     const cfg = loadProjectConfig();
+    const mode = (cfg?.mode === "local" || cfg?.mode === "cloud") ? cfg.mode : "cloud";
+    await deleteBundle(bundleId, mode);
     if (cfg) {
       cfg.bundles = cfg.bundles.filter((id) => id !== bundleId);
       saveProjectConfig(cfg);
