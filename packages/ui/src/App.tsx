@@ -12,6 +12,8 @@ import { ProjectNode } from "./components/nodes/ProjectNode";
 import { BundleNode } from "./components/nodes/BundleNode";
 import { TeamGroupNode } from "./components/nodes/TeamGroupNode";
 import { TopBar } from "./components/TopBar";
+import { CreateBundleDialog } from "./components/CreateBundleDialog";
+import { DeleteBundleDialog } from "./components/DeleteBundleDialog";
 
 const nodeTypes: NodeTypes = {
   project: ProjectNode,
@@ -58,6 +60,8 @@ export function App() {
           />
         </ReactFlow>
       </div>
+      <CreateBundleDialog />
+      <DeleteBundleDialog />
     </div>
   );
 }
