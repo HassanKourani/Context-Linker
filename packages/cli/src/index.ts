@@ -27,7 +27,7 @@ program.name("ctx-link").description("Connect Claude Code sessions across projec
 
 // ---------- team ----------
 program
-  .command("team-create <name>")
+  .command("create-team <name>")
   .description("Create a new team (others join with the name + password)")
   .requiredOption("--password <password>")
   .action(async (name: string, opts) => {
@@ -37,11 +37,11 @@ program
     console.log(`  ID:   ${r.team_id}`);
     console.log("");
     console.log("Others can join with:");
-    console.log(`  ctx-link team-join ${r.name} --password <password>`);
+    console.log(`  ctx-link join-team ${r.name} --password <password>`);
   });
 
 program
-  .command("team-join <name>")
+  .command("join-team <name>")
   .description("Join an existing team")
   .requiredOption("--password <password>")
   .action(async (name: string, opts) => {
@@ -50,7 +50,7 @@ program
   });
 
 program
-  .command("team-list")
+  .command("my-teams")
   .description("List teams you belong to")
   .action(() => {
     const teams = listMyTeams();
@@ -142,8 +142,8 @@ program
 
 // ---------- list ----------
 program
-  .command("list")
-  .description("List bundles this machine has joined")
+  .command("my-bundles")
+  .description("List all bundles this machine has joined")
   .action(() => {
     const bundles = listLocalBundles();
     if (bundles.length === 0) {
