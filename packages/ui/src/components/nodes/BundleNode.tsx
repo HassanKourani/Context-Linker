@@ -1,29 +1,76 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { relativeTime } from "../../lib/time";
+import { MoreHorizontal, Trash2 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { relativeTime } from "@/lib/time";
+import { useUIStore } from "@/stores/uiStore";
 
 export function BundleNode({ data }: NodeProps) {
-  const { bundleName, entryCount, lastEntryAt } = data as {
+  const { bundleId, bundleName, entryCount, lastEntryAt, mode } = data as {
+    bundleId: string;
     bundleName: string;
     entryCount: number;
     lastEntryAt: string | null;
+    mode: "local" | "cloud";
+  };
+
+  const openPanel = useUIStore((s) => s.openPanel);
+  const setDeleteTarget = useUIStore((s) => s.setDeleteTarget);
+  const openModal = useUIStore((s) => s.openModal);
+
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    openPanel(bundleId, mode);
+  };
+
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDeleteTarget({ id: bundleId, name: bundleName, mode });
+    openModal("delete-bundle");
   };
 
   return (
-    <div className="bg-[#1e1e2e] border border-[#313244] rounded-lg min-w-[180px] shadow-lg">
+    <div
+      className="bg-card border border-border rounded-lg min-w-[180px] shadow-lg cursor-pointer hover:border-primary/50 transition-colors"
+      onClick={handleClick}
+    >
       <Handle
         type="target"
         position={Position.Left}
-        className="!w-2 !h-2 !bg-[#585b70] !border-[#313244]"
+        className="!w-2 !h-2 !bg-[#585b70] !border-border"
       />
-      <div className="px-3 py-2 border-b border-[#313244] font-semibold text-sm text-[#cdd6f4]">
-        {bundleName}
+      <div className="px-3 py-2 border-b border-border flex items-center justify-between">
+        <span className="font-semibold text-sm text-foreground truncate">
+          {bundleName}
+        </span>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            onClick={(e) => e.stopPropagation()}
+            className="p-0.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <MoreHorizontal className="w-4 h-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="bg-popover border-border">
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive cursor-pointer"
+              onClick={handleDelete}
+            >
+              <Trash2 className="w-3.5 h-3.5 mr-2" />
+              Delete bundle
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       <div className="px-3 py-2 space-y-1">
-        <div className="text-xs text-[#a6adc8]">
-          <span className="text-[#cdd6f4] font-medium">{entryCount}</span>{" "}
+        <div className="text-xs text-muted-foreground">
+          <span className="text-foreground font-medium">{entryCount}</span>{" "}
           entries
         </div>
-        <div className="text-[10px] text-[#585b70]">
+        <div className="text-[10px] text-muted-foreground/60">
           {relativeTime(lastEntryAt)}
         </div>
       </div>

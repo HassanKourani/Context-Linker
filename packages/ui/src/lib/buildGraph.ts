@@ -163,9 +163,11 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
       parentId: groupId,
       extent: "parent" as const,
       data: {
+        bundleId: bundle.bundle_id,
         bundleName: bundle.bundle_name,
         entryCount: bundle.entry_count,
         lastEntryAt: bundle.last_entry_at,
+        mode: isLocal ? "local" : "cloud",
       },
     });
   }

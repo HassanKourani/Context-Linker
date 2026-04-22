@@ -41,7 +41,7 @@ export function App() {
           nodeTypes={nodeTypes}
           nodesConnectable={false}
           nodesDraggable={false}
-          elementsSelectable={false}
+          elementsSelectable={true}
           fitView
           fitViewOptions={{ padding: 0.2 }}
           proOptions={{ hideAttribution: true }}
