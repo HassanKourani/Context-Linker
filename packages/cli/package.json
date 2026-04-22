@@ -1,0 +1,17 @@
+{
+  "name": "@ctx-link/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "ctx-link": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "bun src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ctx-link/core": "workspace:*",
+    "commander": "^12.1.0",
+    "nanoid": "^5.0.0"
+  }
+}

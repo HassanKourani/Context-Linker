@@ -1,0 +1,356 @@
+#!/usr/bin/env bun
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
+import {
+  createBundle,
+  joinBundle,
+  bundleStatus,
+  listLocalBundles,
+  pushEntry,
+  pullEntries,
+  renderEntriesForClaude,
+  rewindProject,
+  restoreRewound,
+  listRewinds,
+  type RewindStrategy,
+} from "@ctx-link/core";
+import { z } from "zod";
+
+const server = new Server(
+  { name: "ctx-link", version: "0.1.0" },
+  { capabilities: { tools: {} } }
+);
+
+// ---------- Tool definitions ----------
+
+const tools = [
+  {
+    name: "bundle_create",
+    description:
+      "Create a new shared context bundle. Returns a bundle_id and a join_token. Share the token with another machine/session to link them.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Human-readable label, e.g. 'feature-notifications'",
+        },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "bundle_join",
+    description:
+      "Join an existing bundle using a bundle_id and join_token shared from another machine.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bundle_id: { type: "string" },
+        join_token: { type: "string" },
+        project_name: {
+          type: "string",
+          description: "Name of the current project/repo joining the bundle.",
+        },
+      },
+      required: ["bundle_id", "join_token", "project_name"],
+    },
+  },
+  {
+    name: "bundle_list",
+    description: "List bundles this machine has joined.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "bundle_status",
+    description:
+      "Get status of a bundle: linked sessions, entry count, last activity.",
+    inputSchema: {
+      type: "object",
+      properties: { bundle_id: { type: "string" } },
+      required: ["bundle_id"],
+    },
+  },
+  {
+    name: "context_push",
+    description:
+      "Push context to a bundle. The raw_context (e.g. a git diff) is summarized by Claude and stored. Other sessions in the bundle can then pull it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bundle_id: { type: "string" },
+        project_name: { type: "string" },
+        event_type: {
+          type: "string",
+          enum: ["commit", "pr_open", "manual", "session_end"],
+        },
+        trigger_ref: {
+          type: "string",
+          description: "Commit SHA, PR number, or similar reference.",
+        },
+        raw_context: {
+          type: "string",
+          description: "The actual content to summarize (git diff, notes, etc).",
+        },
+        store_raw: {
+          type: "boolean",
+          description: "If true, also stores the raw context in the DB. Default false.",
+        },
+      },
+      required: ["bundle_id", "project_name", "event_type", "raw_context"],
+    },
+  },
+  {
+    name: "context_pull",
+    description:
+      "Pull recent cross-project context from a bundle. Returns a formatted string ready to give to Claude. Call this at the start of work to see what other sessions have done.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bundle_id: { type: "string" },
+        since: {
+          type: "string",
+          description: "ISO timestamp; only return entries newer than this.",
+        },
+        limit: { type: "number", description: "Default 20." },
+        exclude_project: {
+          type: "string",
+          description: "Skip entries from this project (usually your own).",
+        },
+      },
+      required: ["bundle_id"],
+    },
+  },
+  {
+    name: "context_rewind",
+    description:
+      "Soft-delete entries from ONE project in a bundle, scoped by strategy. Other projects are never touched. Strategies: since (ISO timestamp), last_n (count), entry_ids (explicit list), after_ref (trigger_ref; keeps pivot, removes everything after). Use dry_run=true to preview. Refuses >50 affected unless force=true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bundle_id: { type: "string" },
+        project_name: {
+          type: "string",
+          description: "Only entries from this project are candidates.",
+        },
+        strategy: {
+          type: "object",
+          description:
+            "One of: {kind:'since', since: ISO}, {kind:'last_n', count: N}, {kind:'entry_ids', ids: [...]}, {kind:'after_ref', trigger_ref: 'sha'}",
+        },
+        reason: { type: "string" },
+        dry_run: { type: "boolean" },
+        max_affected: { type: "number", description: "Default 50." },
+        force: { type: "boolean" },
+      },
+      required: ["bundle_id", "project_name", "strategy"],
+    },
+  },
+  {
+    name: "context_restore",
+    description:
+      "Undo a rewind. Restores soft-deleted entries scoped to one project. Optionally filter by entry_ids or rewind_log_id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bundle_id: { type: "string" },
+        project_name: { type: "string" },
+        entry_ids: { type: "array", items: { type: "string" } },
+        rewind_log_id: { type: "string" },
+      },
+      required: ["bundle_id", "project_name"],
+    },
+  },
+  {
+    name: "rewind_history",
+    description:
+      "List past rewinds for a bundle (optionally filtered by project). Useful to find a rewind_log_id to restore from.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bundle_id: { type: "string" },
+        project_name: { type: "string" },
+        limit: { type: "number" },
+      },
+      required: ["bundle_id"],
+    },
+  },
+];
+
+server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
+
+// ---------- Tool dispatch ----------
+
+const BundleCreateArgs = z.object({ name: z.string() });
+const BundleJoinArgs = z.object({
+  bundle_id: z.string(),
+  join_token: z.string(),
+  project_name: z.string(),
+});
+const BundleStatusArgs = z.object({ bundle_id: z.string() });
+const ContextPushArgs = z.object({
+  bundle_id: z.string(),
+  project_name: z.string(),
+  event_type: z.enum(["commit", "pr_open", "manual", "session_end"]),
+  trigger_ref: z.string().optional(),
+  raw_context: z.string(),
+  store_raw: z.boolean().optional(),
+});
+const ContextPullArgs = z.object({
+  bundle_id: z.string(),
+  since: z.string().optional(),
+  limit: z.number().optional(),
+  exclude_project: z.string().optional(),
+});
+
+const RewindStrategySchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("since"), since: z.string() }),
+  z.object({ kind: z.literal("last_n"), count: z.number().int().positive() }),
+  z.object({ kind: z.literal("entry_ids"), ids: z.array(z.string()).min(1) }),
+  z.object({ kind: z.literal("after_ref"), trigger_ref: z.string() }),
+]);
+
+const ContextRewindArgs = z.object({
+  bundle_id: z.string(),
+  project_name: z.string(),
+  strategy: RewindStrategySchema,
+  reason: z.string().optional(),
+  dry_run: z.boolean().optional(),
+  max_affected: z.number().optional(),
+  force: z.boolean().optional(),
+});
+
+const ContextRestoreArgs = z.object({
+  bundle_id: z.string(),
+  project_name: z.string(),
+  entry_ids: z.array(z.string()).optional(),
+  rewind_log_id: z.string().optional(),
+});
+
+const RewindHistoryArgs = z.object({
+  bundle_id: z.string(),
+  project_name: z.string().optional(),
+  limit: z.number().optional(),
+});
+
+function ok(result: unknown) {
+  return {
+    content: [
+      { type: "text" as const, text: JSON.stringify(result, null, 2) },
+    ],
+  };
+}
+
+function fail(err: unknown) {
+  const msg = err instanceof Error ? err.message : String(err);
+  return {
+    isError: true,
+    content: [{ type: "text" as const, text: `Error: ${msg}` }],
+  };
+}
+
+server.setRequestHandler(CallToolRequestSchema, async (req) => {
+  const { name, arguments: args } = req.params;
+
+  try {
+    switch (name) {
+      case "bundle_create": {
+        const a = BundleCreateArgs.parse(args);
+        const r = await createBundle(a.name);
+        return ok({
+          ...r,
+          note:
+            "Save the join_token securely. Share it over a private channel to link another session.",
+        });
+      }
+
+      case "bundle_join": {
+        const a = BundleJoinArgs.parse(args);
+        const r = await joinBundle(a.bundle_id, a.join_token, a.project_name);
+        return ok(r);
+      }
+
+      case "bundle_list": {
+        return ok(listLocalBundles());
+      }
+
+      case "bundle_status": {
+        const a = BundleStatusArgs.parse(args);
+        return ok(await bundleStatus(a.bundle_id));
+      }
+
+      case "context_push": {
+        const a = ContextPushArgs.parse(args);
+        const r = await pushEntry({
+          bundle_id: a.bundle_id,
+          project_name: a.project_name,
+          event_type: a.event_type,
+          trigger_ref: a.trigger_ref ?? null,
+          raw_context: a.raw_context,
+          store_raw: a.store_raw ?? false,
+        });
+        return ok(r);
+      }
+
+      case "context_pull": {
+        const a = ContextPullArgs.parse(args);
+        const rows = await pullEntries({
+          bundle_id: a.bundle_id,
+          since: a.since ?? null,
+          limit: a.limit,
+          exclude_project: a.exclude_project,
+        });
+        const rendered = renderEntriesForClaude(rows);
+        return ok({ count: rows.length, rendered, entries: rows });
+      }
+
+      case "context_rewind": {
+        const a = ContextRewindArgs.parse(args);
+        const r = await rewindProject({
+          bundle_id: a.bundle_id,
+          project_name: a.project_name,
+          strategy: a.strategy as RewindStrategy,
+          reason: a.reason,
+          dry_run: a.dry_run,
+          max_affected: a.max_affected,
+          force: a.force,
+        });
+        return ok(r);
+      }
+
+      case "context_restore": {
+        const a = ContextRestoreArgs.parse(args);
+        const r = await restoreRewound({
+          bundle_id: a.bundle_id,
+          project_name: a.project_name,
+          entry_ids: a.entry_ids,
+          rewind_log_id: a.rewind_log_id,
+        });
+        return ok(r);
+      }
+
+      case "rewind_history": {
+        const a = RewindHistoryArgs.parse(args);
+        const r = await listRewinds(a.bundle_id, a.project_name, a.limit ?? 20);
+        return ok(r);
+      }
+
+      default:
+        return fail(`Unknown tool: ${name}`);
+    }
+  } catch (e) {
+    return fail(e);
+  }
+});
+
+// ---------- Boot ----------
+
+const transport = new StdioServerTransport();
+await server.connect(transport);
+
+// Stderr only, stdio is the MCP wire.
+process.stderr.write("ctx-link MCP server ready\n");

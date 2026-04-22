@@ -1,0 +1,17 @@
+{
+  "name": "@ctx-link/mcp-server",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "ctx-link-mcp": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "bun src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ctx-link/core": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.0"
+  }
+}
