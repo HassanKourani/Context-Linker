@@ -117,6 +117,41 @@ export function getBundleToken(bundleId: string): string | null {
   return store[bundleId]?.token ?? null;
 }
 
+// ---------- Session Log ----------
+
+export interface SessionLogEntry {
+  project_name: string;
+  project_path: string;
+  machine_id: string;
+  started_at: string;
+  branch: string | null;
+  bundle: string | null;
+  mode: string;
+}
+
+function sessionLogPath(): string {
+  return join(globalConfigDir(), "sessions.json");
+}
+
+export function logSession(entry: SessionLogEntry): void {
+  const dir = globalConfigDir();
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const path = sessionLogPath();
+  const existing: SessionLogEntry[] = existsSync(path)
+    ? JSON.parse(readFileSync(path, "utf8"))
+    : [];
+  existing.push(entry);
+  // Keep last 200 sessions
+  const trimmed = existing.slice(-200);
+  writeFileSync(path, JSON.stringify(trimmed, null, 2));
+}
+
+export function loadSessionLog(): SessionLogEntry[] {
+  const path = sessionLogPath();
+  if (!existsSync(path)) return [];
+  return JSON.parse(readFileSync(path, "utf8"));
+}
+
 export function storeBundleToken(
   bundleId: string,
   token: string,

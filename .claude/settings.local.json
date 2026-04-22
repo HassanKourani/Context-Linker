@@ -5,8 +5,15 @@
       "Read(//Users/hassan/.ctx-link/**)",
       "Bash(git add:*)",
       "Bash(git commit -m ':*)",
+      "Bash(bun install:*)",
+      "Bash(timeout 8 bunx vite)",
+      "Bash(ls /Users/hassan/Desktop/Hassan/Work/ctx-link/bun.lock*)",
+      "Bash(git -C /Users/hassan/Desktop/Hassan/Work/ctx-link status --short)",
       "Bash(bun run:*)",
-      "Bash(bun packages/cli/src/index.ts --help)"
+      "Bash(lsof -ti:5173 -ti:5174)",
+      "Bash(xargs kill:*)",
+      "Bash(bunx vite:*)",
+      "Bash(npx shadcn@latest:*)"
     ]
   }
 }

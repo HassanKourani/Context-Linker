@@ -15,6 +15,7 @@ function prompt(question: string): Promise<string> {
 }
 import {
   loadProjectConfig,
+  loadGlobalConfig,
   saveProjectConfig,
   createBundle,
   joinBundle,
@@ -23,6 +24,8 @@ import {
   bundleStatus,
   pushEntry,
   pullEntries,
+  logSession,
+  loadSessionLog,
   renderEntriesForClaude,
   rewindProject,
   restoreRewound,
@@ -152,6 +155,58 @@ program
     console.log(`Bundle:   ${cfg.bundle ?? "(none)"}`);
     console.log(`Auto-push on: ${cfg.auto_push_on.join(", ") || "(none)"}`);
     console.log(`Debounce: ${cfg.push_debounce_seconds}s`);
+  });
+
+// ==================== SESSION TRACKING ====================
+
+program
+  .command("session-log")
+  .description(
+    "Record the current project as an active session. Called automatically by the SessionStart hook.\n" +
+    "You don't need to run this manually."
+  )
+  .action(() => {
+    const cfg = loadProjectConfig();
+    const globalCfg = loadGlobalConfig();
+    let branch: string | null = null;
+    try {
+      branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf8" }).trim();
+    } catch {}
+
+    logSession({
+      project_name: cfg?.project_name ?? detectProjectName(),
+      project_path: process.cwd(),
+      machine_id: globalCfg.machine_id,
+      started_at: new Date().toISOString(),
+      branch,
+      bundle: cfg?.bundle ?? null,
+      mode: cfg?.mode ?? "off",
+    });
+    // Silent — this runs in a hook, no output needed
+  });
+
+program
+  .command("sessions")
+  .description(
+    "List recent Claude Code sessions across all projects.\n" +
+    "Shows project name, branch, mode, bundle, and when the session started.\n\n" +
+    "Example:\n" +
+    "  $ cxtl sessions\n" +
+    "  $ cxtl sessions --limit 10"
+  )
+  .option("--limit <n>", "max sessions to show", "20")
+  .action((opts) => {
+    const sessions = loadSessionLog();
+    const limited = sessions.slice(-Number(opts.limit)).reverse();
+    if (limited.length === 0) {
+      console.log("No sessions recorded yet.");
+      return;
+    }
+    for (const s of limited) {
+      const bundleInfo = s.bundle ? ` → ${s.bundle.slice(0, 8)}...` : "";
+      console.log(`${s.started_at}  ${s.project_name}  [${s.mode}]  ${s.branch ?? "no-branch"}${bundleInfo}`);
+      console.log(`  ${s.project_path}`);
+    }
   });
 
 // ==================== BUNDLES ====================
