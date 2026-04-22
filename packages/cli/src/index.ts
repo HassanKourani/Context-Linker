@@ -2,10 +2,7 @@
 import { Command } from "commander";
 import { existsSync, readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
-import { customAlphabet } from "nanoid";
 import {
-  saveGlobalConfig,
-  globalConfigPath,
   loadProjectConfig,
   saveProjectConfig,
   createBundle,
@@ -24,28 +21,6 @@ import {
 
 const program = new Command();
 program.name("ctx-link").description("Connect Claude Code sessions across projects").version("0.1.0");
-
-// ---------- init ----------
-program
-  .command("init")
-  .description("Create global config with Supabase credentials")
-  .requiredOption("--supabase-url <url>")
-  .requiredOption("--supabase-key <key>", "service_role key")
-  .option("--mode <mode>", "local | cloud", "local")
-  .action((opts) => {
-    const machineId = customAlphabet(
-      "abcdefghijklmnopqrstuvwxyz0123456789",
-      12
-    )();
-    saveGlobalConfig({
-      mode: opts.mode,
-      cloud_endpoint: null,
-      supabase: { url: opts.supabaseUrl, service_role_key: opts.supabaseKey },
-      machine_id: machineId,
-    });
-    console.log(`Wrote ${globalConfigPath()}`);
-    console.log(`Machine ID: ${machineId}`);
-  });
 
 // ---------- create ----------
 program

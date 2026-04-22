@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bun packages/cli/src/index.ts status fda2ca00-dc11-4cb9-9d6f-eb1aa9585a37)",
+      "Read(//Users/hassan/.ctx-link/**)"
+    ]
+  }
+}

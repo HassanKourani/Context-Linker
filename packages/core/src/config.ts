@@ -6,18 +6,6 @@ import { z } from "zod";
 // ---------- Schemas ----------
 
 export const GlobalConfigSchema = z.object({
-  // Forward-compatible: cloud mode is designed in but not implemented in MVP.
-  mode: z.enum(["local", "cloud"]).default("local"),
-  cloud_endpoint: z.string().url().nullable().default(null),
-  supabase: z
-    .object({
-      url: z.string().url(),
-      // Using service_role for MVP since auth is done in-app via bearer tokens.
-      // In cloud mode this would move server-side and clients would only have
-      // the bearer token.
-      service_role_key: z.string().min(1),
-    })
-    .nullable(),
   // Each machine gets a stable random ID for informational purposes
   // (who joined which bundle). Not used for auth.
   machine_id: z.string().min(1),
@@ -73,9 +61,12 @@ export function projectConfigPath(cwd: string = process.cwd()): string {
 export function loadGlobalConfig(): GlobalConfig {
   const path = globalConfigPath();
   if (!existsSync(path)) {
-    throw new Error(
-      `ctx-link: global config not found at ${path}. Run 'ctx-link init' first.`
-    );
+    // Auto-create on first use — no init command needed.
+    const { customAlphabet } = require("nanoid");
+    const generate = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 12);
+    const cfg: GlobalConfig = { machine_id: generate() };
+    saveGlobalConfig(cfg);
+    return cfg;
   }
   const raw = JSON.parse(readFileSync(path, "utf8"));
   return GlobalConfigSchema.parse(raw);
