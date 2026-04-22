@@ -16,7 +16,8 @@ export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;
 export const ProjectConfigSchema = z.object({
   // "off" = no linking (default), "local" = local file store, "cloud" = Supabase
   mode: z.enum(["off", "local", "cloud"]).default("off"),
-  bundles: z.array(z.string().uuid()).default([]),
+  // One bundle per project. Switch by creating/joining a different one.
+  bundle: z.string().uuid().nullable().default(null),
   project_name: z.string().min(1),
   auto_push_on: z.array(z.enum(["commit", "pr_open"])).default(["commit"]),
   // Debounce pushes from the same event source in seconds.

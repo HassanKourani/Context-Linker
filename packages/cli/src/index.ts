@@ -75,10 +75,7 @@ program
     }
     console.log(`Project:  ${cfg.project_name}`);
     console.log(`Mode:     ${cfg.mode}`);
-    console.log(`Bundles:  ${cfg.bundles.length === 0 ? "(none)" : ""}`);
-    for (const id of cfg.bundles) {
-      console.log(`  - ${id}`);
-    }
+    console.log(`Bundle:   ${cfg.bundle ?? "(none)"}`);
     console.log(`Auto-push on: ${cfg.auto_push_on.join(", ") || "(none)"}`);
     console.log(`Debounce: ${cfg.push_debounce_seconds}s`);
   });
@@ -101,13 +98,13 @@ program
     const r = await createBundle(name, opts.mode, opts.team);
     const cfg = loadProjectConfig() ?? {
       mode: "off" as const,
+      bundle: null,
       project_name: detectProjectName(),
-      bundles: [],
       auto_push_on: ["commit"],
       push_debounce_seconds: 600,
     };
     cfg.mode = opts.mode;
-    if (!cfg.bundles.includes(r.bundle_id)) cfg.bundles.push(r.bundle_id);
+    cfg.bundle = r.bundle_id;
     saveProjectConfig(cfg);
 
     console.log(`Bundle created (mode: ${opts.mode}).`);
@@ -132,13 +129,13 @@ program
     const r = await joinBundle(bundleId, token ?? "", projectName, opts.mode);
     const cfg = loadProjectConfig() ?? {
       mode: "off" as const,
+      bundle: null,
       project_name: projectName,
-      bundles: [],
       auto_push_on: ["commit"],
       push_debounce_seconds: 600,
     };
     cfg.mode = opts.mode;
-    if (!cfg.bundles.includes(r.bundle_id)) cfg.bundles.push(r.bundle_id);
+    cfg.bundle = r.bundle_id;
     saveProjectConfig(cfg);
     console.log(`Joined bundle ${r.name} (${r.bundle_id}) as project '${projectName}' (mode: ${opts.mode}).`);
   });
@@ -179,8 +176,8 @@ program
   .option("--summary <text>", "explicit summary when using --diff")
   .action(async (opts) => {
     const cfg = loadProjectConfig();
-    if (!cfg || cfg.bundles.length === 0) {
-      console.error("No bundles configured for this project.");
+    if (!cfg || !cfg.bundle) {
+      console.error("No bundle configured for this project. Run 'ctx-link create' or 'ctx-link join' first.");
       process.exit(1);
     }
 
@@ -196,7 +193,6 @@ program
       if (opts.summary) {
         summary = opts.summary;
       } else {
-        // Auto-extract from commit message (used by git hooks where no AI is in the loop)
         const ref = opts.ref ?? "HEAD";
         try {
           summary = execSync(`git log -1 --pretty=%B ${ref}`, { encoding: "utf8" }).trim();
@@ -217,19 +213,18 @@ program
       summary = opts.summary ?? opts.message;
     }
 
-    for (const bundleId of cfg.bundles) {
-      const r = await pushEntry({
-        bundle_id: bundleId,
-        project_name: cfg.project_name,
-        event_type: opts.event,
-        trigger_ref: opts.ref ?? null,
-        raw_context: raw,
-        summary,
-        mode: (cfg.mode === "local" || cfg.mode === "cloud") ? cfg.mode : "cloud",
-      });
-      console.log(`[${bundleId}] pushed entry ${r.entry_id}`);
-      console.log(`  ${r.summary}`);
-    }
+    const mode = (cfg.mode === "local" || cfg.mode === "cloud") ? cfg.mode : "cloud";
+    const r = await pushEntry({
+      bundle_id: cfg.bundle,
+      project_name: cfg.project_name,
+      event_type: opts.event,
+      trigger_ref: opts.ref ?? null,
+      raw_context: raw,
+      summary,
+      mode,
+    });
+    console.log(`[${cfg.bundle}] pushed entry ${r.entry_id}`);
+    console.log(`  ${r.summary}`);
   });
 
 // ---------- pull ----------
@@ -241,27 +236,23 @@ program
   .option("--include-self", "don't filter out own project", false)
   .action(async (bundleId: string | undefined, opts) => {
     const cfg = loadProjectConfig();
-    const bundleIds = bundleId
-      ? [bundleId]
-      : cfg?.bundles ?? [];
+    const bid = bundleId ?? cfg?.bundle;
 
-    if (bundleIds.length === 0) {
-      console.error("No bundle specified and none configured.");
+    if (!bid) {
+      console.error("No bundle specified and none configured. Run 'ctx-link create' or 'ctx-link join' first.");
       process.exit(1);
     }
 
-    for (const bid of bundleIds) {
-      const rows = await pullEntries({
-        bundle_id: bid,
-        since: opts.since,
-        limit: Number(opts.limit),
-        exclude_project: opts.includeSelf ? undefined : cfg?.project_name,
-        mode: (cfg?.mode === "local" || cfg?.mode === "cloud") ? cfg.mode : "cloud",
-      });
-      console.log(`=== ${bid} (${rows.length} entries) ===`);
-      console.log(renderEntriesForClaude(rows));
-      console.log("");
-    }
+    const mode = (cfg?.mode === "local" || cfg?.mode === "cloud") ? cfg.mode : "cloud";
+    const rows = await pullEntries({
+      bundle_id: bid,
+      since: opts.since,
+      limit: Number(opts.limit),
+      exclude_project: opts.includeSelf ? undefined : cfg?.project_name,
+      mode,
+    });
+    console.log(`=== ${bid} (${rows.length} entries) ===`);
+    console.log(renderEntriesForClaude(rows));
   });
 
 // ---------- rewind ----------
@@ -363,6 +354,23 @@ program
     }
   });
 
+// ---------- leave ----------
+program
+  .command("leave")
+  .description("Disconnect this project from its current bundle (bundle still exists for others)")
+  .action(() => {
+    const cfg = loadProjectConfig();
+    if (!cfg || !cfg.bundle) {
+      console.log("This project is not in any bundle.");
+      return;
+    }
+    const oldBundle = cfg.bundle;
+    cfg.bundle = null;
+    cfg.mode = "off";
+    saveProjectConfig(cfg);
+    console.log(`Left bundle ${oldBundle}. Mode set to off.`);
+  });
+
 // ---------- delete-bundle ----------
 program
   .command("delete-bundle <bundle_id>")
@@ -371,11 +379,12 @@ program
     const cfg = loadProjectConfig();
     const mode = (cfg?.mode === "local" || cfg?.mode === "cloud") ? cfg.mode : "cloud";
     await deleteBundle(bundleId, mode);
-    if (cfg) {
-      cfg.bundles = cfg.bundles.filter((id) => id !== bundleId);
+    if (cfg && cfg.bundle === bundleId) {
+      cfg.bundle = null;
+      cfg.mode = "off";
       saveProjectConfig(cfg);
     }
-    console.log(`Deleted bundle ${bundleId} and removed from local config.`);
+    console.log(`Deleted bundle ${bundleId}.`);
   });
 
 // ---------- helpers ----------
