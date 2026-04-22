@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ctx-link: Claude Code PostToolUse hook
+# cxtl: Claude Code PostToolUse hook
 #
 # Reads the tool-use JSON from stdin, looks for git commit / gh pr create,
 # and delegates to the git post-commit path if the action made a new commit.
@@ -33,9 +33,9 @@ try {
 
 # Match commit-producing commands.
 if [[ "$CMD" =~ git[[:space:]]+commit || "$CMD" =~ gh[[:space:]]+pr[[:space:]]+create ]]; then
-  # Only run in dirs that have .ctx-link.json with mode != "off"
-  if [[ -f "$PWD/.ctx-link.json" ]]; then
-    MODE=$(bun -e "try{process.stdout.write(JSON.parse(require('fs').readFileSync('$PWD/.ctx-link.json','utf8')).mode??'off')}catch{process.stdout.write('off')}" 2>/dev/null)
+  # Only run in dirs that have .cxtl.json with mode != "off"
+  if [[ -f "$PWD/.cxtl.json" ]]; then
+    MODE=$(bun -e "try{process.stdout.write(JSON.parse(require('fs').readFileSync('$PWD/.cxtl.json','utf8')).mode??'off')}catch{process.stdout.write('off')}" 2>/dev/null)
     [[ "$MODE" == "off" ]] && exit 0
     EVENT="commit"
     [[ "$CMD" =~ gh[[:space:]]+pr ]] && EVENT="pr_open"
@@ -43,7 +43,7 @@ if [[ "$CMD" =~ git[[:space:]]+commit || "$CMD" =~ gh[[:space:]]+pr[[:space:]]+c
     # Async push so we don't block Claude Code's next action
     (
       SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
-      ctx-link push --event "$EVENT" --ref "$SHA" --diff >/dev/null 2>&1 || true
+      cxtl push --event "$EVENT" --ref "$SHA" --diff >/dev/null 2>&1 || true
     ) &
   fi
 fi

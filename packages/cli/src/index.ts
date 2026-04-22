@@ -36,19 +36,19 @@ import {
 
 const program = new Command();
 program
-  .name("ctx-link")
+  .name("cxtl")
   .description(
     "Connect Claude Code sessions across projects via shared context bundles.\n\n" +
     "Modes:\n" +
     "  off   — default, no linking, hooks do nothing\n" +
-    "  local — entries stored in ~/.ctx-link/local/, same machine only\n" +
+    "  local — entries stored in ~/.cxtl/local/, same machine only\n" +
     "  cloud — entries stored in Supabase, requires team membership\n\n" +
     "Typical flow:\n" +
-    "  1. ctx-link create-team          (cloud only, once)\n" +
-    "  2. ctx-link create <name> --mode local|cloud\n" +
-    "  3. In other project: ctx-link join <bundle_id> --mode local|cloud\n" +
-    "  4. ctx-link push --message '...' (or auto on git commit)\n" +
-    "  5. ctx-link pull                 (from the other project)"
+    "  1. cxtl create-team          (cloud only, once)\n" +
+    "  2. cxtl create <name> --mode local|cloud\n" +
+    "  3. In other project: cxtl join <bundle_id> --mode local|cloud\n" +
+    "  4. cxtl push --message '...' (or auto on git commit)\n" +
+    "  5. cxtl pull                 (from the other project)"
   )
   .version("0.1.0");
 
@@ -60,7 +60,7 @@ program
     "Create a new team for cloud mode. Prompts for name and password.\n" +
     "You are auto-joined as a member. Share the name + password with teammates.\n\n" +
     "Example:\n" +
-    "  $ ctx-link create-team\n" +
+    "  $ cxtl create-team\n" +
     "  Team name: my-team\n" +
     "  Password: ****"
   )
@@ -75,7 +75,7 @@ program
     console.log(`  ID:   ${r.team_id}`);
     console.log("");
     console.log("Others can join with:");
-    console.log(`  ctx-link join-team`);
+    console.log(`  cxtl join-team`);
   });
 
 program
@@ -84,7 +84,7 @@ program
     "Join an existing team. Prompts for the team name and password.\n" +
     "Once joined, you can access all cloud bundles in that team.\n\n" +
     "Example:\n" +
-    "  $ ctx-link join-team\n" +
+    "  $ cxtl join-team\n" +
     "  Team name: my-team\n" +
     "  Password: ****"
   )
@@ -101,12 +101,12 @@ program
   .command("my-teams")
   .description(
     "List all teams you belong to. Shows team ID, name, and join date.\n" +
-    "Use the team ID with 'ctx-link create --team <id>' or 'ctx-link team-bundles <id>'."
+    "Use the team ID with 'cxtl create --team <id>' or 'cxtl team-bundles <id>'."
   )
   .action(() => {
     const teams = listMyTeams();
     if (teams.length === 0) {
-      console.log("Not a member of any teams. Run 'ctx-link create-team' or 'ctx-link join-team'.");
+      console.log("Not a member of any teams. Run 'cxtl create-team' or 'cxtl join-team'.");
       return;
     }
     for (const t of teams) {
@@ -118,14 +118,14 @@ program
   .command("team-bundles <team_id>")
   .description(
     "List all bundles in a team. Shows bundle ID, name, and creation date.\n" +
-    "Use the bundle ID with 'ctx-link join <bundle_id> --mode cloud'.\n\n" +
+    "Use the bundle ID with 'cxtl join <bundle_id> --mode cloud'.\n\n" +
     "Example:\n" +
-    "  $ ctx-link team-bundles 260c55e9-..."
+    "  $ cxtl team-bundles 260c55e9-..."
   )
   .action(async (teamId: string) => {
     const bundles = await listTeamBundles(teamId);
     if (bundles.length === 0) {
-      console.log("No bundles in this team. Create one with 'ctx-link create <name> --mode cloud --team <id>'.");
+      console.log("No bundles in this team. Create one with 'cxtl create <name> --mode cloud --team <id>'.");
       return;
     }
     for (const b of bundles) {
@@ -138,13 +138,13 @@ program
 program
   .command("info")
   .description(
-    "Show this project's ctx-link config. Reads .ctx-link.json in the current directory.\n" +
+    "Show this project's cxtl config. Reads .cxtl.json in the current directory.\n" +
     "Shows: project name, mode, active bundle ID, auto-push settings."
   )
   .action(() => {
     const cfg = loadProjectConfig();
     if (!cfg) {
-      console.log("No .ctx-link.json in this directory. Run 'ctx-link create' or 'ctx-link join' to set up.");
+      console.log("No .cxtl.json in this directory. Run 'cxtl create' or 'cxtl join' to set up.");
       return;
     }
     console.log(`Project:  ${cfg.project_name}`);
@@ -162,19 +162,19 @@ program
     "Create a new bundle and link it to the current project.\n" +
     "Replaces any existing bundle for this project.\n\n" +
     "Local mode (same machine, no network):\n" +
-    "  $ ctx-link create my-feature --mode local\n\n" +
+    "  $ cxtl create my-feature --mode local\n\n" +
     "Cloud mode (cross-machine, requires team):\n" +
-    "  $ ctx-link create my-feature --mode cloud --team <team_id>"
+    "  $ cxtl create my-feature --mode cloud --team <team_id>"
   )
   .requiredOption("--mode <mode>", "'local' (file-based, same machine) or 'cloud' (Supabase, cross-machine)")
-  .option("--team <team_id>", "team ID — required for cloud mode. Get it from 'ctx-link my-teams'")
+  .option("--team <team_id>", "team ID — required for cloud mode. Get it from 'cxtl my-teams'")
   .action(async (name: string, opts) => {
     if (opts.mode !== "local" && opts.mode !== "cloud") {
       console.error("--mode must be 'local' or 'cloud'.");
       process.exit(1);
     }
     if (opts.mode === "cloud" && !opts.team) {
-      console.error("Cloud bundles require --team <team_id>. Run 'ctx-link my-teams' to see your teams.");
+      console.error("Cloud bundles require --team <team_id>. Run 'cxtl my-teams' to see your teams.");
       process.exit(1);
     }
     const r = await createBundle(name, opts.mode, opts.team);
@@ -194,7 +194,7 @@ program
     console.log(`  Name:  ${r.name}`);
     console.log("");
     console.log("In another project, join with:");
-    console.log(`  ctx-link join ${r.bundle_id} --mode ${opts.mode}`);
+    console.log(`  cxtl join ${r.bundle_id} --mode ${opts.mode}`);
   });
 
 program
@@ -203,10 +203,10 @@ program
     "Join an existing bundle from the current project.\n" +
     "Replaces any existing bundle for this project.\n" +
     "Cloud mode: no token needed (team membership is the auth).\n" +
-    "Local mode: pass the token from 'ctx-link create' output.\n\n" +
+    "Local mode: pass the token from 'cxtl create' output.\n\n" +
     "Examples:\n" +
-    "  $ ctx-link join abc-123 --mode cloud\n" +
-    "  $ ctx-link join abc-123 local_abc-123 --mode local"
+    "  $ cxtl join abc-123 --mode cloud\n" +
+    "  $ cxtl join abc-123 local_abc-123 --mode local"
   )
   .requiredOption("--mode <mode>", "'local' or 'cloud'")
   .action(async (bundleId: string, token: string | undefined, opts) => {
@@ -233,7 +233,7 @@ program
   .command("my-bundles")
   .description(
     "List all bundles this machine has ever joined (across all projects).\n" +
-    "To see the bundle for the CURRENT project only, use 'ctx-link info'."
+    "To see the bundle for the CURRENT project only, use 'cxtl info'."
   )
   .action(() => {
     const bundles = listLocalBundles();
@@ -251,7 +251,7 @@ program
   .description(
     "Show bundle details: session count, entry count, last activity.\n\n" +
     "Example:\n" +
-    "  $ ctx-link status abc-123"
+    "  $ cxtl status abc-123"
   )
   .action(async (bundleId: string) => {
     const cfg = loadProjectConfig();
@@ -264,17 +264,17 @@ program
 program
   .command("push")
   .description(
-    "Push a context entry to this project's bundle. Reads bundle from .ctx-link.json.\n\n" +
+    "Push a context entry to this project's bundle. Reads bundle from .cxtl.json.\n\n" +
     "Usage:\n" +
-    "  ctx-link push --message <text>      Use your text as summary + raw context\n" +
-    "  ctx-link push --diff                Use git diff as raw context, commit message as summary\n" +
-    "  ctx-link push --diff --summary <s>  Use git diff + explicit summary\n\n" +
+    "  cxtl push --message <text>      Use your text as summary + raw context\n" +
+    "  cxtl push --diff                Use git diff as raw context, commit message as summary\n" +
+    "  cxtl push --diff --summary <s>  Use git diff + explicit summary\n\n" +
     "Options:\n" +
     "  --event <type>   commit | pr_open | manual | session_end (default: manual)\n" +
     "  --ref <ref>      commit SHA, PR number, or branch name\n\n" +
     "Examples:\n" +
-    "  $ ctx-link push --message 'Added /api/auth endpoint with JWT'\n" +
-    "  $ ctx-link push --event commit --ref $(git rev-parse HEAD) --diff"
+    "  $ cxtl push --message 'Added /api/auth endpoint with JWT'\n" +
+    "  $ cxtl push --event commit --ref $(git rev-parse HEAD) --diff"
   )
   .option("--event <type>", "event type", "manual")
   .option("--ref <ref>", "commit SHA, PR number, or reference")
@@ -284,7 +284,7 @@ program
   .action(async (opts) => {
     const cfg = loadProjectConfig();
     if (!cfg || !cfg.bundle) {
-      console.error("No bundle configured. Run 'ctx-link create' or 'ctx-link join' first.");
+      console.error("No bundle configured. Run 'cxtl create' or 'cxtl join' first.");
       process.exit(1);
     }
 
@@ -313,7 +313,7 @@ program
       }
     } else {
       if (!opts.message) {
-        console.error("Provide --message <text> or use --diff.\nRun 'ctx-link push --help' for examples.");
+        console.error("Provide --message <text> or use --diff.\nRun 'cxtl push --help' for examples.");
         process.exit(1);
       }
       raw = opts.message;
@@ -337,13 +337,13 @@ program
 program
   .command("pull [bundle_id]")
   .description(
-    "Pull recent entries from a bundle. Reads bundle from .ctx-link.json if no ID given.\n" +
+    "Pull recent entries from a bundle. Reads bundle from .cxtl.json if no ID given.\n" +
     "By default, filters out your own project's entries (shows only cross-project context).\n\n" +
     "Examples:\n" +
-    "  $ ctx-link pull                         Pull from current project's bundle\n" +
-    "  $ ctx-link pull --include-self           Include your own entries\n" +
-    "  $ ctx-link pull abc-123                  Pull from a specific bundle\n" +
-    "  $ ctx-link pull --since 2026-04-22T12:00:00Z --limit 50"
+    "  $ cxtl pull                         Pull from current project's bundle\n" +
+    "  $ cxtl pull --include-self           Include your own entries\n" +
+    "  $ cxtl pull abc-123                  Pull from a specific bundle\n" +
+    "  $ cxtl pull --since 2026-04-22T12:00:00Z --limit 50"
   )
   .option("--since <iso>", "only entries newer than this ISO timestamp")
   .option("--limit <n>", "max entries to return", "20")
@@ -353,7 +353,7 @@ program
     const bid = bundleId ?? cfg?.bundle;
 
     if (!bid) {
-      console.error("No bundle specified and none configured. Run 'ctx-link create' or 'ctx-link join' first.");
+      console.error("No bundle specified and none configured. Run 'cxtl create' or 'cxtl join' first.");
       process.exit(1);
     }
 
@@ -375,15 +375,15 @@ program
   .command("rewind")
   .description(
     "Soft-delete entries from ONE project in a bundle. Other projects untouched.\n" +
-    "Dry-run by default — add --apply to execute. Reversible via 'ctx-link restore'.\n\n" +
+    "Dry-run by default — add --apply to execute. Reversible via 'cxtl restore'.\n\n" +
     "Strategies (pick exactly one):\n" +
     "  --last-n <n>        Rewind the last N entries from this project\n" +
     "  --since <iso>       Rewind entries at or after this timestamp\n" +
     "  --entry-ids <a,b,c> Rewind specific entry IDs\n" +
     "  --after-ref <sha>   Rewind everything after this trigger_ref (pivot kept)\n\n" +
     "Examples:\n" +
-    "  $ ctx-link rewind --bundle abc --project my-api --last-n 3\n" +
-    "  $ ctx-link rewind --bundle abc --project my-api --last-n 3 --apply --reason 'bad abstraction'"
+    "  $ cxtl rewind --bundle abc --project my-api --last-n 3\n" +
+    "  $ cxtl rewind --bundle abc --project my-api --last-n 3 --apply --reason 'bad abstraction'"
   )
   .requiredOption("--bundle <id>", "bundle ID")
   .requiredOption("--project <name>", "project name (only this project's entries are affected)")
@@ -435,7 +435,7 @@ program
     }
     if (r.rewind_log_id) {
       console.log(`\nAudit log: ${r.rewind_log_id}`);
-      console.log(`Undo with: ctx-link restore --bundle ${opts.bundle} --project ${opts.project} --from-log ${r.rewind_log_id}`);
+      console.log(`Undo with: cxtl restore --bundle ${opts.bundle} --project ${opts.project} --from-log ${r.rewind_log_id}`);
     }
   });
 
@@ -444,8 +444,8 @@ program
   .description(
     "Undo a rewind — bring back soft-deleted entries.\n\n" +
     "Examples:\n" +
-    "  $ ctx-link restore --bundle abc --project my-api --from-log <log_id>\n" +
-    "  $ ctx-link restore --bundle abc --project my-api --entry-ids id1,id2"
+    "  $ cxtl restore --bundle abc --project my-api --from-log <log_id>\n" +
+    "  $ cxtl restore --bundle abc --project my-api --entry-ids id1,id2"
   )
   .requiredOption("--bundle <id>", "bundle ID")
   .requiredOption("--project <name>", "project name")
@@ -467,7 +467,7 @@ program
   .description(
     "List past rewinds for a bundle. Use the log_id to restore.\n\n" +
     "Example:\n" +
-    "  $ ctx-link rewind-history abc-123 --project my-api"
+    "  $ cxtl rewind-history abc-123 --project my-api"
   )
   .option("--project <name>", "filter by project name")
   .option("--limit <n>", "max results", "20")
@@ -492,7 +492,7 @@ program
   .command("leave")
   .description(
     "Disconnect this project from its bundle. The bundle still exists for others.\n" +
-    "Sets mode to 'off'. Rejoin anytime with 'ctx-link join'."
+    "Sets mode to 'off'. Rejoin anytime with 'cxtl join'."
   )
   .action(() => {
     const cfg = loadProjectConfig();
@@ -511,7 +511,7 @@ program
   .command("delete-bundle <bundle_id>")
   .description(
     "Permanently delete a bundle and ALL its entries. Irreversible.\n" +
-    "Use 'ctx-link leave' if you just want to disconnect without destroying data."
+    "Use 'cxtl leave' if you just want to disconnect without destroying data."
   )
   .action(async (bundleId: string) => {
     const cfg = loadProjectConfig();
