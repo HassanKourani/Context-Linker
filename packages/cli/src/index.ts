@@ -2,6 +2,17 @@
 import { Command } from "commander";
 import { existsSync, readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
+import { createInterface } from "node:readline";
+
+function prompt(question: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
 import {
   loadProjectConfig,
   saveProjectConfig,
@@ -27,26 +38,32 @@ program.name("ctx-link").description("Connect Claude Code sessions across projec
 
 // ---------- team ----------
 program
-  .command("create-team <name>")
-  .description("Create a new team (others join with the name + password)")
-  .requiredOption("--password <password>")
-  .action(async (name: string, opts) => {
-    const r = await createTeam(name, opts.password);
-    console.log(`Team created.`);
+  .command("create-team")
+  .description("Create a new team (prompts for name and password)")
+  .action(async () => {
+    const name = await prompt("Team name: ");
+    if (!name) { console.error("Team name is required."); process.exit(1); }
+    const password = await prompt("Password: ");
+    if (!password) { console.error("Password is required."); process.exit(1); }
+    const r = await createTeam(name, password);
+    console.log(`\nTeam created.`);
     console.log(`  Name: ${r.name}`);
     console.log(`  ID:   ${r.team_id}`);
     console.log("");
     console.log("Others can join with:");
-    console.log(`  ctx-link join-team ${r.name} --password <password>`);
+    console.log(`  ctx-link join-team`);
   });
 
 program
-  .command("join-team <name>")
-  .description("Join an existing team")
-  .requiredOption("--password <password>")
-  .action(async (name: string, opts) => {
-    const r = await joinTeam(name, opts.password);
-    console.log(`Joined team ${r.name} (${r.team_id}).`);
+  .command("join-team")
+  .description("Join an existing team (prompts for name and password)")
+  .action(async () => {
+    const name = await prompt("Team name: ");
+    if (!name) { console.error("Team name is required."); process.exit(1); }
+    const password = await prompt("Password: ");
+    if (!password) { console.error("Password is required."); process.exit(1); }
+    const r = await joinTeam(name, password);
+    console.log(`\nJoined team ${r.name} (${r.team_id}).`);
   });
 
 program
