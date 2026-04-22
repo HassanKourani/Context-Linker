@@ -1,0 +1,14 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e6]: ctx-link
+    - generic [ref=e10]: —
+  - application [ref=e12]:
+    - img
+    - generic "Control Panel" [ref=e15]:
+      - button "Zoom In" [ref=e16] [cursor=pointer]:
+        - img [ref=e17]
+      - button "Zoom Out" [ref=e19] [cursor=pointer]:
+        - img [ref=e20]
+      - button "Fit View" [ref=e22] [cursor=pointer]:
+        - img [ref=e23]
+    - img "Mini Map" [ref=e26]

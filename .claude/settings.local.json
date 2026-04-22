@@ -4,7 +4,9 @@
       "Bash(bun packages/cli/src/index.ts status fda2ca00-dc11-4cb9-9d6f-eb1aa9585a37)",
       "Read(//Users/hassan/.ctx-link/**)",
       "Bash(git add:*)",
-      "Bash(git commit -m ':*)"
+      "Bash(git commit -m ':*)",
+      "Bash(bun run:*)",
+      "Bash(bun packages/cli/src/index.ts --help)"
     ]
   }
 }
