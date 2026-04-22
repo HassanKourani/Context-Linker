@@ -5,6 +5,7 @@ import {
   getBundleToken,
   loadGlobalConfig,
   loadTokenStore,
+  saveTokenStore,
   storeBundleToken,
 } from "./config.js";
 
@@ -155,6 +156,18 @@ export async function bundleStatus(bundleId: string): Promise<BundleStatus> {
     entry_count: eCount ?? 0,
     last_entry_at: entries?.[0]?.created_at ?? null,
   };
+}
+
+export async function deleteBundle(bundleId: string): Promise<void> {
+  await assertTokenValid(bundleId);
+  const sb = getSupabase();
+  const { error } = await sb.from("bundles").delete().eq("id", bundleId);
+  if (error) throw new Error(`deleteBundle failed: ${error.message}`);
+
+  // Clean up local token store
+  const store = loadTokenStore();
+  delete store[bundleId];
+  saveTokenStore(store);
 }
 
 export interface LocalBundleInfo {

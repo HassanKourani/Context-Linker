@@ -8,6 +8,7 @@ import {
 import {
   createBundle,
   joinBundle,
+  deleteBundle,
   bundleStatus,
   listLocalBundles,
   pushEntry,
@@ -192,6 +193,18 @@ const tools = [
     },
   },
   {
+    name: "bundle_delete",
+    description:
+      "Permanently delete a bundle and all its entries. This is irreversible — cascade-deletes all sessions and entries. Use with caution.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bundle_id: { type: "string" },
+      },
+      required: ["bundle_id"],
+    },
+  },
+  {
     name: "rewind_history",
     description:
       "List past rewinds for a bundle (optionally filtered by project). Useful to find a rewind_log_id to restore from.",
@@ -367,6 +380,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           rewind_log_id: a.rewind_log_id,
         });
         return ok(r);
+      }
+
+      case "bundle_delete": {
+        const a = z.object({ bundle_id: z.string() }).parse(args);
+        await deleteBundle(a.bundle_id);
+        return ok({ deleted: true, bundle_id: a.bundle_id });
       }
 
       case "rewind_history": {

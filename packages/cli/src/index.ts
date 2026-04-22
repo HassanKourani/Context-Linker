@@ -10,6 +10,7 @@ import {
   saveProjectConfig,
   createBundle,
   joinBundle,
+  deleteBundle,
   listLocalBundles,
   bundleStatus,
   pushEntry,
@@ -132,16 +133,26 @@ program
     let summary: string;
 
     if (opts.diff) {
-      if (!opts.summary) {
-        console.error("--diff requires --summary (no AI in the CLI loop to generate one).");
-        process.exit(1);
-      }
       try {
         raw = execSync("git diff HEAD~1", { encoding: "utf8" });
       } catch {
         raw = execSync("git diff --cached", { encoding: "utf8" });
       }
-      summary = opts.summary;
+      if (opts.summary) {
+        summary = opts.summary;
+      } else {
+        // Auto-extract from commit message (used by git hooks where no AI is in the loop)
+        const ref = opts.ref ?? "HEAD";
+        try {
+          summary = execSync(`git log -1 --pretty=%B ${ref}`, { encoding: "utf8" }).trim();
+        } catch {
+          summary = "";
+        }
+        if (!summary) {
+          console.error("--diff requires --summary (could not extract commit message).");
+          process.exit(1);
+        }
+      }
     } else {
       if (!opts.message) {
         console.error("Provide --message <text> or use --diff --summary <text>.");
@@ -293,6 +304,21 @@ program
       if (r.reason) console.log(`  reason: ${r.reason}`);
       console.log(`  log_id: ${r.id}`);
     }
+  });
+
+// ---------- delete-bundle ----------
+program
+  .command("delete-bundle <bundle_id>")
+  .description("Permanently delete a bundle and all its entries (irreversible)")
+  .action(async (bundleId: string) => {
+    await deleteBundle(bundleId);
+    // Also remove from project config if present
+    const cfg = loadProjectConfig();
+    if (cfg) {
+      cfg.bundles = cfg.bundles.filter((id) => id !== bundleId);
+      saveProjectConfig(cfg);
+    }
+    console.log(`Deleted bundle ${bundleId} and removed from local config.`);
   });
 
 // ---------- helpers ----------
