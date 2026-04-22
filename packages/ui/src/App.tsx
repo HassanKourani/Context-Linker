@@ -17,6 +17,7 @@ import { TeamGroupNode } from "./components/nodes/TeamGroupNode";
 import { TopBar } from "./components/TopBar";
 import { CreateBundleDialog } from "./components/CreateBundleDialog";
 import { DeleteBundleDialog } from "./components/DeleteBundleDialog";
+import { EntryPanel } from "./components/EntryPanel";
 
 const nodeTypes: NodeTypes = {
   project: ProjectNode,
@@ -97,6 +98,7 @@ export function App() {
       </div>
       <CreateBundleDialog />
       <DeleteBundleDialog />
+      <EntryPanel />
     </div>
   );
 }
