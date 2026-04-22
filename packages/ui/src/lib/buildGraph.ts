@@ -201,6 +201,77 @@ export function buildFlowGraph(
     allEdges.push(...edges);
   }
 
+  // Standalone sessions (projects not connected to any bundle)
+  if (data.sessions && data.sessions.length > 0) {
+    // Collect unique projects from sessions that aren't already shown via bundles
+    const linkedProjects = new Set<string>();
+    for (const team of data.teams) {
+      for (const bundle of team.bundles) {
+        for (const s of bundle.sessions) {
+          linkedProjects.add(s.project_name);
+        }
+      }
+    }
+    for (const lb of data.local.bundles) {
+      for (const p of (lb as any).projects ?? []) {
+        linkedProjects.add(p.project_name);
+      }
+    }
+
+    const standaloneProjects = new Map<string, { started_at: string; branch: string | null; mode: string }>();
+    for (const session of data.sessions) {
+      if (!linkedProjects.has(session.project_name) && !standaloneProjects.has(session.project_name)) {
+        standaloneProjects.set(session.project_name, {
+          started_at: session.started_at,
+          branch: session.branch,
+          mode: session.mode,
+        });
+      }
+    }
+
+    if (standaloneProjects.size > 0) {
+      const groupId = "standalone";
+      const standaloneNodes: Node[] = [];
+
+      // Group node
+      const nodeWidth = PROJECT_NODE_WIDTH + GROUP_PADDING * 2;
+      const nodeHeight = GROUP_HEADER + GROUP_PADDING * 2 + standaloneProjects.size * (PROJECT_NODE_HEADER + PROJECT_NODE_ROW + 16);
+
+      standaloneNodes.push({
+        id: groupId,
+        type: "teamGroup",
+        position: { x: 0, y: yOffset },
+        data: { teamName: "Unlinked Projects", color: "#6c7086" },
+        style: { width: nodeWidth, height: nodeHeight },
+      });
+
+      let pY = GROUP_HEADER + GROUP_PADDING;
+      for (const [projectName, info] of standaloneProjects) {
+        const nodeId = `project-${groupId}-${projectName}`;
+        standaloneNodes.push({
+          id: nodeId,
+          type: "project",
+          position: { x: GROUP_PADDING, y: pY },
+          parentId: groupId,
+          extent: "parent" as const,
+          data: {
+            projectName,
+            sessions: [{
+              id: `standalone-${projectName}`,
+              machineId: data.machine_id,
+              lastActiveAt: info.started_at,
+              isYou: true,
+            }],
+          },
+        });
+        pY += PROJECT_NODE_HEADER + PROJECT_NODE_ROW + 16;
+      }
+
+      yOffset += nodeHeight + GROUP_GAP;
+      allNodes.push(...standaloneNodes);
+    }
+  }
+
   // Local group
   if (data.local.bundles.length > 0) {
     const { nodes, edges } = buildGroup({
