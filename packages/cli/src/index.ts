@@ -165,16 +165,17 @@ program
     "Record the current project as an active session. Called automatically by the SessionStart hook.\n" +
     "You don't need to run this manually."
   )
-  .action(() => {
+  .action(async () => {
     const cfg = loadProjectConfig();
     const globalCfg = loadGlobalConfig();
+    const projectName = cfg?.project_name ?? detectProjectName();
     let branch: string | null = null;
     try {
       branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf8" }).trim();
     } catch {}
 
     logSession({
-      project_name: cfg?.project_name ?? detectProjectName(),
+      project_name: projectName,
       project_path: process.cwd(),
       machine_id: globalCfg.machine_id,
       started_at: new Date().toISOString(),
@@ -182,7 +183,24 @@ program
       bundle: cfg?.bundle ?? null,
       mode: cfg?.mode ?? "off",
     });
-    // Silent — this runs in a hook, no output needed
+
+    // Auto-push session_start entry if project has an active bundle
+    if (cfg?.bundle && cfg.mode !== "off") {
+      try {
+        const mode = (cfg.mode === "local" || cfg.mode === "cloud") ? cfg.mode : "cloud";
+        await pushEntry({
+          bundle_id: cfg.bundle,
+          project_name: projectName,
+          event_type: "manual",
+          trigger_ref: branch,
+          raw_context: `New Claude Code session started in ${projectName} on branch ${branch ?? "unknown"} at ${process.cwd()}`,
+          summary: `Session started: ${projectName} (${branch ?? "no branch"})`,
+          mode,
+        });
+      } catch {
+        // Non-fatal — don't block session start if push fails
+      }
+    }
   });
 
 program
