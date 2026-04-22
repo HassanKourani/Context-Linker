@@ -90,11 +90,14 @@ const tools = [
   {
     name: "context_push",
     description:
-      "Push a cross-project context handoff note to a bundle. " +
-      "YOU (Claude) must generate the summary before calling this tool — do NOT rely on the server to call the Anthropic API. " +
-      "Read the raw_context, write a 2-4 sentence summary focused on cross-project impact (API shapes, contracts, breaking changes), " +
-      "list files_touched, and list decisions with an affects array (e.g. ['frontend', 'mobile']). " +
-      "Skip internal refactors with no external impact. Pass your summary directly in the summary field.",
+      "Push a cross-project context handoff note to the session's connected bundles. " +
+      "YOU (Claude) must generate the summary — write a 2-4 sentence note focused on cross-project impact " +
+      "(API shapes, contracts, breaking changes, schema updates, new endpoints, dependency changes). " +
+      "List files_touched and decisions with an affects array (e.g. ['frontend', 'mobile']). " +
+      "PROACTIVE USE: You SHOULD call this automatically (without being asked) when you make changes that " +
+      "other projects need to know about: new/changed API endpoints, breaking contract changes, schema migrations, " +
+      "key architectural decisions, or dependency updates. Skip purely internal refactors with no cross-project impact. " +
+      "If bundle_id is omitted, pushes to ALL bundles connected to the current session.",
     inputSchema: {
       type: "object",
       properties: {
@@ -145,7 +148,10 @@ const tools = [
   {
     name: "context_pull",
     description:
-      "Pull recent cross-project context from a bundle. Returns a formatted string ready to give to Claude. Call this at the start of work to see what other sessions have done.",
+      "Pull recent cross-project context from the session's connected bundles. " +
+      "PROACTIVE USE: You SHOULD call this at the start of a session if bundles are connected, " +
+      "to see what other projects/sessions have done. This gives you cross-project awareness. " +
+      "If bundle_id is omitted, pulls from ALL connected bundles (aggregated and sorted by time).",
     inputSchema: {
       type: "object",
       properties: {
