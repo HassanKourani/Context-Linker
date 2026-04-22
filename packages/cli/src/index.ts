@@ -51,42 +51,56 @@ program
 program
   .command("create <name>")
   .description("Create a new bundle in the current repo")
-  .action(async (name: string) => {
+  .requiredOption("--mode <mode>", "local | cloud")
+  .action(async (name: string, opts) => {
+    if (opts.mode !== "local" && opts.mode !== "cloud") {
+      console.error("--mode must be 'local' or 'cloud'.");
+      process.exit(1);
+    }
     const r = await createBundle(name);
     const cfg = loadProjectConfig() ?? {
+      mode: "off" as const,
       project_name: detectProjectName(),
       bundles: [],
       auto_push_on: ["commit"],
       push_debounce_seconds: 600,
     };
+    cfg.mode = opts.mode;
     if (!cfg.bundles.includes(r.bundle_id)) cfg.bundles.push(r.bundle_id);
     saveProjectConfig(cfg);
 
-    console.log("Bundle created.");
+    console.log(`Bundle created (mode: ${opts.mode}).`);
     console.log(`  ID:    ${r.bundle_id}`);
     console.log(`  Name:  ${r.name}`);
     console.log(`  Token: ${r.join_token}`);
     console.log("");
     console.log("Share the ID + token with another session via:");
-    console.log(`  ctx-link join ${r.bundle_id} ${r.join_token}`);
+    console.log(`  ctx-link join ${r.bundle_id} ${r.join_token} --mode ${opts.mode}`);
   });
 
 // ---------- join ----------
 program
   .command("join <bundle_id> <token>")
   .description("Join an existing bundle from the current repo")
-  .action(async (bundleId: string, token: string) => {
+  .requiredOption("--mode <mode>", "local | cloud")
+  .action(async (bundleId: string, token: string, opts) => {
+    if (opts.mode !== "local" && opts.mode !== "cloud") {
+      console.error("--mode must be 'local' or 'cloud'.");
+      process.exit(1);
+    }
     const projectName = detectProjectName();
     const r = await joinBundle(bundleId, token, projectName);
     const cfg = loadProjectConfig() ?? {
+      mode: "off" as const,
       project_name: projectName,
       bundles: [],
       auto_push_on: ["commit"],
       push_debounce_seconds: 600,
     };
+    cfg.mode = opts.mode;
     if (!cfg.bundles.includes(r.bundle_id)) cfg.bundles.push(r.bundle_id);
     saveProjectConfig(cfg);
-    console.log(`Joined bundle ${r.name} (${r.bundle_id}) as project '${projectName}'.`);
+    console.log(`Joined bundle ${r.name} (${r.bundle_id}) as project '${projectName}' (mode: ${opts.mode}).`);
   });
 
 // ---------- list ----------

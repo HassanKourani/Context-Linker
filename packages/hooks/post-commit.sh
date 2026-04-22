@@ -15,6 +15,12 @@ if [[ ! -f "$CONFIG" ]]; then
   exit 0  # no ctx-link in this repo, no-op
 fi
 
+# Check mode — only push if local or cloud
+MODE=$(bun -e "try{process.stdout.write(JSON.parse(require('fs').readFileSync('$CONFIG','utf8')).mode??'off')}catch{process.stdout.write('off')}" 2>/dev/null)
+if [[ "$MODE" == "off" ]]; then
+  exit 0
+fi
+
 # Debounce: skip if last push was within push_debounce_seconds.
 LAST_PUSH_FILE=".git/.ctx-link-last-push"
 DEBOUNCE=$(bun -e "console.log(JSON.parse(require('fs').readFileSync('$CONFIG','utf8')).push_debounce_seconds ?? 600)")

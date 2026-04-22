@@ -33,8 +33,10 @@ try {
 
 # Match commit-producing commands.
 if [[ "$CMD" =~ git[[:space:]]+commit || "$CMD" =~ gh[[:space:]]+pr[[:space:]]+create ]]; then
-  # Only run in dirs that have .ctx-link.json
+  # Only run in dirs that have .ctx-link.json with mode != "off"
   if [[ -f "$PWD/.ctx-link.json" ]]; then
+    MODE=$(bun -e "try{process.stdout.write(JSON.parse(require('fs').readFileSync('$PWD/.ctx-link.json','utf8')).mode??'off')}catch{process.stdout.write('off')}" 2>/dev/null)
+    [[ "$MODE" == "off" ]] && exit 0
     EVENT="commit"
     [[ "$CMD" =~ gh[[:space:]]+pr ]] && EVENT="pr_open"
 
