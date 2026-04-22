@@ -1,0 +1,16 @@
+@import "tailwindcss";
+@import "@xyflow/react/dist/style.css";
+
+body {
+  margin: 0;
+  background: #11111b;
+}
+
+.react-flow__handle {
+  width: 8px !important;
+  height: 8px !important;
+  background: #585b70 !important;
+  border: 2px solid #313244 !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+}
