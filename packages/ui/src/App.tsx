@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useState } from "react";
+import { useMemo, useCallback, useState, useRef } from "react";
 import {
   ReactFlow,
   Background,
@@ -84,12 +84,20 @@ export function App() {
     [nodes]
   );
 
+  const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const onEdgeMouseEnter: EdgeMouseHandler = useCallback((_event, edge) => {
+    if (leaveTimer.current) {
+      clearTimeout(leaveTimer.current);
+      leaveTimer.current = null;
+    }
     setHoveredEdgeId(edge.id);
   }, []);
 
   const onEdgeMouseLeave: EdgeMouseHandler = useCallback(() => {
-    setHoveredEdgeId(null);
+    leaveTimer.current = setTimeout(() => {
+      setHoveredEdgeId(null);
+    }, 300);
   }, []);
 
   return (

@@ -2,6 +2,7 @@ import {
   BaseEdge,
   EdgeLabelRenderer,
   getBezierPath,
+  useReactFlow,
   type EdgeProps,
 } from "@xyflow/react";
 import { X } from "lucide-react";
@@ -33,6 +34,7 @@ export function DeletableEdge({
 
   const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
+    e.preventDefault();
     if (!sessionId) return;
     deleteMutation.mutate(sessionId);
   };
@@ -53,17 +55,22 @@ export function DeletableEdge({
       />
       {sessionId && showButton && (
         <EdgeLabelRenderer>
-          <button
-            className="nodrag nopan absolute bg-destructive text-destructive-foreground rounded-full w-5 h-5 flex items-center justify-center shadow-md hover:scale-125 cursor-pointer transition-transform"
+          <div
+            className="nodrag nopan absolute"
             style={{
               transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
               pointerEvents: "all",
             }}
-            onClick={handleDelete}
-            title="Unlink session"
           >
-            <X className="w-3 h-3" />
-          </button>
+            <button
+              className="bg-destructive text-destructive-foreground rounded-full w-6 h-6 flex items-center justify-center shadow-lg hover:scale-125 cursor-pointer transition-transform border border-destructive-foreground/20"
+              onClick={handleDelete}
+              onMouseDown={(e) => e.stopPropagation()}
+              title="Unlink session"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </EdgeLabelRenderer>
       )}
     </>
