@@ -40,24 +40,37 @@ export interface RewindResult {
 
 // ---------- Core ----------
 
-// Find entries that would be rewound, scoped to a single project within a bundle.
-// The `sessions!inner(project_name)` join is the hard boundary: other projects'
-// entries can never appear in this result set.
+/**
+ * Find entries that would be rewound.
+ * Queries cloud_session_entries joined with cloud_sessions.
+ * If bundle_id is provided, scopes to entries referenced by that bundle via bundle_entry_refs.
+ */
 async function findCandidates(input: RewindInput): Promise<RewindCandidate[]> {
   const sb = getSupabase();
 
-  // Pivot lookup for after_ref has to happen before the main query.
+  // For bundle-scoped rewind, get all entry IDs referenced by this bundle first
+  let bundleEntryIds: Set<string> | null = null;
+  if (input.bundle_id) {
+    const { data: refs, error: refErr } = await sb
+      .from("bundle_entry_refs")
+      .select("entry_id")
+      .eq("bundle_id", input.bundle_id);
+    if (refErr) throw new Error(`bundle refs lookup failed: ${refErr.message}`);
+    bundleEntryIds = new Set((refs ?? []).map((r: any) => r.entry_id));
+    if (bundleEntryIds.size === 0) return [];
+  }
+
+  // Pivot lookup for after_ref
   let sinceBound: string | null = null;
   if (input.strategy.kind === "after_ref") {
     if (!input.project_name) {
       throw new Error("after_ref strategy requires project_name.");
     }
     const { data: pivot, error } = await sb
-      .from("entries")
-      .select("created_at, sessions!inner(project_name)")
-      .eq("bundle_id", input.bundle_id)
+      .from("cloud_session_entries")
+      .select("created_at, cloud_sessions!inner(project_name)")
       .eq("trigger_ref", input.strategy.trigger_ref)
-      .eq("sessions.project_name", input.project_name)
+      .eq("cloud_sessions.project_name", input.project_name)
       .is("superseded_at", null)
       .maybeSingle();
 
@@ -73,18 +86,22 @@ async function findCandidates(input: RewindInput): Promise<RewindCandidate[]> {
   const needsProjectScope = !!input.project_name;
 
   let q = sb
-    .from("entries")
+    .from("cloud_session_entries")
     .select(
       needsProjectScope
-        ? "id, created_at, event_type, trigger_ref, summary, sessions!inner(project_name)"
+        ? "id, created_at, event_type, trigger_ref, summary, cloud_sessions!inner(project_name)"
         : "id, created_at, event_type, trigger_ref, summary"
     )
-    .eq("bundle_id", input.bundle_id)
     .is("superseded_at", null)
     .order("created_at", { ascending: false });
 
   if (needsProjectScope) {
-    q = q.eq("sessions.project_name", input.project_name!);
+    q = q.eq("cloud_sessions.project_name", input.project_name!);
+  }
+
+  // If scoped to a bundle, filter to only referenced entries
+  if (bundleEntryIds) {
+    q = q.in("id", Array.from(bundleEntryIds));
   }
 
   switch (input.strategy.kind) {
@@ -99,7 +116,6 @@ async function findCandidates(input: RewindInput): Promise<RewindCandidate[]> {
       q = q.in("id", input.strategy.ids);
       break;
     case "after_ref":
-      // Strictly after the pivot, so the pivot entry itself survives.
       q = q.gt("created_at", sinceBound!);
       break;
   }
@@ -156,10 +172,10 @@ export async function rewindProject(input: RewindInput): Promise<RewindResult> {
   const ids = candidates.map((c) => c.id);
   const now = new Date().toISOString();
 
-  // Soft-delete.
+  // Soft-delete on cloud_session_entries.
   const { error: updErr } = await sb
-    .from("entries")
-    .update({ superseded_at: now, superseded_reason: input.reason ?? "manual rewind" })
+    .from("cloud_session_entries")
+    .update({ superseded_at: now })
     .in("id", ids);
 
   if (updErr) throw new Error(`soft-delete failed: ${updErr.message}`);
@@ -181,7 +197,6 @@ export async function rewindProject(input: RewindInput): Promise<RewindResult> {
     .single();
 
   if (logErr) {
-    // Audit failure shouldn't break the rewind itself, but surface it.
     return {
       applied: true,
       dry_run: false,
@@ -205,9 +220,7 @@ export async function rewindProject(input: RewindInput): Promise<RewindResult> {
 export interface RestoreInput {
   bundle_id: string;
   project_name: string;
-  // If omitted, restores all currently-superseded entries for this project.
   entry_ids?: string[];
-  // If set, only restores entries that were rewound by this specific log entry.
   rewind_log_id?: string;
 }
 
@@ -237,15 +250,27 @@ export async function restoreRewound(input: RestoreInput): Promise<RestoreResult
 
   // Pull currently-superseded entries scoped to this project.
   const { data: scoped, error: sErr } = await sb
-    .from("entries")
-    .select("id, sessions!inner(project_name)")
-    .eq("bundle_id", input.bundle_id)
-    .eq("sessions.project_name", input.project_name)
+    .from("cloud_session_entries")
+    .select("id, cloud_sessions!inner(project_name)")
+    .eq("cloud_sessions.project_name", input.project_name)
     .not("superseded_at", "is", null);
 
   if (sErr) throw new Error(`restore scope query failed: ${sErr.message}`);
 
   const eligible = new Set((scoped ?? []).map((r: any) => r.id));
+
+  // If scoped to bundle, intersect with bundle refs
+  if (input.bundle_id) {
+    const { data: refs } = await sb
+      .from("bundle_entry_refs")
+      .select("entry_id")
+      .eq("bundle_id", input.bundle_id);
+    const bundleRefIds = new Set((refs ?? []).map((r: any) => r.entry_id));
+    for (const id of eligible) {
+      if (!bundleRefIds.has(id)) eligible.delete(id);
+    }
+  }
+
   let toRestore: string[];
 
   if (targetIds) {
@@ -261,8 +286,8 @@ export async function restoreRewound(input: RestoreInput): Promise<RestoreResult
   }
 
   const { error } = await sb
-    .from("entries")
-    .update({ superseded_at: null, superseded_reason: null })
+    .from("cloud_session_entries")
+    .update({ superseded_at: null })
     .in("id", toRestore);
 
   if (error) throw new Error(`restore failed: ${error.message}`);
