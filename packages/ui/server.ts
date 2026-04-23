@@ -548,6 +548,23 @@ const server = Bun.serve({
     if (url.pathname === "/api/unlink-session" && req.method === "POST") {
       try {
         const { session_id, bundle_id } = await req.json();
+        const mode = resolveBundleMode(bundle_id);
+
+        // Remove all entry refs for this session's entries from the bundle
+        const sessionEntries = getSessionEntries(session_id);
+        if (sessionEntries.length > 0) {
+          const entryIds = sessionEntries.map((e) => e.id);
+          if (mode === "local") {
+            for (const entryId of entryIds) {
+              localRemoveEntryFromBundle(bundle_id, entryId);
+            }
+          } else {
+            for (const entryId of entryIds) {
+              try { await removeEntryFromBundle(bundle_id, entryId); } catch {}
+            }
+          }
+        }
+
         disconnectSessionFromBundle(session_id, bundle_id);
         return Response.json({ ok: true }, { headers: corsHeaders });
       } catch (err: any) {
