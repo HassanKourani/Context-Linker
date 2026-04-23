@@ -113,8 +113,9 @@ export function EntryPanel() {
           </div>
         )}
 
-        <div className="flex items-center gap-2 px-4">
-          {isBundle && (
+        {/* Tabs row (bundle only) */}
+        {isBundle && (
+          <div className="flex items-center justify-between px-4">
             <div className="flex gap-1">
               <Button
                 variant={panelTab === "entries" ? "default" : "ghost"}
@@ -133,20 +134,7 @@ export function EntryPanel() {
                 Rewinds
               </Button>
             </div>
-          )}
-          <div className="ml-auto flex items-center gap-1">
-            {isBundle && selectedEntryIds.size > 0 && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-xs text-destructive"
-                onClick={handleDeleteSelected}
-              >
-                <Trash2 className="w-3 h-3 mr-1" />
-                Remove ({selectedEntryIds.size})
-              </Button>
-            )}
-            {isBundle && (
+            <div className="flex items-center gap-1">
               <Button
                 variant="ghost"
                 size="sm"
@@ -155,40 +143,72 @@ export function EntryPanel() {
               >
                 + Add Note
               </Button>
-            )}
-            {isSession && selectedEntryIds.size > 0 && (
               <Button
-                variant="outline"
-                size="sm"
-                className="text-xs text-destructive"
-                onClick={handleDeleteSelected}
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => refetch()}
               >
-                <Trash2 className="w-3 h-3 mr-1" />
-                Delete ({selectedEntryIds.size})
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
               </Button>
-            )}
-            {isSession && entries.length > 0 && (
-              <Button
-                variant="default"
-                size="sm"
-                className="text-xs"
-                onClick={() => openModal("push-session")}
-              >
-                <ArrowUpRight className="w-3 h-3 mr-1" />
-                {selectedEntryIds.size > 0
-                  ? `Push ${selectedEntryIds.size} to Bundle`
-                  : "Push to Bundle"}
-              </Button>
-            )}
+            </div>
+          </div>
+        )}
+
+        {/* Actions row (bundle selection) */}
+        {isBundle && selectedEntryIds.size > 0 && (
+          <div className="px-4">
             <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => refetch()}
+              variant="outline"
+              size="sm"
+              className="text-xs text-destructive w-full"
+              onClick={handleDeleteSelected}
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
+              <Trash2 className="w-3 h-3 mr-1" />
+              Remove {selectedEntryIds.size} from bundle
             </Button>
           </div>
-        </div>
+        )}
+
+        {/* Actions row (session) */}
+        {isSession && (
+          <div className="flex items-center justify-between px-4">
+            <div className="flex items-center gap-1">
+              {selectedEntryIds.size > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs text-destructive"
+                  onClick={handleDeleteSelected}
+                >
+                  <Trash2 className="w-3 h-3 mr-1" />
+                  Delete ({selectedEntryIds.size})
+                </Button>
+              )}
+            </div>
+            <div className="flex items-center gap-1">
+              {entries.length > 0 && (
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="text-xs"
+                  onClick={() => openModal("push-session")}
+                >
+                  <ArrowUpRight className="w-3 h-3 mr-1" />
+                  {selectedEntryIds.size > 0
+                    ? `Push ${selectedEntryIds.size} to Bundle`
+                    : "Push to Bundle"}
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => refetch()}
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
+              </Button>
+            </div>
+          </div>
+        )}
 
         <div className="flex-1 overflow-y-auto">
           {(isSession || panelTab === "entries") && (
