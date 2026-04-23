@@ -157,6 +157,12 @@ export function localPullEntries(input: PullInput): EntryRow[] {
   }));
 }
 
+export function localDeleteProjectFromBundle(bundleId: string, projectName: string): void {
+  const entries = readEntries(bundleId);
+  const filtered = entries.filter((e) => e.project_name !== projectName);
+  writeEntries(bundleId, filtered);
+}
+
 export interface LocalBundleDetail {
   bundle_id: string;
   bundle_name: string;

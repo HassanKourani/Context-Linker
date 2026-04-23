@@ -11,6 +11,7 @@ import {
   deleteBundle,
   joinBundle,
   deleteSession,
+  localDeleteProjectFromBundle,
   getBundleToken,
   pushEntry,
   pullEntries,
@@ -308,20 +309,21 @@ const server = Bun.serve({
       }
     }
 
-    // ── DELETE /api/sessions/:id ────────────────────────────────────────────
-    {
-      const match = url.pathname.match(/^\/api\/sessions\/([^/]+)$/);
-      if (match && req.method === "DELETE") {
-        try {
-          const sessionId = match[1];
-          await deleteSession(sessionId);
-          return Response.json({ ok: true }, { headers: corsHeaders });
-        } catch (err: any) {
-          return Response.json(
-            { error: err.message ?? String(err) },
-            { status: 500, headers: corsHeaders }
-          );
+    // ── POST /api/unlink-session ────────────────────────────────────────────
+    if (url.pathname === "/api/unlink-session" && req.method === "POST") {
+      try {
+        const { session_id, bundle_id, project_name, mode } = await req.json();
+        if (mode === "local") {
+          localDeleteProjectFromBundle(bundle_id, project_name);
+        } else {
+          await deleteSession(session_id);
         }
+        return Response.json({ ok: true }, { headers: corsHeaders });
+      } catch (err: any) {
+        return Response.json(
+          { error: err.message ?? String(err) },
+          { status: 500, headers: corsHeaders }
+        );
       }
     }
 

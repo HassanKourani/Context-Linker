@@ -79,8 +79,13 @@ export function joinBundle(bundleId: string, body: { project_name: string; mode:
 // Sessions
 // ---------------------------------------------------------------------------
 
-export function deleteSession(sessionId: string) {
-  return apiDelete<{ ok: true }>(`/api/sessions/${sessionId}`);
+export function unlinkSession(body: {
+  session_id: string;
+  bundle_id: string;
+  project_name: string;
+  mode: "local" | "cloud";
+}) {
+  return apiPost<{ ok: true }>("/api/unlink-session", body);
 }
 
 // ---------------------------------------------------------------------------

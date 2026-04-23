@@ -196,7 +196,12 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
           target: `bundle-${s.bundleId}`,
           type: "deletable",
           animated: true,
-          data: { sessionId: s.sessionId },
+          data: {
+            sessionId: s.sessionId,
+            bundleId: s.bundleId,
+            projectName,
+            mode: isLocal ? "local" : "cloud",
+          },
           style: { stroke: "#585b70", strokeWidth: 2 },
         });
       }
