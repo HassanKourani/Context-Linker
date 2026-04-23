@@ -6,6 +6,19 @@ export interface ActiveSessionData {
   started_at: string;
   branch: string | null;
   entry_count?: number;
+  cloud_session_id?: string | null;
+  team_id?: string | null;
+}
+
+export interface CloudSessionData {
+  id: string;
+  team_id: string;
+  project_name: string;
+  project_path: string | null;
+  machine_id: string;
+  branch: string | null;
+  started_at: string;
+  last_active_at: string;
 }
 
 export interface GraphData {
@@ -19,6 +32,7 @@ export interface TeamGraphData {
   team_id: string;
   team_name: string;
   bundles: BundleGraphData[];
+  cloud_sessions?: CloudSessionData[];
 }
 
 export interface BundleGraphData {
@@ -26,14 +40,6 @@ export interface BundleGraphData {
   bundle_name: string;
   entry_count: number;
   last_entry_at: string | null;
-  sessions: SessionGraphData[];
-}
-
-export interface SessionGraphData {
-  session_id: string;
-  project_name: string;
-  machine_id: string;
-  last_active_at: string | null;
 }
 
 export interface LocalBundleGraphData {
@@ -54,13 +60,6 @@ export interface EntryRow {
   project_name: string;
   event_type: string;
   trigger_ref: string | null;
-  summary: string;
-  files_touched: string[];
-  decisions: Array<{ decision: string; rationale?: string; affects: string[] }>;
-}
-
-export interface PushResult {
-  entry_id: string;
   summary: string;
   files_touched: string[];
   decisions: Array<{ decision: string; rationale?: string; affects: string[] }>;
