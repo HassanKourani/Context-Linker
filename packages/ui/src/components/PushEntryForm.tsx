@@ -11,7 +11,6 @@ export function PushEntryDialog() {
   const activeModal = useUIStore((s) => s.activeModal);
   const closeModal = useUIStore((s) => s.closeModal);
   const selectedBundleId = useUIStore((s) => s.selectedBundleId);
-  const selectedBundleMode = useUIStore((s) => s.selectedBundleMode);
   const open = activeModal === "push-entry" && !!selectedBundleId;
 
   const [projectName, setProjectName] = useState("");
@@ -47,7 +46,6 @@ export function PushEntryDialog() {
         project_name: projectName,
         event_type: "manual",
         summary,
-        mode: selectedBundleMode,
       },
       {
         onSuccess: () => {

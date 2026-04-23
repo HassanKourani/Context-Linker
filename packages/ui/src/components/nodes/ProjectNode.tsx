@@ -23,7 +23,7 @@ export function ProjectNode({ data }: NodeProps) {
   const handleSessionClick = (s: SessionData) => {
     if (s.bundleId) {
       // Connected session — show bundle entries filtered by this project
-      openBundlePanel(s.bundleId, s.mode, projectName);
+      openBundlePanel(s.bundleId, projectName);
     } else {
       // Unlinked session — show session-level context
       openSessionPanel(s.id, projectName);

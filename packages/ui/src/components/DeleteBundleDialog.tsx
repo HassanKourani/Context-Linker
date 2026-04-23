@@ -22,7 +22,7 @@ export function DeleteBundleDialog() {
   const handleDelete = () => {
     if (!target) return;
     mutation.mutate(
-      { id: target.id, mode: target.mode },
+      { id: target.id },
       {
         onSuccess: () => {
           if (selectedBundleId === target.id) closePanel();

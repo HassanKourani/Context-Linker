@@ -60,18 +60,18 @@ export async function fetchGraphData(): Promise<GraphData> {
 }
 
 // ---------------------------------------------------------------------------
-// Bundles
+// Bundles — mode is resolved server-side from the bundle's storage
 // ---------------------------------------------------------------------------
 
 export function createBundle(body: { name: string; mode: "local" | "cloud"; team_id?: string }) {
   return apiPost<CreateBundleResult>("/api/bundles", body);
 }
 
-export function deleteBundle(bundleId: string, mode: "local" | "cloud") {
-  return apiDelete<{ ok: true }>(`/api/bundles/${bundleId}?mode=${mode}`);
+export function deleteBundle(bundleId: string) {
+  return apiDelete<{ ok: true }>(`/api/bundles/${bundleId}`);
 }
 
-export function joinBundle(bundleId: string, body: { project_name: string; mode: "local" | "cloud"; session_id?: string }) {
+export function joinBundle(bundleId: string, body: { project_name: string }) {
   return apiPost<JoinBundleResult>(`/api/bundles/${bundleId}/join`, body);
 }
 
@@ -83,15 +83,13 @@ export function fetchSessionEntries(sessionId: string) {
   return apiGet<EntryRow[]>(`/api/sessions/${sessionId}/entries`);
 }
 
-export function connectSessionToBundle(sessionId: string, body: { bundle_id: string; mode: "local" | "cloud" }) {
+export function connectSessionToBundle(sessionId: string, body: { bundle_id: string }) {
   return apiPost<{ ok: true }>(`/api/sessions/${sessionId}/connect`, body);
 }
 
 export function unlinkSession(body: {
   session_id: string;
   bundle_id: string;
-  project_name: string;
-  mode: "local" | "cloud";
 }) {
   return apiPost<{ ok: true }>("/api/unlink-session", body);
 }
@@ -102,10 +100,9 @@ export function unlinkSession(body: {
 
 export function fetchEntries(
   bundleId: string,
-  params: { mode?: string; limit?: number; since?: string; exclude_project?: string } = {},
+  params: { limit?: number; since?: string; exclude_project?: string } = {},
 ) {
   const qs = new URLSearchParams();
-  if (params.mode) qs.set("mode", params.mode);
   if (params.limit) qs.set("limit", String(params.limit));
   if (params.since) qs.set("since", params.since);
   if (params.exclude_project) qs.set("exclude_project", params.exclude_project);
@@ -120,7 +117,6 @@ export function pushEntry(
     summary: string;
     files_touched?: string[];
     decisions?: Array<{ decision: string; rationale?: string; affects: string[] }>;
-    mode?: string;
   },
 ) {
   return apiPost<PushResult>(`/api/bundles/${bundleId}/entries`, body);

@@ -24,12 +24,12 @@ export function BundleNode({ data }: NodeProps) {
 
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    openPanel(bundleId, mode);
+    openPanel(bundleId);
   };
 
   const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
-    setDeleteTarget({ id: bundleId, name: bundleName, mode });
+    setDeleteTarget({ id: bundleId, name: bundleName });
     openModal("delete-bundle");
   };
 

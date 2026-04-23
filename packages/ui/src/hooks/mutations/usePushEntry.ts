@@ -14,11 +14,10 @@ export function usePushEntry() {
       project_name: string;
       event_type: string;
       summary: string;
-      mode?: string;
     }) => pushEntry(bundleId, body),
 
-    onMutate: async ({ bundleId, project_name, event_type, summary, mode }) => {
-      const key = ["entries", bundleId, mode ?? "cloud"];
+    onMutate: async ({ bundleId, project_name, event_type, summary }) => {
+      const key = ["entries", bundleId];
       await qc.cancelQueries({ queryKey: key });
       const prev = qc.getQueryData<EntryRow[]>(key);
 
@@ -49,7 +48,7 @@ export function usePushEntry() {
       toast.success("Entry pushed");
     },
 
-    onSettled: (_data, _err, params) => {
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: ["entries"] });
       qc.invalidateQueries({ queryKey: ["graph"] });
     },

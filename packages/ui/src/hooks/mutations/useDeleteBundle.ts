@@ -6,29 +6,23 @@ import type { GraphData } from "@/types";
 export function useDeleteBundle() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, mode }: { id: string; mode: "local" | "cloud" }) =>
-      deleteBundle(id, mode),
+    mutationFn: ({ id }: { id: string }) => deleteBundle(id),
 
-    onMutate: async ({ id, mode }) => {
+    onMutate: async ({ id }) => {
       await qc.cancelQueries({ queryKey: ["graph"] });
       const prev = qc.getQueryData<GraphData>(["graph"]);
 
       qc.setQueryData<GraphData>(["graph"], (old) => {
         if (!old) return old;
-        if (mode === "local") {
-          return {
-            ...old,
-            local: {
-              bundles: old.local.bundles.filter((b) => b.bundle_id !== id),
-            },
-          };
-        }
         return {
           ...old,
           teams: old.teams.map((t) => ({
             ...t,
             bundles: t.bundles.filter((b) => b.bundle_id !== id),
           })),
+          local: {
+            bundles: old.local.bundles.filter((b) => b.bundle_id !== id),
+          },
         };
       });
 

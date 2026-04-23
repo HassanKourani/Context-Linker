@@ -22,11 +22,10 @@ export function EntryPanel() {
   const isBundle = panel?.kind === "bundle";
   const isSession = panel?.kind === "session";
   const bundleId = isBundle ? panel.bundleId : null;
-  const bundleMode = isBundle ? panel.mode : "cloud";
   const filterProject = isBundle ? panel.filterProject : null;
   const sessionId = isSession ? panel.sessionId : null;
 
-  const { data: bundleEntries, isLoading: bundleLoading, refetch: refetchBundle } = useEntries(bundleId, bundleMode);
+  const { data: bundleEntries, isLoading: bundleLoading, refetch: refetchBundle } = useEntries(bundleId);
   const { data: sessionEntries, isLoading: sessionLoading, refetch: refetchSession } = useSessionEntries(sessionId);
   const { data: graphData } = useGraphData();
 

@@ -30,8 +30,6 @@ export function DeletableEdge({
 
   const sessionId = (data as any)?.sessionId as string | undefined;
   const bundleId = (data as any)?.bundleId as string | undefined;
-  const projectName = (data as any)?.projectName as string | undefined;
-  const mode = ((data as any)?.mode as "local" | "cloud") ?? "cloud";
   const isHovered = (data as any)?._hovered as boolean | undefined;
   const deleteMutation = useDeleteSession();
 
@@ -68,12 +66,10 @@ export function DeletableEdge({
               onPointerDown={(e) => {
                 e.stopPropagation();
                 e.preventDefault();
-                if (!sessionId || !bundleId || !projectName) return;
+                if (!sessionId || !bundleId) return;
                 deleteMutation.mutate({
                   session_id: sessionId,
                   bundle_id: bundleId,
-                  project_name: projectName,
-                  mode,
                 });
               }}
               title="Unlink session"

@@ -11,6 +11,7 @@ import {
   deleteBundle,
   joinBundle,
   getBundleToken,
+  isLocalBundle,
   pushEntry,
   pullEntries,
   rewindProject,
@@ -38,6 +39,11 @@ const server = Bun.serve({
 
     if (req.method === "OPTIONS") {
       return new Response(null, { headers: corsHeaders });
+    }
+
+    /** Resolve bundle mode from storage — local dir exists → "local", else "cloud" */
+    function resolveBundleMode(bundleId: string): "local" | "cloud" {
+      return isLocalBundle(bundleId) ? "local" : "cloud";
     }
 
     // ── GET /api/graph ────────────────────────────────────────────────────────
@@ -158,7 +164,7 @@ const server = Bun.serve({
       if (match && req.method === "DELETE") {
         try {
           const bundleId = match[1];
-          const mode = (url.searchParams.get("mode") || "cloud") as "local" | "cloud";
+          const mode = resolveBundleMode(bundleId);
 
           // Disconnect all active sessions from this bundle first
           const activeSessions = listActiveSessions();
@@ -185,7 +191,8 @@ const server = Bun.serve({
       if (match && req.method === "POST") {
         try {
           const bundleId = match[1];
-          const { project_name, mode, session_id } = await req.json();
+          const { project_name, session_id } = await req.json();
+          const mode = resolveBundleMode(bundleId);
           const token = getBundleToken(bundleId) || "";
           const result = await joinBundle(bundleId, token, project_name, mode);
 
@@ -237,7 +244,7 @@ const server = Bun.serve({
           const since = url.searchParams.get("since") || undefined;
           const limit = parseInt(url.searchParams.get("limit") || "50");
           const exclude_project = url.searchParams.get("exclude_project") || undefined;
-          const mode = (url.searchParams.get("mode") || "cloud") as "local" | "cloud";
+          const mode = resolveBundleMode(bundleId);
           const entries = await pullEntries({
             bundle_id: bundleId,
             since,
@@ -261,8 +268,9 @@ const server = Bun.serve({
       if (match && req.method === "POST") {
         try {
           const bundleId = match[1];
-          const { project_name, event_type, summary, files_touched, decisions, mode } =
+          const { project_name, event_type, summary, files_touched, decisions } =
             await req.json();
+          const mode = resolveBundleMode(bundleId);
           const result = await pushEntry({
             bundle_id: bundleId,
             project_name,
@@ -289,10 +297,9 @@ const server = Bun.serve({
       if (match && req.method === "POST") {
         try {
           const bundleId = match[1];
-          const { project_name, strategy, reason, dry_run, force, mode } = await req.json();
+          const { project_name, strategy, reason, dry_run, force } = await req.json();
+          const mode = resolveBundleMode(bundleId);
 
-          // Rewind only supported for cloud bundles (uses Supabase soft-delete)
-          // For local bundles, return unsupported message
           if (mode === "local") {
             return Response.json(
               { applied: false, dry_run: false, affected_count: 0, affected_entries: [], message: "Rewind is not yet supported for local bundles." },
@@ -324,7 +331,8 @@ const server = Bun.serve({
       if (match && req.method === "POST") {
         try {
           const bundleId = match[1];
-          const { project_name, entry_ids, rewind_log_id, mode } = await req.json();
+          const { project_name, entry_ids, rewind_log_id } = await req.json();
+          const mode = resolveBundleMode(bundleId);
 
           if (mode === "local") {
             return Response.json(
@@ -416,7 +424,8 @@ const server = Bun.serve({
       if (match && req.method === "POST") {
         try {
           const sessionId = match[1];
-          const { bundle_id, mode } = await req.json();
+          const { bundle_id } = await req.json();
+          const mode = resolveBundleMode(bundle_id);
 
           // Update the active session's bundles array
           const session = connectSessionToBundle(sessionId, bundle_id, mode);

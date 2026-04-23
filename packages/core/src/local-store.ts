@@ -28,6 +28,11 @@ function entriesPath(bundleId: string): string {
   return join(bundleDir(bundleId), "entries.json");
 }
 
+/** Check if a bundle is stored locally */
+export function isLocalBundle(bundleId: string): boolean {
+  return existsSync(metaPath(bundleId));
+}
+
 // ---------- Internal helpers ----------
 
 interface LocalMeta {
