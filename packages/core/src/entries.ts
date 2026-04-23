@@ -1,6 +1,6 @@
 import { getSupabase } from "./supabase.js";
 import { assertTokenValid } from "./bundles.js";
-import { loadGlobalConfig } from "./config.js";
+import { loadGlobalConfig, getActiveSessionId, pushSessionEntry } from "./config.js";
 
 export interface PushInput {
   bundle_id: string;
@@ -88,6 +88,23 @@ export async function pushEntry(input: PushInput): Promise<PushResult> {
     .single();
 
   if (error) throw new Error(`pushEntry failed: ${error.message}`);
+
+  // Also save to the active session's entry log (if one is active)
+  try {
+    const activeSessionId = getActiveSessionId();
+    if (activeSessionId) {
+      pushSessionEntry(activeSessionId, {
+        project_name: input.project_name,
+        event_type: input.event_type,
+        trigger_ref: input.trigger_ref ?? null,
+        summary: summary.summary,
+        files_touched: summary.files_touched,
+        decisions: summary.decisions,
+      });
+    }
+  } catch {
+    // Don't fail the push if session entry save fails
+  }
 
   return {
     entry_id: data.id,

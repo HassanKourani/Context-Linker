@@ -6,7 +6,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { globalConfigDir } from "./config.js";
+import { globalConfigDir, getActiveSessionId, pushSessionEntry } from "./config.js";
 import type { PushInput, PushResult, PullInput, EntryRow } from "./entries.js";
 import type { CreateBundleResult, JoinBundleResult, BundleStatus } from "./bundles.js";
 
@@ -127,6 +127,23 @@ export function localPushEntry(input: PushInput): PushResult {
 
   entries.push(entry);
   writeEntries(input.bundle_id, entries);
+
+  // Also save to the active session's entry log
+  try {
+    const activeSessionId = getActiveSessionId();
+    if (activeSessionId) {
+      pushSessionEntry(activeSessionId, {
+        project_name: input.project_name,
+        event_type: input.event_type,
+        trigger_ref: input.trigger_ref ?? null,
+        summary: input.summary,
+        files_touched: input.files_touched ?? [],
+        decisions: input.decisions ?? [],
+      });
+    }
+  } catch {
+    // Don't fail the push if session entry save fails
+  }
 
   return {
     entry_id: entry.id,
