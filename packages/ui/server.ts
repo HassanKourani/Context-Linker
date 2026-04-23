@@ -566,14 +566,14 @@ const server = Bun.serve({
         try {
           const sessionId = match[1];
 
-          // Delete cloud session if it exists
+          // Try deleting as a local active session
           const session = loadActiveSession(sessionId);
-          if (session?.cloud_session_id) {
-            try { await deleteCloudSession(session.cloud_session_id); } catch {}
+          if (session) {
+            deleteActiveSession(sessionId);
           }
 
-          // Delete the active session + its session-entries file
-          deleteActiveSession(sessionId);
+          // Also try deleting as a cloud session (sessionId might be a cloud session ID)
+          try { await deleteCloudSession(sessionId); } catch {}
 
           return Response.json({ ok: true }, { headers: corsHeaders });
         } catch (err: any) {
