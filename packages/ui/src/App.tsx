@@ -11,6 +11,7 @@ import {
   type EdgeMouseHandler,
   type Connection,
   type Edge,
+  type Node,
 } from "@xyflow/react";
 import { useConnectSession } from "./hooks/mutations/useConnectSession";
 import { useGraphData } from "./hooks/useGraphData";
@@ -54,34 +55,58 @@ export function App() {
   const [nodes, setNodes, baseOnNodesChange] = useNodesState(built.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(built.edges);
 
-  // Wrap onNodesChange to recalculate group bounds after dragging
+  // Persist node positions to localStorage
+  const savePositions = useCallback((ns: Node[]) => {
+    const positions: Record<string, { x: number; y: number }> = {};
+    for (const n of ns) {
+      positions[n.id] = n.position;
+    }
+    try { localStorage.setItem("ctx-link-node-positions", JSON.stringify(positions)); } catch {}
+  }, []);
+
+  const loadPositions = useCallback((): Map<string, { x: number; y: number }> => {
+    try {
+      const raw = localStorage.getItem("ctx-link-node-positions");
+      if (!raw) return new Map();
+      const obj = JSON.parse(raw);
+      return new Map(Object.entries(obj));
+    } catch { return new Map(); }
+  }, []);
+
+  // Wrap onNodesChange to recalculate group bounds after dragging + persist
   const onNodesChange = useCallback(
     (changes: any) => {
       baseOnNodesChange(changes);
-      // After position changes, refit groups
+      const hasDragEnd = changes.some((c: any) => c.type === "position" && !c.dragging && c.position);
       const hasDrag = changes.some((c: any) => c.type === "position" && c.dragging);
       if (hasDrag) {
         setNodes((ns) => fitGroupsToChildren([...ns]));
       }
+      if (hasDragEnd) {
+        setNodes((ns) => { savePositions(ns); return ns; });
+      }
     },
-    [baseOnNodesChange, setNodes]
+    [baseOnNodesChange, setNodes, savePositions]
   );
 
-  // Sync when API data changes — preserve positions of nodes the user has dragged
+  // Sync when API data changes — restore saved positions
   useEffect(() => {
     setNodes((current) => {
-      const posMap = new Map<string, { x: number; y: number }>();
+      // Merge: saved localStorage > current state > dagre default
+      const stored = loadPositions();
+      const currentMap = new Map<string, { x: number; y: number }>();
       for (const n of current) {
-        posMap.set(n.id, n.position);
+        currentMap.set(n.id, n.position);
       }
+
       const merged = built.nodes.map((n) => {
-        const saved = posMap.get(n.id);
-        return saved ? { ...n, position: saved } : n;
+        const pos = stored.get(n.id) ?? currentMap.get(n.id);
+        return pos ? { ...n, position: pos } : n;
       });
       return fitGroupsToChildren(merged);
     });
     setEdges(built.edges);
-  }, [built, setNodes, setEdges]);
+  }, [built, setNodes, setEdges, loadPositions]);
 
   // Inject _hovered into the hovered edge's data
   useEffect(() => {
