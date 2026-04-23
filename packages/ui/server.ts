@@ -527,11 +527,22 @@ const server = Bun.serve({
             );
           }
 
+          // Prevent copying the same session twice into the same team
+          const activeSession = loadActiveSession(sessionId);
+          if (activeSession?.cloud_session_id && activeSession?.team_id === team_id) {
+            return Response.json(
+              { error: "This session has already been copied to this team." },
+              { status: 409, headers: corsHeaders }
+            );
+          }
+
           const result = await copySessionToCloud(sessionId, team_id);
 
-          // Link the active session to the cloud copy so future syncs work
-          const activeSession = loadActiveSession(sessionId);
-          if (activeSession) {
+          // Link the active session to the cloud copy so future syncs work.
+          // Only set cloud_session_id if not already linked — a second copy to
+          // another team is an independent snapshot; overwriting would break the
+          // existing cloud link and make the session "disappear" from its original team.
+          if (activeSession && !activeSession.cloud_session_id) {
             activeSession.cloud_session_id = result.cloud_session_id;
             activeSession.team_id = team_id;
             saveActiveSession(activeSession);
@@ -627,6 +638,16 @@ const server = Bun.serve({
             if (mode === "cloud") {
               // If session has been copied to cloud, use the cloud session ID to connect
               if (localSession.cloud_session_id) {
+                // Block cross-team connections — the cloud session must be in the same
+                // team as the target bundle. Otherwise the UI should copy-to-cloud first.
+                const bundleTeamId = await getBundleTeamId(bundle_id);
+                const cloudSession = await getCloudSession(localSession.cloud_session_id);
+                if (bundleTeamId && cloudSession && cloudSession.team_id !== bundleTeamId) {
+                  return Response.json(
+                    { error: "Session's cloud copy is in a different team. Use 'Copy to Cloud' to create a copy in the target team first." },
+                    { status: 400, headers: corsHeaders }
+                  );
+                }
                 connectCloudSessionToBundle(localSession.cloud_session_id, bundle_id, mode);
                 connectSessionToBundle(sessionId, bundle_id, mode);
                 return Response.json({ ok: true }, { headers: corsHeaders });

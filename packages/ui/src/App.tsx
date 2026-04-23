@@ -156,8 +156,21 @@ export function App() {
       // Check if this is a local session trying to connect to a cloud bundle
       if (bundleMode === "cloud") {
         const session = data?.sessions?.find((s) => s.session_id === sessionId);
-        if (session && !session.cloud_session_id) {
-          // Block: show prompt to push session to cloud first
+
+        // Needs copy-to-cloud if: no cloud session yet, OR cloud session is in a
+        // different team than the target bundle (can't cross-connect teams).
+        const needsCopy = (() => {
+          if (!session) return false;
+          if (!session.cloud_session_id) return true;
+          // Check if session's cloud team matches the target bundle's team
+          const sessionTeam = session.team_id;
+          const bundleTeam = data?.teams?.find((t) =>
+            t.bundles.some((b) => b.bundle_id === bundleId)
+          )?.team_id;
+          return bundleTeam && sessionTeam && bundleTeam !== sessionTeam;
+        })();
+
+        if (needsCopy) {
           useUIStore.setState({
             pendingCloudConnect: { sessionId, bundleId },
             activeModal: "push-to-cloud-prompt",

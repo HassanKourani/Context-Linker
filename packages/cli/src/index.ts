@@ -387,7 +387,17 @@ program
         choices: teams.map(t => ({ name: t.name, value: t.team_id, description: t.team_id })),
       });
     }
+    const session = loadActiveSession(sessionId);
+    if (session?.cloud_session_id && session?.team_id === teamId) {
+      console.error("This session has already been copied to this team.");
+      process.exit(1);
+    }
     const result = await copySessionToCloud(sessionId, teamId);
+    if (session && !session.cloud_session_id) {
+      session.cloud_session_id = result.cloud_session_id;
+      session.team_id = teamId;
+      saveActiveSession(session);
+    }
     console.log(`Session copied to cloud.`);
     console.log(`  Cloud ID: ${result.cloud_session_id}`);
     console.log(`  Entries copied: ${result.entries_copied}`);
