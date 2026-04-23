@@ -12,11 +12,21 @@ export function useConnectSession() {
     }: {
       sessionId: string;
       bundle_id: string;
+      mode?: "local" | "cloud";
     }) => connectSessionToBundle(sessionId, { bundle_id }),
 
-    onMutate: async ({ sessionId, bundle_id }) => {
+    onMutate: async ({ sessionId, bundle_id, mode }) => {
       await qc.cancelQueries({ queryKey: ["graph"] });
       const prev = qc.getQueryData<GraphData>(["graph"]);
+
+      // Resolve mode from graph data if not provided
+      const resolvedMode = mode ?? (() => {
+        if (!prev) return "local" as const;
+        for (const team of prev.teams) {
+          if (team.bundles.some((b) => b.bundle_id === bundle_id)) return "cloud" as const;
+        }
+        return "local" as const;
+      })();
 
       qc.setQueryData<GraphData>(["graph"], (old) => {
         if (!old) return old;
@@ -28,7 +38,7 @@ export function useConnectSession() {
             ...old,
             sessions: old.sessions.map((s) =>
               s.session_id === sessionId
-                ? { ...s, bundles: [...s.bundles, { bundle_id, mode: "local" as const }] }
+                ? { ...s, bundles: [...s.bundles, { bundle_id, mode: resolvedMode }] }
                 : s
             ),
           };
@@ -41,7 +51,7 @@ export function useConnectSession() {
             ...team,
             cloud_sessions: team.cloud_sessions?.map((cs) =>
               cs.id === sessionId
-                ? { ...cs, bundles: [...(cs.bundles ?? []), { bundle_id, mode: "cloud" as const }] }
+                ? { ...cs, bundles: [...(cs.bundles ?? []), { bundle_id, mode: resolvedMode }] }
                 : cs
             ),
           })),

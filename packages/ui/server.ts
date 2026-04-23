@@ -43,6 +43,8 @@ import {
   connectCloudSessionToBundle,
   disconnectCloudSessionFromBundle,
   getCloudSessionBundleConnections,
+  syncSessionToCloud,
+  saveActiveSession,
 } from "@ctx-link/core";
 
 const server = Bun.serve({
@@ -527,6 +529,14 @@ const server = Bun.serve({
 
           const result = await copySessionToCloud(sessionId, team_id);
 
+          // Link the active session to the cloud copy so future syncs work
+          const activeSession = loadActiveSession(sessionId);
+          if (activeSession) {
+            activeSession.cloud_session_id = result.cloud_session_id;
+            activeSession.team_id = team_id;
+            saveActiveSession(activeSession);
+          }
+
           // If a bundle_id was provided, connect the cloud session and add entries
           if (bundle_id) {
             const bundleTeamId = await getBundleTeamId(bundle_id);
@@ -553,6 +563,54 @@ const server = Bun.serve({
       }
     }
 
+    // ── POST /api/sessions/:id/sync-to-cloud ────────────────────────────────
+    // Called with a cloud session ID. Finds the linked local session and syncs new entries.
+    {
+      const match = url.pathname.match(/^\/api\/sessions\/([^/]+)\/sync-to-cloud$/);
+      if (match && req.method === "POST") {
+        try {
+          const cloudSessionId = match[1];
+
+          // Find the local active session linked to this cloud session
+          const allSessions = listActiveSessions();
+          const localSession = allSessions.find((s) => s.cloud_session_id === cloudSessionId);
+          if (!localSession) {
+            return Response.json(
+              { error: "No local session linked to this cloud session" },
+              { status: 404, headers: corsHeaders }
+            );
+          }
+
+          const result = await syncSessionToCloud(localSession.session_id, cloudSessionId);
+
+          // Also add new entries to any connected bundles
+          if (result.cloud_entry_ids.length > 0) {
+            const connections = getCloudSessionBundleConnections(cloudSessionId);
+            for (const conn of connections) {
+              try {
+                await addEntriesToBundle(conn.bundle_id, result.cloud_entry_ids);
+              } catch {}
+            }
+            // Also check local session bundle connections (cloud bundles)
+            for (const b of localSession.bundles) {
+              if (b.mode === "cloud") {
+                try {
+                  await addEntriesToBundle(b.bundle_id, result.cloud_entry_ids);
+                } catch {}
+              }
+            }
+          }
+
+          return Response.json(result, { headers: corsHeaders });
+        } catch (err: any) {
+          return Response.json(
+            { error: err.message ?? String(err) },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+      }
+    }
+
     // ── POST /api/sessions/:id/connect ──────────────────────────────────────
     {
       const match = url.pathname.match(/^\/api\/sessions\/([^/]+)\/connect$/);
@@ -566,8 +624,14 @@ const server = Bun.serve({
           const localSession = loadActiveSession(sessionId);
 
           if (localSession) {
-            // Local session → cloud bundle: blocked, use Copy to Cloud flow
             if (mode === "cloud") {
+              // If session has been copied to cloud, use the cloud session ID to connect
+              if (localSession.cloud_session_id) {
+                connectCloudSessionToBundle(localSession.cloud_session_id, bundle_id, mode);
+                connectSessionToBundle(sessionId, bundle_id, mode);
+                return Response.json({ ok: true }, { headers: corsHeaders });
+              }
+              // Otherwise block — needs Copy to Cloud first
               return Response.json(
                 { error: "Use 'Copy to Cloud' to connect a local session to a cloud bundle." },
                 { status: 400, headers: corsHeaders }
@@ -620,31 +684,27 @@ const server = Bun.serve({
         try {
           const sessionId = match[1];
 
-          // Try all possible ways to delete the cloud session:
-          // 1. sessionId is a local active session ID → look up its cloud_session_id
-          // 2. sessionId is itself a cloud session ID (cloud-only sessions)
-          // 3. An active session has this as its cloud_session_id
-          const session = loadActiveSession(sessionId);
-          const cloudIdFromActive = session?.cloud_session_id;
+          const localSession = loadActiveSession(sessionId);
 
-          // Delete from Supabase — try both the linked cloud ID and sessionId itself
-          const cloudIdsToTry = new Set<string>();
-          if (cloudIdFromActive) cloudIdsToTry.add(cloudIdFromActive);
-          cloudIdsToTry.add(sessionId);
+          if (localSession) {
+            // Deleting a local active session — also delete its cloud copy if any
+            if (localSession.cloud_session_id) {
+              try { await deleteCloudSession(localSession.cloud_session_id); } catch {}
+            }
+            deleteActiveSession(sessionId);
+          } else {
+            // sessionId is a cloud session ID — only delete from Supabase, keep local
+            try { await deleteCloudSession(sessionId); } catch {}
 
-          for (const cid of cloudIdsToTry) {
-            try { await deleteCloudSession(cid); } catch {}
+            // Clear the cloud_session_id link on any local session that pointed here
+            const allSessions = listActiveSessions();
+            const linked = allSessions.find((s) => s.cloud_session_id === sessionId);
+            if (linked) {
+              linked.cloud_session_id = null;
+              linked.team_id = null;
+              saveActiveSession(linked);
+            }
           }
-
-          // Clean up any active session whose cloud_session_id matches
-          const allSessions = listActiveSessions();
-          const matchingActive = allSessions.find((s) => s.cloud_session_id === sessionId);
-          if (matchingActive) {
-            deleteActiveSession(matchingActive.session_id);
-          }
-
-          // Delete the active session + its session-entries file
-          deleteActiveSession(sessionId);
 
           return Response.json({ ok: true }, { headers: corsHeaders });
         } catch (err: any) {

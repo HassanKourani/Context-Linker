@@ -195,6 +195,13 @@ export function copySessionToCloud(
   );
 }
 
+export function syncSessionToCloud(sessionId: string) {
+  return apiPost<{ cloud_entry_ids: string[]; entries_synced: number }>(
+    `/api/sessions/${sessionId}/sync-to-cloud`,
+    {},
+  );
+}
+
 export function fetchTeamSessions(teamId: string) {
   return apiGet<CloudSessionData[]>(`/api/teams/${teamId}/sessions`);
 }

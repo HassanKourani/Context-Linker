@@ -6,6 +6,11 @@ import {
 } from "./config.js";
 import { assertTeamMember } from "./teams.js";
 
+const VALID_EVENT_TYPES = new Set(["commit", "pr_open", "manual", "session_end"]);
+function safeEventType(type: string): string {
+  return VALID_EVENT_TYPES.has(type) ? type : "manual";
+}
+
 export interface CloudSession {
   id: string;
   team_id: string;
@@ -43,7 +48,6 @@ export async function copySessionToCloud(
   const cfg = loadGlobalConfig();
   const session = loadActiveSession(sessionId);
   if (!session) throw new Error(`Active session ${sessionId} not found.`);
-
   const sb = getSupabase();
 
   // Create cloud session
@@ -73,7 +77,7 @@ export async function copySessionToCloud(
       return {
         id: newId,
         session_id: cloudSession.id,
-        event_type: e.event_type,
+        event_type: safeEventType(e.event_type),
         trigger_ref: e.trigger_ref,
         summary: e.summary,
         files_touched: e.files_touched,
@@ -173,6 +177,60 @@ export async function getCloudSessionEntries(
   const { data, error } = await query;
   if (error) throw new Error(`getCloudSessionEntries failed: ${error.message}`);
   return (data ?? []) as CloudSessionEntry[];
+}
+
+/**
+ * Sync new local entries to an existing cloud session.
+ * Compares local session entries against cloud session entries using a
+ * composite key (created_at + event_type + summary) to avoid duplicates.
+ * Normalizes timestamps to epoch ms to handle Z vs +00:00 format differences.
+ */
+export async function syncSessionToCloud(
+  sessionId: string,
+  cloudSessionId: string
+): Promise<{ cloud_entry_ids: string[]; entries_synced: number }> {
+  const localEntries = getSessionEntries(sessionId);
+  if (localEntries.length === 0) return { cloud_entry_ids: [], entries_synced: 0 };
+
+  const sb = getSupabase();
+
+  // Get all existing cloud entries (including superseded) to avoid re-syncing
+  // Normalize timestamps to epoch ms for comparison — Supabase returns +00:00, local uses Z
+  const existingCloud = await getCloudSessionEntries(cloudSessionId, true);
+  const existingKeys = new Set(
+    existingCloud.map((e) => `${new Date(e.created_at).getTime()}|${e.event_type}|${e.summary}`)
+  );
+
+  // Find local entries not yet in the cloud
+  // Use safeEventType for the local key too, since copy-to-cloud maps event types
+  const newEntries = localEntries.filter(
+    (e) => !existingKeys.has(`${new Date(e.created_at).getTime()}|${safeEventType(e.event_type)}|${e.summary}`)
+  );
+  if (newEntries.length === 0) return { cloud_entry_ids: [], entries_synced: 0 };
+
+  const cloudEntryIds: string[] = [];
+  const rows = newEntries.map((e) => {
+    const newId = crypto.randomUUID();
+    cloudEntryIds.push(newId);
+    return {
+      id: newId,
+      session_id: cloudSessionId,
+      event_type: safeEventType(e.event_type),
+      trigger_ref: e.trigger_ref,
+      summary: e.summary,
+      files_touched: e.files_touched,
+      decisions: e.decisions,
+      created_at: e.created_at,
+    };
+  });
+
+  const { error } = await sb
+    .from("cloud_session_entries")
+    .insert(rows);
+
+  if (error) throw new Error(`Failed to sync entries: ${error.message}`);
+
+  return { cloud_entry_ids: cloudEntryIds, entries_synced: newEntries.length };
 }
 
 /**

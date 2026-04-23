@@ -339,13 +339,13 @@ export function buildFlowGraph(
 
   if (filteredSessions) {
     for (const session of filteredSessions) {
-      // Check if session has a team_id (pushed to cloud) or any bundle belongs to a team
-      let assignedTeam: string | null = session.team_id ?? null;
-      if (!assignedTeam) {
-        for (const b of session.bundles) {
-          const teamId = bundleToTeam.get(b.bundle_id);
-          if (teamId) { assignedTeam = teamId; break; }
-        }
+      // Assign session to a team group based on its bundle connections only.
+      // Don't use session.team_id — that's just metadata for cloud sync,
+      // the active session should stay in local until it has a team bundle connection.
+      let assignedTeam: string | null = null;
+      for (const b of session.bundles) {
+        const teamId = bundleToTeam.get(b.bundle_id);
+        if (teamId) { assignedTeam = teamId; break; }
       }
       if (assignedTeam) {
         if (!sessionsByTeam.has(assignedTeam)) sessionsByTeam.set(assignedTeam, []);
