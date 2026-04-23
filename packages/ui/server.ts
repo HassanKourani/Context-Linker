@@ -29,9 +29,6 @@ import {
   listTeamSessions,
   deleteCloudSession,
   deleteCloudSessionEntry,
-  getCloudSessionEntries,
-  getCloudSessionBundleIds,
-  syncCloudSessionFromLocal,
   getBundleTeamId,
   rewindProject,
   restoreRewound,
@@ -85,26 +82,11 @@ const server = Bun.serve({
                 };
               })
             );
-            // Enrich cloud sessions with entry counts and bundle connections
-            const enrichedSessions = await Promise.all(
-              cloudSessions.map(async (cs) => {
-                const [entries, connectedBundles] = await Promise.all([
-                  getCloudSessionEntries(cs.id),
-                  getCloudSessionBundleIds(cs.id),
-                ]);
-                return {
-                  ...cs,
-                  entry_count: entries.length,
-                  bundles: connectedBundles,
-                };
-              })
-            );
-
             return {
               team_id: team.team_id,
               team_name: team.name,
               bundles: bundlesWithDetails,
-              cloud_sessions: enrichedSessions,
+              cloud_sessions: cloudSessions,
             };
           })
         );
@@ -375,14 +357,8 @@ const server = Bun.serve({
       if (match && req.method === "GET") {
         try {
           const sessionId = match[1];
-          // Try local session entries first
-          const localEntries = getSessionEntries(sessionId);
-          if (localEntries.length > 0) {
-            return Response.json(localEntries, { headers: corsHeaders });
-          }
-          // Fall back to cloud session entries
-          const cloudEntries = await getCloudSessionEntries(sessionId);
-          return Response.json(cloudEntries, { headers: corsHeaders });
+          const entries = getSessionEntries(sessionId);
+          return Response.json(entries, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
             { error: err.message ?? String(err) },
@@ -500,23 +476,6 @@ const server = Bun.serve({
       }
     }
 
-    // ── POST /api/sessions/:id/sync-from-local ────────────────────────────
-    {
-      const match = url.pathname.match(/^\/api\/sessions\/([^/]+)\/sync-from-local$/);
-      if (match && req.method === "POST") {
-        try {
-          const cloudSessionId = match[1];
-          const result = await syncCloudSessionFromLocal(cloudSessionId);
-          return Response.json(result, { headers: corsHeaders });
-        } catch (err: any) {
-          return Response.json(
-            { error: err.message ?? String(err) },
-            { status: 500, headers: corsHeaders }
-          );
-        }
-      }
-    }
-
     // ── POST /api/sessions/:id/connect ──────────────────────────────────────
     {
       const match = url.pathname.match(/^\/api\/sessions\/([^/]+)\/connect$/);
@@ -526,40 +485,40 @@ const server = Bun.serve({
           const { bundle_id } = await req.json();
           const mode = resolveBundleMode(bundle_id);
 
-          // Check if this is an active (local) session
-          const activeSession = loadActiveSession(sessionId);
+          // Check if this is a local active session or a cloud session
+          const localSession = loadActiveSession(sessionId);
 
-          if (activeSession) {
-            // Block local sessions from connecting to cloud bundles
+          if (localSession) {
+            // Local session → cloud bundle: blocked, use Copy to Cloud flow
             if (mode === "cloud") {
               return Response.json(
                 { error: "Use 'Copy to Cloud' to connect a local session to a cloud bundle." },
                 { status: 400, headers: corsHeaders }
               );
             }
-            // Local active session → local bundle: normal path
+            // Local session → local bundle: allowed
             const session = connectSessionToBundle(sessionId, bundle_id, mode);
             return Response.json({ ok: true, session }, { headers: corsHeaders });
           }
 
-          // Not an active session — must be a cloud session ID
-          // Get its entries and add refs to the bundle
+          // Cloud session — add all its entries as refs to the bundle
+          const { getCloudSessionEntries } = await import("@ctx-link/core");
           const cloudEntries = await getCloudSessionEntries(sessionId);
-          const entryIds = cloudEntries.map((e: any) => e.id);
+          const entryIds = cloudEntries.map((e) => e.id);
 
           if (mode === "local") {
-            // Cloud session → local bundle: add entry refs
+            // Cloud session → local bundle
             if (entryIds.length > 0) {
               localAddEntriesToBundle(bundle_id, entryIds, sessionId);
             }
           } else {
-            // Cloud session → cloud bundle: add entry refs via Supabase
+            // Cloud session → cloud bundle
             if (entryIds.length > 0) {
               await addEntriesToBundle(bundle_id, entryIds);
             }
           }
 
-          return Response.json({ ok: true, entries_added: entryIds.length }, { headers: corsHeaders });
+          return Response.json({ ok: true }, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
             { error: err.message ?? String(err) },
@@ -598,14 +557,14 @@ const server = Bun.serve({
         try {
           const sessionId = match[1];
 
-          // Try deleting as a local active session
+          // Delete cloud session if it exists
           const session = loadActiveSession(sessionId);
-          if (session) {
-            deleteActiveSession(sessionId);
+          if (session?.cloud_session_id) {
+            try { await deleteCloudSession(session.cloud_session_id); } catch {}
           }
 
-          // Also try deleting as a cloud session (sessionId might be a cloud session ID)
-          try { await deleteCloudSession(sessionId); } catch {}
+          // Delete the active session + its session-entries file
+          deleteActiveSession(sessionId);
 
           return Response.json({ ok: true }, { headers: corsHeaders });
         } catch (err: any) {
