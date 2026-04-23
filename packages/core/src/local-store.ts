@@ -6,7 +6,8 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { globalConfigDir, getActiveSessionId, pushSessionEntry } from "./config.js";
+import { globalConfigDir } from "./config.js";
+import type { SessionEntry } from "./config.js";
 import type { PushInput, PushResult, PullInput, EntryRow } from "./entries.js";
 import type { CreateBundleResult, JoinBundleResult, BundleStatus } from "./bundles.js";
 
@@ -51,6 +52,7 @@ interface LocalEntry {
   files_touched: string[];
   decisions: Array<{ decision: string; rationale?: string; affects: string[] }>;
   raw_context: string | null;
+  source_entries: SessionEntry[] | null;
   superseded_at: string | null;
 }
 
@@ -122,28 +124,12 @@ export function localPushEntry(input: PushInput): PushResult {
     files_touched: input.files_touched ?? [],
     decisions: input.decisions ?? [],
     raw_context: input.store_raw ? input.raw_context : null,
+    source_entries: input.source_entries ?? null,
     superseded_at: null,
   };
 
   entries.push(entry);
   writeEntries(input.bundle_id, entries);
-
-  // Also save to the active session's entry log
-  try {
-    const activeSessionId = getActiveSessionId();
-    if (activeSessionId) {
-      pushSessionEntry(activeSessionId, {
-        project_name: input.project_name,
-        event_type: input.event_type,
-        trigger_ref: input.trigger_ref ?? null,
-        summary: input.summary,
-        files_touched: input.files_touched ?? [],
-        decisions: input.decisions ?? [],
-      });
-    }
-  } catch {
-    // Don't fail the push if session entry save fails
-  }
 
   return {
     entry_id: entry.id,
@@ -176,6 +162,7 @@ export function localPullEntries(input: PullInput): EntryRow[] {
     summary: e.summary,
     files_touched: e.files_touched,
     decisions: e.decisions,
+    source_entries: e.source_entries ?? null,
   }));
 }
 
@@ -194,6 +181,21 @@ export interface LocalBundleDetail {
     project_name: string;
     last_entry_at: string | null;
   }>;
+}
+
+/** Remove a source entry from a consolidated bundle entry (local path). */
+export function localRemoveSourceEntry(
+  bundleId: string,
+  entryId: string,
+  sourceEntryId: string
+): void {
+  const entries = readEntries(bundleId);
+  const entry = entries.find((e) => e.id === entryId);
+  if (!entry || !entry.source_entries) return;
+
+  entry.source_entries = entry.source_entries.filter((s) => s.id !== sourceEntryId);
+  if (entry.source_entries.length === 0) entry.source_entries = null;
+  writeEntries(bundleId, entries);
 }
 
 export function listAllLocalBundleDetails(): LocalBundleDetail[] {

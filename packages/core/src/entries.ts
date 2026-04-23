@@ -1,6 +1,7 @@
 import { getSupabase } from "./supabase.js";
 import { assertTokenValid } from "./bundles.js";
-import { loadGlobalConfig, getActiveSessionId, pushSessionEntry } from "./config.js";
+import { loadGlobalConfig } from "./config.js";
+import type { SessionEntry } from "./config.js";
 
 export interface PushInput {
   bundle_id: string;
@@ -12,6 +13,7 @@ export interface PushInput {
   files_touched?: string[];
   decisions?: Array<{ decision: string; rationale?: string; affects: string[] }>;
   store_raw?: boolean;
+  source_entries?: SessionEntry[] | null;
   mode?: "local" | "cloud";
   skipAuth?: boolean;
 }
@@ -84,28 +86,12 @@ export async function pushEntry(input: PushInput): Promise<PushResult> {
       files_touched: summary.files_touched,
       decisions: summary.decisions,
       raw_context: input.store_raw ? input.raw_context : null,
+      source_entries: input.source_entries ?? null,
     })
     .select("id")
     .single();
 
   if (error) throw new Error(`pushEntry failed: ${error.message}`);
-
-  // Also save to the active session's entry log (if one is active)
-  try {
-    const activeSessionId = getActiveSessionId();
-    if (activeSessionId) {
-      pushSessionEntry(activeSessionId, {
-        project_name: input.project_name,
-        event_type: input.event_type,
-        trigger_ref: input.trigger_ref ?? null,
-        summary: summary.summary,
-        files_touched: summary.files_touched,
-        decisions: summary.decisions,
-      });
-    }
-  } catch {
-    // Don't fail the push if session entry save fails
-  }
 
   return {
     entry_id: data.id,
@@ -133,6 +119,7 @@ export interface EntryRow {
   summary: string;
   files_touched: string[];
   decisions: Array<{ decision: string; rationale?: string; affects: string[] }>;
+  source_entries?: SessionEntry[] | null;
 }
 
 export async function pullEntries(input: PullInput): Promise<EntryRow[]> {
@@ -147,7 +134,7 @@ export async function pullEntries(input: PullInput): Promise<EntryRow[]> {
   let query = sb
     .from("entries")
     .select(
-      "id, created_at, event_type, trigger_ref, summary, files_touched, decisions, sessions(project_name)"
+      "id, created_at, event_type, trigger_ref, summary, files_touched, decisions, source_entries, sessions(project_name)"
     )
     .eq("bundle_id", input.bundle_id)
     .is("superseded_at", null) // hide rewound entries from all future pulls
@@ -170,12 +157,46 @@ export async function pullEntries(input: PullInput): Promise<EntryRow[]> {
     summary: r.summary,
     files_touched: r.files_touched ?? [],
     decisions: r.decisions ?? [],
+    source_entries: r.source_entries ?? null,
   })) as EntryRow[];
 
   if (input.exclude_project) {
     return rows.filter((r) => r.project_name !== input.exclude_project);
   }
   return rows;
+}
+
+/** Delete all entries for a project from a cloud bundle. */
+export async function deleteProjectEntriesFromBundle(
+  bundleId: string,
+  projectName: string,
+): Promise<number> {
+  const sb = getSupabase();
+
+  // Find entries via the session that matches this project
+  const { data: sessions } = await sb
+    .from("sessions")
+    .select("id")
+    .eq("bundle_id", bundleId)
+    .eq("project_name", projectName);
+
+  if (!sessions || sessions.length === 0) return 0;
+
+  const sessionIds = sessions.map((s: any) => s.id);
+
+  const { data, error } = await sb
+    .from("entries")
+    .delete()
+    .eq("bundle_id", bundleId)
+    .in("session_id", sessionIds)
+    .select("id");
+
+  if (error) throw new Error(`deleteProjectEntries failed: ${error.message}`);
+
+  // Also delete the session rows
+  await sb.from("sessions").delete().in("id", sessionIds);
+
+  return data?.length ?? 0;
 }
 
 // Human/LLM-readable rendering of entries for context injection.
@@ -201,7 +222,42 @@ export function renderEntriesForClaude(entries: EntryRow[]): string {
         );
       }
     }
+    if (e.source_entries && e.source_entries.length > 0) {
+      lines.push(`\nSources (${e.source_entries.length} entries consolidated):`);
+      for (const s of e.source_entries) {
+        lines.push(`  - [${s.created_at}] ${s.summary}`);
+      }
+    }
     return lines.join("\n");
   });
   return parts.join("\n\n---\n\n");
+}
+
+/** Remove a source entry from a consolidated bundle entry (cloud path). */
+export async function removeSourceEntry(
+  bundleId: string,
+  entryId: string,
+  sourceEntryId: string
+): Promise<void> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("entries")
+    .select("source_entries")
+    .eq("id", entryId)
+    .eq("bundle_id", bundleId)
+    .single();
+
+  if (error) throw new Error(`removeSourceEntry read failed: ${error.message}`);
+  if (!data?.source_entries) return;
+
+  const filtered = (data.source_entries as any[]).filter(
+    (s: any) => s.id !== sourceEntryId
+  );
+
+  const { error: updateError } = await sb
+    .from("entries")
+    .update({ source_entries: filtered.length > 0 ? filtered : null })
+    .eq("id", entryId);
+
+  if (updateError) throw new Error(`removeSourceEntry update failed: ${updateError.message}`);
 }

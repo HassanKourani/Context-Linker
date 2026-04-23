@@ -242,8 +242,8 @@ export function disconnectSessionFromBundle(
 }
 
 // ---------- Session-Level Entries ----------
-// Each session accumulates its own entries, independent of bundles.
-// When connected to a bundle, session entries flow into the bundle.
+// Each session accumulates its own entries locally.
+// Entries stay local until consolidated and pushed to a bundle via context_push.
 
 function sessionEntriesDir(): string {
   return join(globalConfigDir(), "session-entries");
@@ -253,7 +253,7 @@ function sessionEntriesPath(sessionId: string): string {
   return join(sessionEntriesDir(), `${sessionId}.json`);
 }
 
-interface SessionEntry {
+export interface SessionEntry {
   id: string;
   created_at: string;
   project_name: string;
@@ -262,9 +262,10 @@ interface SessionEntry {
   summary: string;
   files_touched: string[];
   decisions: Array<{ decision: string; rationale?: string; affects: string[] }>;
+  pushed_at: string | null; // null = not yet pushed, ISO string = when consolidated
 }
 
-export function pushSessionEntry(sessionId: string, entry: Omit<SessionEntry, "id" | "created_at">): SessionEntry {
+export function pushSessionEntry(sessionId: string, entry: Omit<SessionEntry, "id" | "created_at" | "pushed_at">): SessionEntry {
   const dir = sessionEntriesDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
 
@@ -274,6 +275,7 @@ export function pushSessionEntry(sessionId: string, entry: Omit<SessionEntry, "i
   const newEntry: SessionEntry = {
     id: crypto.randomUUID(),
     created_at: new Date().toISOString(),
+    pushed_at: null,
     ...entry,
   };
   entries.push(newEntry);
@@ -285,6 +287,35 @@ export function getSessionEntries(sessionId: string): SessionEntry[] {
   const path = sessionEntriesPath(sessionId);
   if (!existsSync(path)) return [];
   return JSON.parse(readFileSync(path, "utf8"));
+}
+
+export function getUnpushedSessionEntries(sessionId: string): SessionEntry[] {
+  return getSessionEntries(sessionId).filter((e) => e.pushed_at === null);
+}
+
+export function markSessionEntriesPushed(sessionId: string, entryIds: string[]): void {
+  const path = sessionEntriesPath(sessionId);
+  if (!existsSync(path)) return;
+
+  const entries: SessionEntry[] = JSON.parse(readFileSync(path, "utf8"));
+  const idSet = new Set(entryIds);
+  const now = new Date().toISOString();
+
+  for (const entry of entries) {
+    if (idSet.has(entry.id)) {
+      entry.pushed_at = now;
+    }
+  }
+  writeFileSync(path, JSON.stringify(entries, null, 2));
+}
+
+export function deleteSessionEntry(sessionId: string, entryId: string): void {
+  const path = sessionEntriesPath(sessionId);
+  if (!existsSync(path)) return;
+
+  const entries: SessionEntry[] = JSON.parse(readFileSync(path, "utf8"));
+  const filtered = entries.filter((e) => e.id !== entryId);
+  writeFileSync(path, JSON.stringify(filtered, null, 2));
 }
 
 export function storeBundleToken(
