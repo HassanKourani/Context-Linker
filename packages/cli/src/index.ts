@@ -450,19 +450,17 @@ program
     session.bundles.push({ bundle_id: bundleId, mode });
     saveActiveSession(session);
 
-    // Add all session entries as refs to the new bundle
-    const entries = getSessionEntries(session.session_id);
-    if (entries.length > 0) {
-      try {
-        const entryIds = entries.map(e => e.id);
-        if (isLocalBundle(bundleId)) {
+    // For local bundles, add session entries as refs
+    if (isLocalBundle(bundleId)) {
+      const entries = getSessionEntries(session.session_id);
+      if (entries.length > 0) {
+        try {
+          const entryIds = entries.map(e => e.id);
           localAddEntriesToBundle(bundleId, entryIds, session.session_id);
-        } else {
-          await addEntriesToBundle(bundleId, entryIds);
+          console.log(`Pushed ${entries.length} session entries to bundle.`);
+        } catch {
+          // Non-fatal
         }
-        console.log(`Pushed ${entries.length} session entries to bundle.`);
-      } catch {
-        // Non-fatal
       }
     }
 

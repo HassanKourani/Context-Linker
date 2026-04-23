@@ -20,16 +20,28 @@ export function PushSessionToBundleDialog() {
 
   const hasSelection = selectedEntryIds.size > 0;
 
-  // Collect all available bundles from graph data
+  // Only show bundles the session is connected to
+  const connectedBundleIds = new Set<string>();
+  if (graphData && sessionId) {
+    const session = graphData.sessions?.find((s) => s.session_id === sessionId);
+    if (session) {
+      for (const b of session.bundles) connectedBundleIds.add(b.bundle_id);
+    }
+  }
+
   const bundles: Array<{ id: string; name: string; group: string }> = [];
   if (graphData) {
     for (const team of graphData.teams) {
       for (const b of team.bundles) {
-        bundles.push({ id: b.bundle_id, name: b.bundle_name, group: team.team_name });
+        if (connectedBundleIds.has(b.bundle_id)) {
+          bundles.push({ id: b.bundle_id, name: b.bundle_name, group: team.team_name });
+        }
       }
     }
     for (const b of graphData.local.bundles) {
-      bundles.push({ id: b.bundle_id, name: b.bundle_name, group: "Local" });
+      if (connectedBundleIds.has(b.bundle_id)) {
+        bundles.push({ id: b.bundle_id, name: b.bundle_name, group: "Local" });
+      }
     }
   }
 

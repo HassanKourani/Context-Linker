@@ -476,10 +476,48 @@ const server = Bun.serve({
               );
             }
 
-            // Cloud bundle: not allowed for local sessions (use copy-to-cloud flow instead)
+            // Cloud bundle — auto-push session to cloud if needed, then add entries
+            const bundleTeamId = await getBundleTeamId(bundle_id);
+            if (!bundleTeamId) {
+              return Response.json(
+                { error: "Could not determine the bundle's team." },
+                { status: 400, headers: corsHeaders }
+              );
+            }
+
+            const copies = localSession.cloud_copies ?? [];
+            let copy = copies.find((c) => c.team_id === bundleTeamId)
+              ?? (localSession.cloud_session_id && localSession.team_id === bundleTeamId
+                ? { cloud_session_id: localSession.cloud_session_id, team_id: bundleTeamId }
+                : null);
+
+            if (!copy) {
+              const result = await copySessionToCloud(sessionId, bundleTeamId);
+              if (!localSession.cloud_copies) localSession.cloud_copies = [];
+              localSession.cloud_copies.push({ cloud_session_id: result.cloud_session_id, team_id: bundleTeamId });
+              if (!localSession.cloud_session_id) {
+                localSession.cloud_session_id = result.cloud_session_id;
+                localSession.team_id = bundleTeamId;
+              }
+              saveActiveSession(localSession);
+              copy = { cloud_session_id: result.cloud_session_id, team_id: bundleTeamId };
+            } else {
+              // Sync any new local entries to the existing cloud copy
+              await syncSessionToCloud(sessionId, copy.cloud_session_id);
+            }
+
+            // Now add the cloud entry IDs to the bundle
+            const cloudEntries = await getCloudSessionEntries(copy.cloud_session_id);
+            const cloudIds = entry_ids
+              ? cloudEntries.filter((e) => ids.includes(e.id)).map((e) => e.id)
+              : cloudEntries.map((e) => e.id);
+
+            if (cloudIds.length > 0) {
+              await addEntriesToBundle(bundle_id, cloudIds);
+            }
             return Response.json(
-              { error: "Use 'Copy to Cloud' to push a local session's entries to a cloud bundle." },
-              { status: 400, headers: corsHeaders }
+              { ok: true, pushed: cloudIds.length, skipped: 0, total: cloudIds.length },
+              { headers: corsHeaders }
             );
           }
 
@@ -641,25 +679,9 @@ const server = Bun.serve({
           const localSession = loadActiveSession(sessionId);
 
           if (localSession) {
-            if (mode === "cloud") {
-              // Find the cloud copy in the same team as the target bundle
-              const bundleTeamId = await getBundleTeamId(bundle_id);
-              const copies = localSession.cloud_copies ?? [];
-              const copy = copies.find((c) => c.team_id === bundleTeamId)
-                ?? (localSession.cloud_session_id && localSession.team_id === bundleTeamId
-                  ? { cloud_session_id: localSession.cloud_session_id, team_id: localSession.team_id }
-                  : null);
-              if (copy) {
-                connectCloudSessionToBundle(copy.cloud_session_id, bundle_id, mode);
-                return Response.json({ ok: true }, { headers: corsHeaders });
-              }
-              // No cloud copy in the target team — needs Copy to Cloud first
-              return Response.json(
-                { error: "Use 'Copy to Cloud' to connect a local session to a cloud bundle." },
-                { status: 400, headers: corsHeaders }
-              );
-            }
-            // Local session → local bundle: allowed
+            // Local session → any bundle: just record the connection locally.
+            // For cloud bundles this enables pull. Entries stay local until
+            // explicitly pushed to cloud via "Copy to Cloud".
             const session = connectSessionToBundle(sessionId, bundle_id, mode);
             return Response.json({ ok: true, session }, { headers: corsHeaders });
           }

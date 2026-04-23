@@ -335,36 +335,28 @@ export function buildFlowGraph(
     }
   }
 
-  // Categorize active sessions into team groups or local
-  const sessionsByTeam = new Map<string, ActiveSessionData[]>();
-  const localActiveSessions: ActiveSessionData[] = [];
-
-  const filteredSessions = options?.hideEmptySessions
+  // Active sessions always stay in the local group — they represent
+  // the current Claude Code session on this machine. Edges to cloud
+  // bundles cross groups naturally.
+  const localActiveSessions: ActiveSessionData[] = options?.hideEmptySessions
     ? (data.sessions ?? []).filter((s) => s.entry_count === undefined || s.entry_count > 0)
-    : data.sessions;
+    : (data.sessions ?? []);
 
-  if (filteredSessions) {
-    for (const session of filteredSessions) {
-      // Assign session to a team group based on its bundle connections only.
-      // Don't use session.team_id — that's just metadata for cloud sync,
-      // the active session should stay in local until it has a team bundle connection.
-      let assignedTeam: string | null = null;
-      for (const b of session.bundles) {
-        const teamId = bundleToTeam.get(b.bundle_id);
-        if (teamId) { assignedTeam = teamId; break; }
-      }
-      if (assignedTeam) {
-        if (!sessionsByTeam.has(assignedTeam)) sessionsByTeam.set(assignedTeam, []);
-        sessionsByTeam.get(assignedTeam)!.push(session);
-      } else {
-        localActiveSessions.push(session);
-      }
+  // Collect cloud session IDs that are backing an active local session
+  // so they don't show up as separate nodes in team groups.
+  const hiddenCloudIds = new Set<string>();
+  for (const s of localActiveSessions) {
+    if (s.cloud_session_id) hiddenCloudIds.add(s.cloud_session_id);
+    if (s.cloud_copies) {
+      for (const c of s.cloud_copies) hiddenCloudIds.add(c.cloud_session_id);
     }
   }
 
   // Team groups
   for (const team of data.teams) {
-    const teamActiveSessions = sessionsByTeam.get(team.team_id) ?? [];
+    const visibleCloudSessions = team.cloud_sessions?.filter(
+      (cs) => !hiddenCloudIds.has(cs.id)
+    );
 
     const { nodes, edges } = buildGroup({
       groupId: `team-${team.team_id}`,
@@ -373,8 +365,7 @@ export function buildFlowGraph(
       bundles: team.bundles,
       machineId: data.machine_id,
       isLocal: false,
-      activeSessions: teamActiveSessions,
-      cloudSessions: team.cloud_sessions,
+      cloudSessions: visibleCloudSessions,
     });
 
     const groupNode = nodes.find((n) => n.id === `team-${team.team_id}`);

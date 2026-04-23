@@ -573,17 +573,15 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         session.bundles.push({ bundle_id: a.bundle_id, mode: a.mode });
         saveActiveSession(session);
 
-        // Add all session entries as refs to the new bundle
-        const entries = getSessionEntries(session.session_id);
-        if (entries.length > 0) {
-          const entryIds = entries.map(e => e.id);
-          try {
-            if (isLocalBundle(a.bundle_id)) {
+        // For local bundles, add session entries as refs
+        if (isLocalBundle(a.bundle_id)) {
+          const entries = getSessionEntries(session.session_id);
+          if (entries.length > 0) {
+            try {
+              const entryIds = entries.map(e => e.id);
               localAddEntriesToBundle(a.bundle_id, entryIds, session.session_id);
-            } else {
-              await addEntriesToBundle(a.bundle_id, entryIds);
-            }
-          } catch { /* non-fatal */ }
+            } catch { /* non-fatal */ }
+          }
         }
 
         return ok({ connected: true, bundle_id: a.bundle_id, total_bundles: session.bundles.length });
