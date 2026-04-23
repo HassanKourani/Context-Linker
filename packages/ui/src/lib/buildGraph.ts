@@ -64,29 +64,20 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
     }
   }
 
-  // Add active sessions (each Claude Code session becomes a row under its project)
+  // Add active sessions (each Claude Code session becomes ONE row under its project)
+  // The session row has no bundleId — edges to bundles are created separately below
   if (activeSessions) {
     for (const as of activeSessions) {
       const key = as.project_name;
       if (!projectSessions.has(key)) projectSessions.set(key, []);
       const existing = projectSessions.get(key)!;
-      // Don't add if this session is already represented
       if (!existing.some((e) => e.sessionId === as.session_id)) {
         existing.push({
           sessionId: as.session_id,
           machineId: machineId,
           lastActiveAt: as.started_at,
-          bundleId: "", // no bundle edge from session log — edges come from session.bundles
+          bundleId: "",
         });
-        // Add edges for each bundle this session is connected to
-        for (const b of as.bundles) {
-          existing.push({
-            sessionId: `${as.session_id}-${b.bundle_id}`,
-            machineId: machineId,
-            lastActiveAt: as.started_at,
-            bundleId: b.bundle_id,
-          });
-        }
       }
     }
   }
@@ -187,7 +178,7 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
     });
   }
 
-  // Edges (only for sessions connected to a bundle)
+  // Edges from Supabase/local sessions to bundles
   for (const [projectName, sessions] of projectSessions) {
     for (const s of sessions) {
       if (s.bundleId) {
@@ -203,6 +194,38 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
             bundleId: s.bundleId,
             projectName,
             mode: isLocal ? "local" : "cloud",
+          },
+          style: { stroke: "#585b70", strokeWidth: 2 },
+        });
+      }
+    }
+  }
+
+  // Edges from active sessions to their connected bundles
+  // (one session can connect to multiple bundles — each gets its own edge)
+  if (activeSessions) {
+    for (const as of activeSessions) {
+      const projectNodeId = `project-${groupId}-${as.project_name}`;
+      // Only create edges if this project has a node in this group
+      if (!projectSessions.has(as.project_name)) continue;
+
+      for (const b of as.bundles) {
+        const edgeId = `edge-active-${as.session_id}-${b.bundle_id}`;
+        // Skip if this edge already exists (from Supabase sessions)
+        if (edges.some((e) => e.id === edgeId)) continue;
+
+        edges.push({
+          id: edgeId,
+          source: projectNodeId,
+          sourceHandle: as.session_id,
+          target: `bundle-${b.bundle_id}`,
+          type: "deletable",
+          animated: true,
+          data: {
+            sessionId: as.session_id,
+            bundleId: b.bundle_id,
+            projectName: as.project_name,
+            mode: b.mode,
           },
           style: { stroke: "#585b70", strokeWidth: 2 },
         });
