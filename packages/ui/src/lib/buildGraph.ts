@@ -34,23 +34,11 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
   // Collect all unique projects across bundles
   const projectSessions = new Map<
     string,
-    Array<{ sessionId: string; machineId: string; lastActiveAt: string | null; bundleId: string }>
+    Array<{ sessionId: string; machineId: string; lastActiveAt: string | null; bundleId: string; branch: string | null; entryCount: number }>
   >();
 
   for (const bundle of bundles) {
-    if (isLocal) {
-      // Local bundles: synthesize sessions from projects
-      for (const proj of (bundle as any).projects ?? []) {
-        const key = proj.project_name;
-        if (!projectSessions.has(key)) projectSessions.set(key, []);
-        projectSessions.get(key)!.push({
-          sessionId: `local-${bundle.bundle_id}-${proj.project_name}`,
-          machineId: machineId,
-          lastActiveAt: proj.last_entry_at,
-          bundleId: bundle.bundle_id,
-        });
-      }
-    } else {
+    if (!isLocal) {
       for (const session of bundle.sessions) {
         const key = session.project_name;
         if (!projectSessions.has(key)) projectSessions.set(key, []);
@@ -59,6 +47,8 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
           machineId: session.machine_id,
           lastActiveAt: session.last_active_at,
           bundleId: bundle.bundle_id,
+          branch: null,
+          entryCount: 0,
         });
       }
     }
@@ -77,6 +67,8 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
           machineId: machineId,
           lastActiveAt: as.started_at,
           bundleId: "",
+          branch: as.branch,
+          entryCount: as.entry_count ?? 0,
         });
       }
     }
@@ -145,14 +137,22 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
       expandParent: true,
       data: {
         projectName,
-        sessions: sessions.map((s) => ({
-          id: s.sessionId,
-          machineId: s.machineId,
-          lastActiveAt: s.lastActiveAt,
-          isYou: s.machineId === machineId,
-          bundleId: s.bundleId || null,
-          mode: isLocal ? "local" as const : "cloud" as const,
-        })),
+        sessions: sessions.map((s, i) => {
+          // Compute sequence number: count sessions on the same branch up to this index
+          const sameBranchBefore = sessions.slice(0, i).filter((o) => o.branch === s.branch).length;
+          return {
+            id: s.sessionId,
+            machineId: s.machineId,
+            lastActiveAt: s.lastActiveAt,
+            isYou: s.machineId === machineId,
+            bundleId: s.bundleId || null,
+            mode: isLocal ? "local" as const : "cloud" as const,
+            branch: s.branch,
+            entryCount: s.entryCount,
+            branchSeq: sameBranchBefore + 1,
+            branchTotal: sessions.filter((o) => o.branch === s.branch).length,
+          };
+        }),
       },
     });
   }
@@ -237,7 +237,8 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
 }
 
 export function buildFlowGraph(
-  data: GraphData
+  data: GraphData,
+  options?: { hideEmptySessions?: boolean }
 ): { nodes: Node[]; edges: Edge[] } {
   const allNodes: Node[] = [];
   const allEdges: Edge[] = [];
@@ -255,8 +256,12 @@ export function buildFlowGraph(
   const sessionsByTeam = new Map<string, ActiveSessionData[]>();
   const localActiveSessions: ActiveSessionData[] = [];
 
-  if (data.sessions) {
-    for (const session of data.sessions) {
+  const filteredSessions = options?.hideEmptySessions
+    ? (data.sessions ?? []).filter((s) => s.entry_count === undefined || s.entry_count > 0)
+    : data.sessions;
+
+  if (filteredSessions) {
+    for (const session of filteredSessions) {
       // Check if any of the session's bundles belong to a team
       let assignedTeam: string | null = null;
       for (const b of session.bundles) {

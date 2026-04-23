@@ -45,11 +45,12 @@ const edgeTypes: EdgeTypes = {
 export function App() {
   const { data, isLoading, dataUpdatedAt } = useGraphData();
   const hoveredEdgeId = useUIStore((s) => s.hoveredEdgeId);
+  const hideEmptySessions = useUIStore((s) => s.hideEmptySessions);
 
   // Build graph from API data
   const built = useMemo(
-    () => (data ? buildFlowGraph(data) : { nodes: [], edges: [] }),
-    [data]
+    () => (data ? buildFlowGraph(data, { hideEmptySessions }) : { nodes: [], edges: [] }),
+    [data, hideEmptySessions]
   );
 
   // Controlled node/edge state — allows dragging to update positions

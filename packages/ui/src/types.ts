@@ -5,6 +5,7 @@ export interface ActiveSessionData {
   bundles: Array<{ bundle_id: string; mode: "local" | "cloud" }>;
   started_at: string;
   branch: string | null;
+  entry_count?: number;
 }
 
 export interface GraphData {

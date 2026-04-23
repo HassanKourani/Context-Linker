@@ -11,6 +11,10 @@ interface SessionData {
   isYou: boolean;
   bundleId: string | null;
   mode: "local" | "cloud";
+  branch: string | null;
+  entryCount: number;
+  branchSeq: number;
+  branchTotal: number;
 }
 
 export function ProjectNode({ data }: NodeProps) {
@@ -47,16 +51,17 @@ export function ProjectNode({ data }: NodeProps) {
           className="group px-3 py-1.5 flex items-center gap-2 text-xs text-muted-foreground relative cursor-pointer hover:bg-accent/50 transition-colors"
           onClick={() => handleSessionClick(s)}
         >
-          <span className="font-mono text-[11px]" title={s.id}>
-            {s.id.slice(0, 8)}
+          <span className="font-mono text-[11px] truncate max-w-[100px]" title={s.id}>
+            {s.branch ?? s.id.slice(0, 8)}
+            {s.branchTotal > 1 && ` (#${s.branchSeq})`}
           </span>
           {s.isYou && (
             <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#a6e3a1]/20 text-[#a6e3a1]">
               You
             </span>
           )}
-          <span className="ml-auto text-muted-foreground/60 text-[10px]">
-            {relativeTime(s.lastActiveAt)}
+          <span className="ml-auto text-muted-foreground/60 text-[10px] whitespace-nowrap">
+            {s.entryCount > 0 ? `${s.entryCount} entr${s.entryCount === 1 ? "y" : "ies"}` : relativeTime(s.lastActiveAt)}
           </span>
           <button
             className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive"

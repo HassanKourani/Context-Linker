@@ -34,6 +34,9 @@ interface UIState {
   // Edge hover
   hoveredEdgeId: string | null;
 
+  // Graph filters
+  hideEmptySessions: boolean;
+
   // Actions
   openBundlePanel: (bundleId: string, filterProject?: string) => void;
   openSessionPanel: (sessionId: string, projectName: string) => void;
@@ -46,6 +49,7 @@ interface UIState {
   toggleEntry: (entryId: string) => void;
   clearEntrySelection: () => void;
   setHoveredEdge: (id: string | null) => void;
+  toggleHideEmptySessions: () => void;
 
   // Legacy compat
   openPanel: (bundleId: string, filterProject?: string) => void;
@@ -60,6 +64,9 @@ export const useUIStore = create<UIState>((set, get) => ({
   deleteBundleTarget: null,
   selectedEntryIds: new Set(),
   hoveredEdgeId: null,
+  hideEmptySessions: (() => {
+    try { return localStorage.getItem("ctx-link-hide-empty-sessions") === "true"; } catch { return false; }
+  })(),
 
   // Computed getters for backward compat
   get selectedBundleId() {
@@ -118,4 +125,11 @@ export const useUIStore = create<UIState>((set, get) => ({
   clearEntrySelection: () => set({ selectedEntryIds: new Set() }),
 
   setHoveredEdge: (id) => set({ hoveredEdgeId: id }),
+
+  toggleHideEmptySessions: () =>
+    set((state) => {
+      const next = !state.hideEmptySessions;
+      try { localStorage.setItem("ctx-link-hide-empty-sessions", String(next)); } catch {}
+      return { hideEmptySessions: next };
+    }),
 }));
