@@ -20,6 +20,7 @@ export interface CloudSessionData {
   started_at: string;
   last_active_at: string;
   entry_count?: number;
+  bundles?: Array<{ bundle_id: string; mode: "local" | "cloud" }>;
 }
 
 export interface GraphData {

@@ -243,6 +243,62 @@ export function disconnectSessionFromBundle(
   saveActiveSession(session);
 }
 
+// ---------- Cloud Session Bundle Connections ----------
+// Cloud sessions don't have a local active-session file, so we store
+// their bundle connections in a separate JSON file.
+
+type CloudSessionBundleMap = Record<string, Array<{ bundle_id: string; mode: "local" | "cloud" }>>;
+
+function cloudSessionBundlesPath(): string {
+  return join(globalConfigDir(), "cloud-session-bundles.json");
+}
+
+function readCloudSessionBundles(): CloudSessionBundleMap {
+  const p = cloudSessionBundlesPath();
+  if (!existsSync(p)) return {};
+  return JSON.parse(readFileSync(p, "utf8"));
+}
+
+function writeCloudSessionBundles(data: CloudSessionBundleMap): void {
+  const dir = globalConfigDir();
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+  writeFileSync(cloudSessionBundlesPath(), JSON.stringify(data, null, 2));
+}
+
+/** Get bundle connections for a cloud session */
+export function getCloudSessionBundleConnections(
+  sessionId: string
+): Array<{ bundle_id: string; mode: "local" | "cloud" }> {
+  const map = readCloudSessionBundles();
+  return map[sessionId] ?? [];
+}
+
+/** Connect a cloud session to a bundle (records the link, does NOT push entries) */
+export function connectCloudSessionToBundle(
+  sessionId: string,
+  bundleId: string,
+  mode: "local" | "cloud"
+): void {
+  const map = readCloudSessionBundles();
+  const bundles = map[sessionId] ?? [];
+  if (bundles.some((b) => b.bundle_id === bundleId)) return;
+  bundles.push({ bundle_id: bundleId, mode });
+  map[sessionId] = bundles;
+  writeCloudSessionBundles(map);
+}
+
+/** Disconnect a cloud session from a bundle */
+export function disconnectCloudSessionFromBundle(
+  sessionId: string,
+  bundleId: string
+): void {
+  const map = readCloudSessionBundles();
+  const bundles = map[sessionId] ?? [];
+  map[sessionId] = bundles.filter((b) => b.bundle_id !== bundleId);
+  if (map[sessionId].length === 0) delete map[sessionId];
+  writeCloudSessionBundles(map);
+}
+
 // ---------- Session-Level Entries ----------
 // Each session accumulates its own entries locally.
 // Entries stay local until consolidated and pushed to a bundle via context_push.

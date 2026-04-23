@@ -189,3 +189,28 @@ export async function getEntryBundleRefs(
   if (error) throw new Error(`getEntryBundleRefs failed: ${error.message}`);
   return (data ?? []) as Array<{ bundle_id: string; added_at: string }>;
 }
+
+/**
+ * Get distinct bundle IDs that reference any entry belonging to a cloud session.
+ */
+export async function getCloudSessionBundleIds(
+  cloudSessionId: string
+): Promise<string[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("cloud_session_entries")
+    .select("bundle_entry_refs!inner(bundle_id)")
+    .eq("session_id", cloudSessionId)
+    .is("superseded_at", null);
+  if (error) throw new Error(`getCloudSessionBundleIds failed: ${error.message}`);
+  const bundleIds = new Set<string>();
+  for (const row of data ?? []) {
+    const refs = (row as any).bundle_entry_refs;
+    if (Array.isArray(refs)) {
+      for (const ref of refs) bundleIds.add(ref.bundle_id);
+    } else if (refs?.bundle_id) {
+      bundleIds.add(refs.bundle_id);
+    }
+  }
+  return [...bundleIds];
+}

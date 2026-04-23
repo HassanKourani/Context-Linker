@@ -13,9 +13,11 @@ import {
   pullEntries,
   addEntriesToBundle,
   removeEntryFromBundle,
+  removeSessionEntriesFromBundle,
   localAddEntriesToBundle,
   localRemoveEntryFromBundle,
   localRemoveSessionRefsFromBundle,
+  localRemoveEntryRefsFromBundleByIds,
   createTeam,
   joinTeam,
   getSessionEntries,
@@ -38,6 +40,9 @@ import {
   localRewindProject,
   localRestoreRewound,
   localListRewinds,
+  connectCloudSessionToBundle,
+  disconnectCloudSessionFromBundle,
+  getCloudSessionBundleConnections,
 } from "@ctx-link/core";
 
 const server = Bun.serve({
@@ -88,9 +93,11 @@ const server = Bun.serve({
             const enrichedSessions = await Promise.all(
               cloudSessions.map(async (cs) => {
                 const entries = await getCloudSessionEntries(cs.id);
+                const bundles = getCloudSessionBundleConnections(cs.id);
                 return {
                   ...cs,
                   entry_count: entries.length,
+                  bundles,
                 };
               })
             );
@@ -207,11 +214,20 @@ const server = Bun.serve({
           const bundleId = match[1];
           const mode = resolveBundleMode(bundleId);
 
-          // Disconnect all active sessions from this bundle first
+          // Disconnect all sessions from this bundle first
           const activeSessions = listActiveSessions();
           for (const s of activeSessions) {
             if (s.bundles.some((b) => b.bundle_id === bundleId)) {
               disconnectSessionFromBundle(s.session_id, bundleId);
+            }
+          }
+
+          // Also clean up cloud session bundle connections
+          const teams = listMyTeams();
+          for (const team of teams) {
+            const cloudSessions = await listTeamSessions(team.team_id);
+            for (const cs of cloudSessions) {
+              disconnectCloudSessionFromBundle(cs.id, bundleId);
             }
           }
 
@@ -435,15 +451,39 @@ const server = Bun.serve({
           const { bundle_id, entry_ids } = await req.json();
           const mode = resolveBundleMode(bundle_id);
 
-          // Ensure session is connected to this bundle
-          try {
-            connectSessionToBundle(sessionId, bundle_id, mode);
-          } catch {
-            // Already connected — that's fine
+          // Check if this is a local active session or a cloud session
+          const localSession = loadActiveSession(sessionId);
+
+          if (localSession) {
+            // Local active session
+            // Ensure session is connected to this bundle
+            try {
+              connectSessionToBundle(sessionId, bundle_id, mode);
+            } catch {
+              // Already connected — that's fine
+            }
+
+            const allEntries = getSessionEntries(sessionId);
+            const ids = entry_ids ? entry_ids as string[] : allEntries.map((e) => e.id);
+
+            if (mode === "local") {
+              const result = localAddEntriesToBundle(bundle_id, ids, sessionId);
+              return Response.json(
+                { ok: true, pushed: result.added, skipped: result.skipped, total: ids.length },
+                { headers: corsHeaders }
+              );
+            }
+
+            // Cloud bundle: not allowed for local sessions (use copy-to-cloud flow instead)
+            return Response.json(
+              { error: "Use 'Copy to Cloud' to push a local session's entries to a cloud bundle." },
+              { status: 400, headers: corsHeaders }
+            );
           }
 
-          const allEntries = getSessionEntries(sessionId);
-          const ids = entry_ids ? entry_ids as string[] : allEntries.map((e) => e.id);
+          // Cloud session — push entries to bundle
+          const cloudEntries = await getCloudSessionEntries(sessionId);
+          const ids = entry_ids ? entry_ids as string[] : cloudEntries.map((e) => e.id);
 
           if (mode === "local") {
             const result = localAddEntriesToBundle(bundle_id, ids, sessionId);
@@ -451,13 +491,15 @@ const server = Bun.serve({
               { ok: true, pushed: result.added, skipped: result.skipped, total: ids.length },
               { headers: corsHeaders }
             );
+          } else {
+            if (ids.length > 0) {
+              await addEntriesToBundle(bundle_id, ids);
+            }
+            return Response.json(
+              { ok: true, pushed: ids.length, skipped: 0, total: ids.length },
+              { headers: corsHeaders }
+            );
           }
-
-          // Cloud bundle: not allowed for local sessions (use copy-to-cloud flow instead)
-          return Response.json(
-            { error: "Use 'Copy to Cloud' to push a local session's entries to a cloud bundle." },
-            { status: 400, headers: corsHeaders }
-          );
         } catch (err: any) {
           return Response.json(
             { error: err.message ?? String(err) },
@@ -534,23 +576,9 @@ const server = Bun.serve({
             return Response.json({ ok: true, session }, { headers: corsHeaders });
           }
 
-          // Cloud session — add all its entries as refs to the bundle
-          const { getCloudSessionEntries } = await import("@ctx-link/core");
-          const cloudEntries = await getCloudSessionEntries(sessionId);
-          const entryIds = cloudEntries.map((e) => e.id);
-
-          if (mode === "local") {
-            // Cloud session → local bundle
-            if (entryIds.length > 0) {
-              localAddEntriesToBundle(bundle_id, entryIds, sessionId);
-            }
-          } else {
-            // Cloud session → cloud bundle
-            if (entryIds.length > 0) {
-              await addEntriesToBundle(bundle_id, entryIds);
-            }
-          }
-
+          // Cloud session — just record the connection, same as local sessions.
+          // Entries are pushed separately via push-to-bundle.
+          connectCloudSessionToBundle(sessionId, bundle_id, mode);
           return Response.json({ ok: true }, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
@@ -632,41 +660,68 @@ const server = Bun.serve({
         const { session_id, bundle_id } = await req.json();
         const mode = resolveBundleMode(bundle_id);
 
+        // Resolve whether session_id is a local active session or a cloud session
+        let localSessionId: string | null = null;
+        let cloudSessionId: string | null = null;
 
-        // Resolve the local session ID (session_id might be a cloud session ID)
-        let localSessionId = session_id;
         const directSession = loadActiveSession(session_id);
-        if (!directSession) {
-          // session_id might be a cloud session ID — find the matching active session
-          const allSessions = listActiveSessions();
-          const match = allSessions.find((s) => s.cloud_session_id === session_id);
+        if (directSession) {
+          // session_id is a local active session
+          localSessionId = session_id;
+          cloudSessionId = directSession.cloud_session_id ?? null;
+        } else {
+          // session_id might be a cloud session ID
+          cloudSessionId = session_id;
+          // Check if any active session maps to this cloud session
+          const match = listActiveSessions().find((s) => s.cloud_session_id === session_id);
           if (match) localSessionId = match.session_id;
         }
 
-        // Get all entry IDs from the local session file
-        const entries = getSessionEntries(localSessionId);
-        const entryIds = entries.map((e) => e.id);
-
-
         // Remove entry refs from the bundle
         if (mode === "local") {
-          localRemoveSessionRefsFromBundle(bundle_id, localSessionId);
-          // Also try with the original session_id in case it differs
-          if (localSessionId !== session_id) {
-            localRemoveSessionRefsFromBundle(bundle_id, session_id);
+          // Try removing by local session ID
+          if (localSessionId) {
+            localRemoveSessionRefsFromBundle(bundle_id, localSessionId);
           }
-        } else if (entryIds.length > 0) {
-          // Cloud: remove individual entry refs
-          for (const entryId of entryIds) {
-            try { await removeEntryFromBundle(bundle_id, entryId); } catch {}
+          // Also try by cloud session ID (cloud sessions push with their cloud ID as session_id)
+          if (cloudSessionId) {
+            localRemoveSessionRefsFromBundle(bundle_id, cloudSessionId);
+          }
+          // Also try matching by entry IDs from the cloud session
+          // (in case the entry_refs.session_id doesn't match either ID)
+          if (cloudSessionId) {
+            try {
+              const cloudEntries = await getCloudSessionEntries(cloudSessionId);
+              if (cloudEntries.length > 0) {
+                localRemoveEntryRefsFromBundleByIds(bundle_id, cloudEntries.map(e => e.id));
+              }
+            } catch {}
+          }
+        } else {
+          // Cloud bundle: remove entry refs from Supabase
+          if (cloudSessionId) {
+            const removed = await removeSessionEntriesFromBundle(bundle_id, cloudSessionId);
+            console.log("[unlink-cloud] removed", removed, "entry refs for cloud session", cloudSessionId, "from bundle", bundle_id);
+          } else {
+            console.log("[unlink-cloud] no cloudSessionId resolved, session_id:", session_id);
+          }
+          // Also try with local session entries if they were synced
+          if (localSessionId) {
+            const localEntries = getSessionEntries(localSessionId);
+            for (const e of localEntries) {
+              try { await removeEntryFromBundle(bundle_id, e.id); } catch {}
+            }
           }
         }
 
-        // Disconnect the session from the bundle
-        disconnectSessionFromBundle(localSessionId, bundle_id);
-        // Also try with original session_id
-        if (localSessionId !== session_id) {
-          disconnectSessionFromBundle(session_id, bundle_id);
+        // Disconnect the session from the bundle (try all known IDs)
+        if (localSessionId) disconnectSessionFromBundle(localSessionId, bundle_id);
+        if (cloudSessionId && cloudSessionId !== localSessionId) {
+          disconnectSessionFromBundle(cloudSessionId, bundle_id);
+        }
+        disconnectCloudSessionFromBundle(session_id, bundle_id);
+        if (localSessionId && localSessionId !== session_id) {
+          disconnectCloudSessionFromBundle(localSessionId, bundle_id);
         }
 
         return Response.json({ ok: true }, { headers: corsHeaders });

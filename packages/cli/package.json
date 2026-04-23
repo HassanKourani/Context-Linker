@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "ctx-link": "./src/index.ts"
+    "ctxl": "./src/index.ts"
   },
   "scripts": {
     "start": "bun src/index.ts",

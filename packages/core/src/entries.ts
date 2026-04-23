@@ -126,6 +126,36 @@ export async function removeEntryFromBundle(
 }
 
 /**
+ * Remove all bundle_entry_refs for entries belonging to a given cloud session.
+ */
+export async function removeSessionEntriesFromBundle(
+  bundleId: string,
+  cloudSessionId: string
+): Promise<number> {
+  const sb = getSupabase();
+
+  // Get all entry IDs for this cloud session
+  const { data: sessionEntries, error: seErr } = await sb
+    .from("cloud_session_entries")
+    .select("id")
+    .eq("session_id", cloudSessionId);
+
+  if (seErr) throw new Error(`removeSessionEntriesFromBundle query failed: ${seErr.message}`);
+  if (!sessionEntries || sessionEntries.length === 0) return 0;
+
+  const entryIds = sessionEntries.map((e: any) => e.id);
+
+  const { error, count } = await sb
+    .from("bundle_entry_refs")
+    .delete({ count: "exact" })
+    .eq("bundle_id", bundleId)
+    .in("entry_id", entryIds);
+
+  if (error) throw new Error(`removeSessionEntriesFromBundle delete failed: ${error.message}`);
+  return count ?? 0;
+}
+
+/**
  * Get session entries not yet referenced by a specific bundle.
  */
 export async function getUnpushedEntries(

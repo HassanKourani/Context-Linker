@@ -319,6 +319,32 @@ export function localRemoveSessionRefsFromBundle(bundleId: string, sessionId: st
   writeEntryRefs(bundleId, filtered);
 }
 
+/** Remove entry refs from a local bundle by entry IDs. */
+export function localRemoveEntryRefsFromBundleByIds(bundleId: string, entryIds: string[]): void {
+  const idSet = new Set(entryIds);
+  const refs = readEntryRefs(bundleId);
+  const filtered = refs.filter(r => !idSet.has(r.entry_id));
+  writeEntryRefs(bundleId, filtered);
+}
+
+/**
+ * Get all local bundle IDs that have entry refs from a given session.
+ */
+export function getLocalBundleIdsForSession(sessionId: string): string[] {
+  const localBase = localDir();
+  if (!existsSync(localBase)) return [];
+  const bundleIds: string[] = [];
+  for (const dir of readdirSync(localBase)) {
+    const refsPath = entryRefsPath(dir);
+    if (!existsSync(refsPath)) continue;
+    const refs: LocalEntryRef[] = JSON.parse(readFileSync(refsPath, "utf8"));
+    if (refs.some(r => r.session_id === sessionId)) {
+      bundleIds.push(dir);
+    }
+  }
+  return bundleIds;
+}
+
 export interface LocalBundleDetail {
   bundle_id: string;
   bundle_name: string;

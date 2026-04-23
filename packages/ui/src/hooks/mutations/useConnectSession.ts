@@ -19,14 +19,32 @@ export function useConnectSession() {
       const prev = qc.getQueryData<GraphData>(["graph"]);
 
       qc.setQueryData<GraphData>(["graph"], (old) => {
-        if (!old?.sessions) return old;
+        if (!old) return old;
+
+        // Try active sessions first
+        const isActiveSession = old.sessions?.some((s) => s.session_id === sessionId);
+        if (isActiveSession && old.sessions) {
+          return {
+            ...old,
+            sessions: old.sessions.map((s) =>
+              s.session_id === sessionId
+                ? { ...s, bundles: [...s.bundles, { bundle_id, mode: "local" as const }] }
+                : s
+            ),
+          };
+        }
+
+        // Cloud session — update within team's cloud_sessions
         return {
           ...old,
-          sessions: old.sessions.map((s) =>
-            s.session_id === sessionId
-              ? { ...s, bundles: [...s.bundles, { bundle_id, mode: "local" as const }] }
-              : s
-          ),
+          teams: old.teams.map((team) => ({
+            ...team,
+            cloud_sessions: team.cloud_sessions?.map((cs) =>
+              cs.id === sessionId
+                ? { ...cs, bundles: [...(cs.bundles ?? []), { bundle_id, mode: "cloud" as const }] }
+                : cs
+            ),
+          })),
         };
       });
 
