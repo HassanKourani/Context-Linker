@@ -142,7 +142,7 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
       type: "project",
       position: { x: pos.x + GROUP_PADDING, y: pos.y + GROUP_PADDING + GROUP_HEADER },
       parentId: groupId,
-      extent: "parent" as const,
+      expandParent: true,
       data: {
         projectName,
         sessions: sessions.map((s) => ({
@@ -167,7 +167,7 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
       type: "bundle",
       position: { x: pos.x + GROUP_PADDING, y: pos.y + GROUP_PADDING + GROUP_HEADER },
       parentId: groupId,
-      extent: "parent" as const,
+      expandParent: true,
       data: {
         bundleId: bundle.bundle_id,
         bundleName: bundle.bundle_name,
