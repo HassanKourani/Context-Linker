@@ -1,9 +1,7 @@
 import {
   loadGlobalConfig,
-  loadSessionLog,
   listActiveSessions,
   listMyTeams,
-  listBundleSessions,
   listAllLocalBundleDetails,
   listTeamBundles,
   bundleStatus,
@@ -12,23 +10,28 @@ import {
   joinBundle,
   getBundleToken,
   isLocalBundle,
-  pushEntry,
   pullEntries,
-  rewindProject,
-  restoreRewound,
-  listRewinds,
+  addEntriesToBundle,
+  removeEntryFromBundle,
+  localAddEntriesToBundle,
+  localRemoveEntryFromBundle,
   createTeam,
   joinTeam,
   getSessionEntries,
   pushSessionEntry,
   deleteSessionEntry,
-  markSessionEntriesPushed,
   connectSessionToBundle,
   disconnectSessionFromBundle,
   deleteActiveSession,
   loadActiveSession,
-  deleteProjectEntriesFromBundle,
-  localDeleteProjectFromBundle,
+  pushSessionToCloud,
+  listTeamSessions,
+  syncNewEntries,
+  deleteCloudSession,
+  deleteCloudSessionEntry,
+  rewindProject,
+  restoreRewound,
+  listRewinds,
   localRewindProject,
   localRestoreRewound,
   localListRewinds,
@@ -63,24 +66,18 @@ const server = Bun.serve({
 
         const teamData = await Promise.all(
           teams.map(async (team) => {
-            const bundles = await listTeamBundles(team.team_id);
+            const [bundles, cloudSessions] = await Promise.all([
+              listTeamBundles(team.team_id),
+              listTeamSessions(team.team_id),
+            ]);
             const bundlesWithDetails = await Promise.all(
               bundles.map(async (b) => {
-                const [status, sessions] = await Promise.all([
-                  bundleStatus(b.bundle_id, "cloud", true),
-                  listBundleSessions(b.bundle_id, true),
-                ]);
+                const status = await bundleStatus(b.bundle_id, "cloud", true);
                 return {
                   bundle_id: b.bundle_id,
                   bundle_name: b.name,
                   entry_count: status.entry_count,
                   last_entry_at: status.last_entry_at,
-                  sessions: sessions.map((s) => ({
-                    session_id: s.session_id,
-                    project_name: s.project_name,
-                    machine_id: s.machine_id,
-                    last_active_at: s.last_active_at,
-                  })),
                 };
               })
             );
@@ -88,6 +85,7 @@ const server = Bun.serve({
               team_id: team.team_id,
               team_name: team.name,
               bundles: bundlesWithDetails,
+              cloud_sessions: cloudSessions,
             };
           })
         );
@@ -156,6 +154,23 @@ const server = Bun.serve({
       }
     }
 
+    // ── GET /api/teams/:id/sessions ───────────────────────────────────────────
+    {
+      const match = url.pathname.match(/^\/api\/teams\/([^/]+)\/sessions$/);
+      if (match && req.method === "GET") {
+        try {
+          const teamId = match[1];
+          const sessions = await listTeamSessions(teamId);
+          return Response.json(sessions, { headers: corsHeaders });
+        } catch (err: any) {
+          return Response.json(
+            { error: err.message ?? String(err) },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+      }
+    }
+
     // ── POST /api/bundles ─────────────────────────────────────────────────────
     if (url.pathname === "/api/bundles" && req.method === "POST") {
       try {
@@ -203,43 +218,35 @@ const server = Bun.serve({
       if (match && req.method === "POST") {
         try {
           const bundleId = match[1];
-          const { project_name, session_id } = await req.json();
+          const { project_name } = await req.json();
           const mode = resolveBundleMode(bundleId);
           const token = getBundleToken(bundleId) || "";
           const result = await joinBundle(bundleId, token, project_name, mode);
-
-          // Copy session entries into the bundle (session context flows to parent)
-          if (session_id) {
-            const sessionEntries = getSessionEntries(session_id);
-            for (const entry of sessionEntries) {
-              await pushEntry({
-                bundle_id: bundleId,
-                project_name: entry.project_name || project_name,
-                event_type: entry.event_type as any,
-                trigger_ref: entry.trigger_ref,
-                summary: entry.summary,
-                files_touched: entry.files_touched,
-                decisions: entry.decisions,
-                raw_context: "",
-                mode,
-                skipAuth: true,
-              });
-            }
-          } else {
-            // No session context to copy — push a "linked" placeholder
-            // Same for both local and cloud
-            await pushEntry({
-              bundle_id: bundleId,
-              project_name,
-              event_type: "manual" as const,
-              summary: `Project "${project_name}" linked to bundle`,
-              raw_context: "",
-              mode,
-              skipAuth: true,
-            });
-          }
-
           return Response.json(result, { headers: corsHeaders });
+        } catch (err: any) {
+          return Response.json(
+            { error: err.message ?? String(err) },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+      }
+    }
+
+    // ── DELETE /api/bundles/:bundleId/entries/:entryId ────────────────────────
+    // MUST be matched before GET/POST /api/bundles/:id/entries (two path params)
+    {
+      const match = url.pathname.match(/^\/api\/bundles\/([^/]+)\/entries\/([^/]+)$/);
+      if (match && req.method === "DELETE") {
+        try {
+          const bundleId = match[1];
+          const entryId = match[2];
+          const mode = resolveBundleMode(bundleId);
+          if (mode === "local") {
+            localRemoveEntryFromBundle(bundleId, entryId);
+          } else {
+            await removeEntryFromBundle(bundleId, entryId);
+          }
+          return Response.json({ ok: true }, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
             { error: err.message ?? String(err) },
@@ -268,36 +275,6 @@ const server = Bun.serve({
             skipAuth: true,
           });
           return Response.json(entries, { headers: corsHeaders });
-        } catch (err: any) {
-          return Response.json(
-            { error: err.message ?? String(err) },
-            { status: 500, headers: corsHeaders }
-          );
-        }
-      }
-    }
-
-    // ── POST /api/bundles/:id/entries ─────────────────────────────────────────
-    {
-      const match = url.pathname.match(/^\/api\/bundles\/([^/]+)\/entries$/);
-      if (match && req.method === "POST") {
-        try {
-          const bundleId = match[1];
-          const { project_name, event_type, summary, files_touched, decisions } =
-            await req.json();
-          const mode = resolveBundleMode(bundleId);
-          const result = await pushEntry({
-            bundle_id: bundleId,
-            project_name,
-            event_type,
-            summary,
-            files_touched,
-            decisions,
-            raw_context: "",
-            mode,
-            skipAuth: true,
-          });
-          return Response.json(result, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
             { error: err.message ?? String(err) },
@@ -431,59 +408,45 @@ const server = Bun.serve({
             // Already connected — that's fine
           }
 
-          // Get session entries — either specific ones or all
-          const allSessionEntries = getSessionEntries(sessionId);
-          const entriesToPush = entry_ids
-            ? allSessionEntries.filter((e) => entry_ids.includes(e.id))
-            : allSessionEntries;
+          const allEntries = getSessionEntries(sessionId);
+          const ids = entry_ids ? entry_ids as string[] : allEntries.map((e) => e.id);
 
-          // Pull existing bundle entries to check for duplicates (by summary + created_at)
-          const existingEntries = await pullEntries({
-            bundle_id,
-            limit: 500,
-            mode,
-            skipAuth: true,
-          });
-          const existingSet = new Set(
-            existingEntries.map((e) => `${e.summary}::${e.created_at}`)
-          );
-
-          // Push only entries that don't already exist in the bundle
-          let pushed = 0;
-          let skipped = 0;
-          const pushedIds: string[] = [];
-          for (const entry of entriesToPush) {
-            const key = `${entry.summary}::${entry.created_at}`;
-            if (existingSet.has(key)) {
-              skipped++;
-              pushedIds.push(entry.id); // Mark as pushed even if skipped (already there)
-              continue;
-            }
-            await pushEntry({
-              bundle_id,
-              project_name: entry.project_name,
-              event_type: entry.event_type as any,
-              trigger_ref: entry.trigger_ref,
-              summary: entry.summary,
-              files_touched: entry.files_touched,
-              decisions: entry.decisions,
-              raw_context: "",
-              mode,
-              skipAuth: true,
-            });
-            pushed++;
-            pushedIds.push(entry.id);
+          if (mode === "local") {
+            const result = localAddEntriesToBundle(bundle_id, ids, sessionId);
+            return Response.json(
+              { ok: true, pushed: result.added, skipped: result.skipped, total: ids.length },
+              { headers: corsHeaders }
+            );
           }
 
-          // Mark pushed entries
-          if (pushedIds.length > 0) {
-            markSessionEntriesPushed(sessionId, pushedIds);
+          // Cloud: sync to cloud first if session is cloud-enabled
+          const session = loadActiveSession(sessionId);
+          if (session?.cloud_session_id) {
+            await syncNewEntries(session);
           }
-
+          const result = await addEntriesToBundle(bundle_id, ids);
           return Response.json(
-            { ok: true, pushed, skipped, total: entriesToPush.length },
+            { ok: true, pushed: result.added, skipped: result.skipped, total: ids.length },
             { headers: corsHeaders }
           );
+        } catch (err: any) {
+          return Response.json(
+            { error: err.message ?? String(err) },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+      }
+    }
+
+    // ── POST /api/sessions/:id/push-to-cloud ──────────────────────────────
+    {
+      const match = url.pathname.match(/^\/api\/sessions\/([^/]+)\/push-to-cloud$/);
+      if (match && req.method === "POST") {
+        try {
+          const sessionId = match[1];
+          const { team_id } = await req.json();
+          const result = await pushSessionToCloud(sessionId, team_id);
+          return Response.json(result, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
             { error: err.message ?? String(err) },
@@ -520,6 +483,10 @@ const server = Bun.serve({
           const sessionId = match[1];
           const entryId = match[2];
           deleteSessionEntry(sessionId, entryId);
+          const session = loadActiveSession(sessionId);
+          if (session?.cloud_session_id) {
+            try { await deleteCloudSessionEntry(entryId); } catch {}
+          }
           return Response.json({ ok: true }, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
@@ -537,22 +504,10 @@ const server = Bun.serve({
         try {
           const sessionId = match[1];
 
-          // Load session to find connected bundles and project name
+          // Delete cloud session if it exists
           const session = loadActiveSession(sessionId);
-          if (session) {
-            // Delete this project's entries from each connected bundle
-            for (const b of session.bundles) {
-              const mode = resolveBundleMode(b.bundle_id);
-              try {
-                if (mode === "local") {
-                  localDeleteProjectFromBundle(b.bundle_id, session.project_name);
-                } else {
-                  await deleteProjectEntriesFromBundle(b.bundle_id, session.project_name);
-                }
-              } catch {
-                // Non-fatal — bundle may already be deleted
-              }
-            }
+          if (session?.cloud_session_id) {
+            try { await deleteCloudSession(session.cloud_session_id); } catch {}
           }
 
           // Delete the active session + its session-entries file
@@ -571,11 +526,7 @@ const server = Bun.serve({
     // ── POST /api/unlink-session ────────────────────────────────────────────
     if (url.pathname === "/api/unlink-session" && req.method === "POST") {
       try {
-        const { session_id, bundle_id, project_name, mode } = await req.json();
-
-        // Remove from active session's bundles array
-        // Remove the bundle from the active session's bundles array
-        // Same behavior for both local and cloud — only the link is removed
+        const { session_id, bundle_id } = await req.json();
         disconnectSessionFromBundle(session_id, bundle_id);
         return Response.json({ ok: true }, { headers: corsHeaders });
       } catch (err: any) {
