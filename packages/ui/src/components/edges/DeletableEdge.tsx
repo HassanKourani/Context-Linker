@@ -2,11 +2,11 @@ import {
   BaseEdge,
   EdgeLabelRenderer,
   getBezierPath,
-  useReactFlow,
   type EdgeProps,
 } from "@xyflow/react";
 import { X } from "lucide-react";
 import { useDeleteSession } from "@/hooks/mutations/useDeleteSession";
+import { keepEdgeHovered, unhoverEdge } from "@/lib/edgeHover";
 
 export function DeletableEdge({
   id,
@@ -61,6 +61,8 @@ export function DeletableEdge({
               transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
               pointerEvents: "all",
             }}
+            onMouseEnter={keepEdgeHovered}
+            onMouseLeave={unhoverEdge}
           >
             <button
               className="bg-destructive text-destructive-foreground rounded-full w-6 h-6 flex items-center justify-center shadow-lg hover:scale-125 cursor-pointer transition-transform border border-destructive-foreground/20"

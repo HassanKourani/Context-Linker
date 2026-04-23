@@ -27,6 +27,9 @@ interface UIState {
   // Entry selection (for rewind)
   selectedEntryIds: Set<string>;
 
+  // Edge hover
+  hoveredEdgeId: string | null;
+
   // Actions
   openPanel: (bundleId: string, mode: "local" | "cloud") => void;
   closePanel: () => void;
@@ -36,6 +39,7 @@ interface UIState {
   setDeleteTarget: (target: DeleteTarget | null) => void;
   toggleEntry: (entryId: string) => void;
   clearEntrySelection: () => void;
+  setHoveredEdge: (id: string | null) => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -45,6 +49,7 @@ export const useUIStore = create<UIState>((set) => ({
   activeModal: null,
   deleteBundleTarget: null,
   selectedEntryIds: new Set(),
+  hoveredEdgeId: null,
 
   openPanel: (bundleId, mode) =>
     set({ selectedBundleId: bundleId, selectedBundleMode: mode, panelTab: "entries" }),
@@ -69,4 +74,6 @@ export const useUIStore = create<UIState>((set) => ({
     }),
 
   clearEntrySelection: () => set({ selectedEntryIds: new Set() }),
+
+  setHoveredEdge: (id) => set({ hoveredEdgeId: id }),
 }));

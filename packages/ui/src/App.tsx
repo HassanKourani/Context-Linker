@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useState, useRef } from "react";
+import { useMemo, useCallback } from "react";
 import {
   ReactFlow,
   Background,
@@ -12,7 +12,9 @@ import {
 } from "@xyflow/react";
 import { useJoinBundle } from "./hooks/mutations/useJoinBundle";
 import { useGraphData } from "./hooks/useGraphData";
+import { useUIStore } from "./stores/uiStore";
 import { buildFlowGraph } from "./lib/buildGraph";
+import { hoverEdge, unhoverEdge } from "./lib/edgeHover";
 import { ProjectNode } from "./components/nodes/ProjectNode";
 import { BundleNode } from "./components/nodes/BundleNode";
 import { TeamGroupNode } from "./components/nodes/TeamGroupNode";
@@ -37,14 +39,13 @@ const edgeTypes: EdgeTypes = {
 
 export function App() {
   const { data, isLoading, dataUpdatedAt } = useGraphData();
-  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
+  const hoveredEdgeId = useUIStore((s) => s.hoveredEdgeId);
 
   const { nodes, edges: rawEdges } = useMemo(
     () => (data ? buildFlowGraph(data) : { nodes: [], edges: [] }),
     [data]
   );
 
-  // Inject _hovered flag into edge data for the hovered edge
   const edges = useMemo(
     () =>
       rawEdges.map((e) =>
@@ -84,20 +85,12 @@ export function App() {
     [nodes]
   );
 
-  const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   const onEdgeMouseEnter: EdgeMouseHandler = useCallback((_event, edge) => {
-    if (leaveTimer.current) {
-      clearTimeout(leaveTimer.current);
-      leaveTimer.current = null;
-    }
-    setHoveredEdgeId(edge.id);
+    hoverEdge(edge.id);
   }, []);
 
   const onEdgeMouseLeave: EdgeMouseHandler = useCallback(() => {
-    leaveTimer.current = setTimeout(() => {
-      setHoveredEdgeId(null);
-    }, 300);
+    unhoverEdge();
   }, []);
 
   return (
