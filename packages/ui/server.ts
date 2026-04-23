@@ -474,14 +474,15 @@ const server = Bun.serve({
           const { bundle_id } = await req.json();
           const mode = resolveBundleMode(bundle_id);
 
-          // Auto-push session to cloud when connecting to a cloud bundle
+          // Block local-only sessions from connecting to cloud bundles
+          // User must push session to cloud first
           if (mode === "cloud") {
-            const session = loadActiveSession(sessionId);
-            if (session && !session.cloud_session_id) {
-              const teamId = await getBundleTeamId(bundle_id);
-              if (teamId) {
-                await pushSessionToCloud(sessionId, teamId);
-              }
+            const sess = loadActiveSession(sessionId);
+            if (sess && !sess.cloud_session_id) {
+              return Response.json(
+                { error: "Push session to cloud first before connecting to a cloud bundle." },
+                { status: 400, headers: corsHeaders }
+              );
             }
           }
 
