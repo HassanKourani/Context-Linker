@@ -13,7 +13,6 @@ import {
   deleteBundle,
   listLocalBundles,
   bundleStatus,
-  pushEntry,
   pullEntries,
   logSession,
   loadSessionLog,
@@ -33,7 +32,10 @@ import {
   pushSessionEntry,
   getSessionEntries,
   getUnpushedSessionEntries,
-  markSessionEntriesPushed,
+  addEntriesToBundle,
+  localAddEntriesToBundle,
+  pushSessionToCloud,
+  syncNewEntries,
   isLocalBundle,
   type RewindStrategy,
 } from "@ctx-link/core";
@@ -357,6 +359,41 @@ program
     }
   });
 
+// ==================== PUSH TO CLOUD ====================
+
+program
+  .command("push-to-cloud")
+  .description(
+    "Push the current session to the cloud under a team.\n" +
+    "All session entries are synced. Future entries auto-sync.\n\n" +
+    "Example:\n" +
+    "  $ ctx-link push-to-cloud"
+  )
+  .option("--team <team_id>", "team ID (prompted if not given)")
+  .action(async (opts) => {
+    const sessionId = getActiveSessionId();
+    if (!sessionId) {
+      console.error("No active session.");
+      process.exit(1);
+    }
+    let teamId = opts.team;
+    if (!teamId) {
+      const teams = listMyTeams();
+      if (teams.length === 0) {
+        console.error("No teams found. Create one first with 'ctx-link create-team'.");
+        process.exit(1);
+      }
+      teamId = await select({
+        message: "Which team?",
+        choices: teams.map(t => ({ name: t.name, value: t.team_id, description: t.team_id })),
+      });
+    }
+    const result = await pushSessionToCloud(sessionId, teamId);
+    console.log(`Session pushed to cloud.`);
+    console.log(`  Cloud ID: ${result.cloud_session_id}`);
+    console.log(`  Entries synced: ${result.entries_synced}`);
+  });
+
 // ==================== CONNECT / DISCONNECT ====================
 
 program
@@ -392,32 +429,23 @@ program
     session.bundles.push({ bundle_id: bundleId, mode });
     saveActiveSession(session);
 
-    // Auto-push session context to the new bundle
-    try {
-      let recentWork = "";
+    // Add all session entries as refs to the new bundle
+    const entries = getSessionEntries(session.session_id);
+    if (entries.length > 0) {
       try {
-        // Get commits since session started
-        const since = session.started_at;
-        recentWork = execSync(
-          `git log --oneline --since="${since}" 2>/dev/null || echo "(no commits yet)"`,
-          { encoding: "utf8" }
-        ).trim();
+        const entryIds = entries.map(e => e.id);
+        if (isLocalBundle(bundleId)) {
+          localAddEntriesToBundle(bundleId, entryIds, session.session_id);
+        } else {
+          if (session.cloud_session_id) {
+            await syncNewEntries(session);
+          }
+          await addEntriesToBundle(bundleId, entryIds);
+        }
+        console.log(`Pushed ${entries.length} session entries to bundle.`);
       } catch {
-        recentWork = "(could not read git history)";
+        // Non-fatal
       }
-
-      await pushEntry({
-        bundle_id: bundleId,
-        project_name: session.project_name,
-        event_type: "manual",
-        trigger_ref: session.branch,
-        raw_context: `Session connected. Branch: ${session.branch ?? "unknown"}. Recent work:\n${recentWork}`,
-        summary: `${session.project_name} joined the bundle (branch: ${session.branch ?? "unknown"}). ${recentWork !== "(no commits yet)" ? `Recent commits:\n${recentWork}` : "No commits yet in this session."}`,
-        mode,
-      });
-      console.log(`Pushed session context to bundle.`);
-    } catch {
-      // Non-fatal
     }
 
     console.log(`Connected session ${sessionId.slice(0, 8)}... to bundle ${bundleId}`);
@@ -590,27 +618,16 @@ program
 program
   .command("push")
   .description(
-    "Push a context entry to connected bundles.\n\n" +
+    "Push session entries to connected bundles as references.\n\n" +
     "Usage:\n" +
-    "  ctx-link push --message <text>         Direct push with your text as summary\n" +
-    "  ctx-link push --diff                   Direct push using git diff + commit message\n" +
-    "  ctx-link push --consolidate --message  Consolidate pending session entries into one push\n\n" +
-    "Options:\n" +
-    "  --event <type>     commit | pr_open | manual | session_end (default: manual)\n" +
-    "  --ref <ref>        commit SHA, PR number, or branch name\n" +
-    "  --consolidate      consolidate un-pushed session entries into one bundle entry\n\n" +
+    "  ctx-link push                      Push all session entries to all connected bundles\n" +
+    "  ctx-link push --message <text>      Log a new entry, then push all to bundles\n\n" +
     "Examples:\n" +
-    "  $ ctx-link push --message 'Added /api/auth endpoint with JWT'\n" +
-    "  $ ctx-link push --consolidate --message 'Session summary: built auth system'"
+    "  $ ctx-link push\n" +
+    "  $ ctx-link push --message 'Added /api/auth endpoint with JWT'"
   )
-  .option("--event <type>", "event type", "manual")
-  .option("--ref <ref>", "commit SHA, PR number, or reference")
-  .option("--diff", "use git diff HEAD~1 as raw context", false)
-  .option("--message <text>", "summary text (also used as raw context when --diff is not set)")
-  .option("--summary <text>", "explicit summary (use with --diff)")
-  .option("--consolidate", "consolidate pending session entries into one push", false)
+  .option("--message <text>", "log a new entry before pushing")
   .action(async (opts) => {
-    // Get bundles from active session
     const sessionId = getActiveSessionId();
     const session = sessionId ? loadActiveSession(sessionId) : null;
 
@@ -619,76 +636,39 @@ program
       process.exit(1);
     }
 
-    let raw: string;
-    let summary: string;
-    let sourceEntries = null;
-    let sourceEntryIds: string[] | undefined;
-
-    // Consolidate mode: read pending session entries
-    if (opts.consolidate) {
-      if (!opts.message) {
-        console.error("--consolidate requires --message <text> with the consolidated summary.");
-        process.exit(1);
-      }
-      const pending = getUnpushedSessionEntries(session.session_id);
-      if (pending.length === 0) {
-        console.error("No pending session entries to consolidate.");
-        process.exit(1);
-      }
-      sourceEntries = pending;
-      sourceEntryIds = pending.map((e) => e.id);
-      raw = pending.map((e) => `[${e.created_at}] ${e.summary}`).join("\n");
-      summary = opts.message;
-    } else if (opts.diff) {
-      try {
-        raw = execSync("git diff HEAD~1", { encoding: "utf8" });
-      } catch {
-        raw = execSync("git diff --cached", { encoding: "utf8" });
-      }
-      if (opts.summary) {
-        summary = opts.summary;
-      } else {
-        const ref = opts.ref ?? "HEAD";
-        try {
-          summary = execSync(`git log -1 --pretty=%B ${ref}`, { encoding: "utf8" }).trim();
-        } catch {
-          summary = "";
-        }
-        if (!summary) {
-          console.error("--diff requires --summary (could not extract commit message).");
-          process.exit(1);
-        }
-      }
-    } else {
-      if (!opts.message) {
-        console.error("Provide --message <text>, use --diff, or use --consolidate.\nRun 'ctx-link push --help' for examples.");
-        process.exit(1);
-      }
-      raw = opts.message;
-      summary = opts.summary ?? opts.message;
-    }
-
-    // Push to ALL connected bundles
-    for (const b of session.bundles) {
-      const mode = isLocalBundle(b.bundle_id) ? "local" : "cloud";
-      const r = await pushEntry({
-        bundle_id: b.bundle_id,
+    // Optionally log a new entry first
+    if (opts.message) {
+      pushSessionEntry(session.session_id, {
         project_name: session.project_name,
-        event_type: opts.event,
-        trigger_ref: opts.ref ?? null,
-        raw_context: raw,
-        summary,
-        source_entries: sourceEntries,
-        mode,
+        event_type: "manual",
+        trigger_ref: null,
+        summary: opts.message,
+        files_touched: [],
+        decisions: [],
       });
-      console.log(`[${b.bundle_id}] pushed entry ${r.entry_id}`);
-      console.log(`  ${r.summary}`);
     }
 
-    // Mark session entries as pushed
-    if (sourceEntryIds) {
-      markSessionEntriesPushed(session.session_id, sourceEntryIds);
-      console.log(`Marked ${sourceEntryIds.length} session entries as pushed.`);
+    const entries = getSessionEntries(session.session_id);
+    const entryIds = entries.map(e => e.id);
+
+    if (entryIds.length === 0) {
+      console.log("No session entries to push.");
+      return;
+    }
+
+    // Sync to cloud if cloud-enabled
+    if (session.cloud_session_id) {
+      await syncNewEntries(session);
+    }
+
+    for (const b of session.bundles) {
+      if (isLocalBundle(b.bundle_id)) {
+        const r = localAddEntriesToBundle(b.bundle_id, entryIds, session.session_id);
+        console.log(`[${b.bundle_id}] added ${r.added}, skipped ${r.skipped} (already in bundle)`);
+      } else {
+        const r = await addEntriesToBundle(b.bundle_id, entryIds);
+        console.log(`[${b.bundle_id}] added ${r.added}, skipped ${r.skipped} (already in bundle)`);
+      }
     }
   });
 
