@@ -1,105 +1,5 @@
 import { getSupabase } from "./supabase.js";
 import { assertTokenValid } from "./bundles.js";
-import { loadGlobalConfig } from "./config.js";
-import type { SessionEntry } from "./config.js";
-
-export interface PushInput {
-  bundle_id: string;
-  project_name: string;
-  event_type: "commit" | "pr_open" | "manual" | "session_end";
-  trigger_ref?: string | null;
-  raw_context: string;
-  summary: string;
-  files_touched?: string[];
-  decisions?: Array<{ decision: string; rationale?: string; affects: string[] }>;
-  store_raw?: boolean;
-  source_entries?: SessionEntry[] | null;
-  mode?: "local" | "cloud";
-  skipAuth?: boolean;
-}
-
-export interface PushResult {
-  entry_id: string;
-  summary: string;
-  files_touched: string[];
-  decisions: Array<{ decision: string; rationale?: string; affects: string[] }>;
-}
-
-export async function pushEntry(input: PushInput): Promise<PushResult> {
-  if (input.mode === "local") {
-    const { localPushEntry } = await import("./local-store.js");
-    return localPushEntry(input);
-  }
-
-  if (!input.skipAuth) await assertTokenValid(input.bundle_id);
-  const cfg = loadGlobalConfig();
-  const sb = getSupabase();
-
-  const summary = {
-    summary: input.summary,
-    files_touched: input.files_touched ?? [],
-    decisions: input.decisions ?? [],
-  };
-
-  // Find this machine's most recent session for this bundle, or create one.
-  let sessionId: string | null = null;
-  {
-    const { data: s } = await sb
-      .from("sessions")
-      .select("id")
-      .eq("bundle_id", input.bundle_id)
-      .eq("machine_id", cfg.machine_id)
-      .eq("project_name", input.project_name)
-      .order("last_active_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (s) {
-      sessionId = s.id;
-      await sb
-        .from("sessions")
-        .update({ last_active_at: new Date().toISOString() })
-        .eq("id", s.id);
-    } else {
-      const { data: inserted, error } = await sb
-        .from("sessions")
-        .insert({
-          bundle_id: input.bundle_id,
-          project_name: input.project_name,
-          machine_id: cfg.machine_id,
-        })
-        .select("id")
-        .single();
-      if (error) throw new Error(`session create failed: ${error.message}`);
-      sessionId = inserted.id;
-    }
-  }
-
-  const { data, error } = await sb
-    .from("entries")
-    .insert({
-      bundle_id: input.bundle_id,
-      session_id: sessionId,
-      event_type: input.event_type,
-      trigger_ref: input.trigger_ref ?? null,
-      summary: summary.summary,
-      files_touched: summary.files_touched,
-      decisions: summary.decisions,
-      raw_context: input.store_raw ? input.raw_context : null,
-      source_entries: input.source_entries ?? null,
-    })
-    .select("id")
-    .single();
-
-  if (error) throw new Error(`pushEntry failed: ${error.message}`);
-
-  return {
-    entry_id: data.id,
-    summary: summary.summary,
-    files_touched: summary.files_touched,
-    decisions: summary.decisions,
-  };
-}
 
 export interface PullInput {
   bundle_id: string;
@@ -119,7 +19,7 @@ export interface EntryRow {
   summary: string;
   files_touched: string[];
   decisions: Array<{ decision: string; rationale?: string; affects: string[] }>;
-  source_entries?: SessionEntry[] | null;
+  bundle_refs?: string[];
 }
 
 export async function pullEntries(input: PullInput): Promise<EntryRow[]> {
@@ -132,33 +32,39 @@ export async function pullEntries(input: PullInput): Promise<EntryRow[]> {
   const sb = getSupabase();
 
   let query = sb
-    .from("entries")
-    .select(
-      "id, created_at, event_type, trigger_ref, summary, files_touched, decisions, source_entries, sessions(project_name)"
-    )
+    .from("bundle_entry_refs")
+    .select(`
+      entry_id,
+      cloud_session_entries!inner (
+        id, created_at, event_type, trigger_ref, summary, files_touched, decisions, superseded_at,
+        cloud_sessions!inner ( project_name )
+      )
+    `)
     .eq("bundle_id", input.bundle_id)
-    .is("superseded_at", null) // hide rewound entries from all future pulls
-    .order("created_at", { ascending: false })
+    .is("cloud_session_entries.superseded_at", null)
+    .order("added_at", { ascending: false })
     .limit(input.limit ?? 20);
 
   if (input.since) {
-    query = query.gt("created_at", input.since);
+    query = query.gt("cloud_session_entries.created_at", input.since);
   }
 
   const { data, error } = await query;
   if (error) throw new Error(`pullEntries failed: ${error.message}`);
 
-  const rows = (data ?? []).map((r: any) => ({
-    id: r.id,
-    created_at: r.created_at,
-    project_name: r.sessions?.project_name ?? "unknown",
-    event_type: r.event_type,
-    trigger_ref: r.trigger_ref,
-    summary: r.summary,
-    files_touched: r.files_touched ?? [],
-    decisions: r.decisions ?? [],
-    source_entries: r.source_entries ?? null,
-  })) as EntryRow[];
+  const rows = (data ?? []).map((r: any) => {
+    const e = r.cloud_session_entries;
+    return {
+      id: e.id,
+      created_at: e.created_at,
+      project_name: e.cloud_sessions?.project_name ?? "unknown",
+      event_type: e.event_type,
+      trigger_ref: e.trigger_ref,
+      summary: e.summary,
+      files_touched: e.files_touched ?? [],
+      decisions: e.decisions ?? [],
+    } as EntryRow;
+  });
 
   if (input.exclude_project) {
     return rows.filter((r) => r.project_name !== input.exclude_project);
@@ -166,37 +72,91 @@ export async function pullEntries(input: PullInput): Promise<EntryRow[]> {
   return rows;
 }
 
-/** Delete all entries for a project from a cloud bundle. */
-export async function deleteProjectEntriesFromBundle(
+/**
+ * Add entries to a bundle by creating bundle_entry_refs rows.
+ * Skips entries that are already referenced by this bundle.
+ */
+export async function addEntriesToBundle(
   bundleId: string,
-  projectName: string,
-): Promise<number> {
+  entryIds: string[]
+): Promise<{ added: number; skipped: number }> {
+  if (entryIds.length === 0) return { added: 0, skipped: 0 };
+
   const sb = getSupabase();
 
-  // Find entries via the session that matches this project
-  const { data: sessions } = await sb
-    .from("sessions")
-    .select("id")
+  // Check which refs already exist
+  const { data: existing } = await sb
+    .from("bundle_entry_refs")
+    .select("entry_id")
     .eq("bundle_id", bundleId)
-    .eq("project_name", projectName);
+    .in("entry_id", entryIds);
 
-  if (!sessions || sessions.length === 0) return 0;
+  const existingIds = new Set((existing ?? []).map((r: any) => r.entry_id));
+  const newIds = entryIds.filter((id) => !existingIds.has(id));
 
-  const sessionIds = sessions.map((s: any) => s.id);
+  if (newIds.length === 0) {
+    return { added: 0, skipped: entryIds.length };
+  }
 
-  const { data, error } = await sb
-    .from("entries")
+  const rows = newIds.map((entryId) => ({
+    bundle_id: bundleId,
+    entry_id: entryId,
+  }));
+
+  const { error } = await sb.from("bundle_entry_refs").insert(rows);
+  if (error) throw new Error(`addEntriesToBundle failed: ${error.message}`);
+
+  return { added: newIds.length, skipped: existingIds.size };
+}
+
+/**
+ * Remove a single entry reference from a bundle.
+ */
+export async function removeEntryFromBundle(
+  bundleId: string,
+  entryId: string
+): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("bundle_entry_refs")
     .delete()
     .eq("bundle_id", bundleId)
-    .in("session_id", sessionIds)
-    .select("id");
+    .eq("entry_id", entryId);
+  if (error) throw new Error(`removeEntryFromBundle failed: ${error.message}`);
+}
 
-  if (error) throw new Error(`deleteProjectEntries failed: ${error.message}`);
+/**
+ * Get session entries not yet referenced by a specific bundle.
+ */
+export async function getUnpushedEntries(
+  cloudSessionId: string,
+  bundleId: string
+): Promise<string[]> {
+  const sb = getSupabase();
 
-  // Also delete the session rows
-  await sb.from("sessions").delete().in("id", sessionIds);
+  // Get all entry IDs for this cloud session
+  const { data: sessionEntries, error: seErr } = await sb
+    .from("cloud_session_entries")
+    .select("id")
+    .eq("session_id", cloudSessionId)
+    .is("superseded_at", null);
 
-  return data?.length ?? 0;
+  if (seErr) throw new Error(`getUnpushedEntries session query failed: ${seErr.message}`);
+  if (!sessionEntries || sessionEntries.length === 0) return [];
+
+  const allIds = sessionEntries.map((e: any) => e.id);
+
+  // Get entry IDs already referenced by this bundle
+  const { data: refs, error: refErr } = await sb
+    .from("bundle_entry_refs")
+    .select("entry_id")
+    .eq("bundle_id", bundleId)
+    .in("entry_id", allIds);
+
+  if (refErr) throw new Error(`getUnpushedEntries refs query failed: ${refErr.message}`);
+
+  const refIds = new Set((refs ?? []).map((r: any) => r.entry_id));
+  return allIds.filter((id: string) => !refIds.has(id));
 }
 
 // Human/LLM-readable rendering of entries for context injection.
@@ -222,42 +182,7 @@ export function renderEntriesForClaude(entries: EntryRow[]): string {
         );
       }
     }
-    if (e.source_entries && e.source_entries.length > 0) {
-      lines.push(`\nSources (${e.source_entries.length} entries consolidated):`);
-      for (const s of e.source_entries) {
-        lines.push(`  - [${s.created_at}] ${s.summary}`);
-      }
-    }
     return lines.join("\n");
   });
   return parts.join("\n\n---\n\n");
-}
-
-/** Remove a source entry from a consolidated bundle entry (cloud path). */
-export async function removeSourceEntry(
-  bundleId: string,
-  entryId: string,
-  sourceEntryId: string
-): Promise<void> {
-  const sb = getSupabase();
-  const { data, error } = await sb
-    .from("entries")
-    .select("source_entries")
-    .eq("id", entryId)
-    .eq("bundle_id", bundleId)
-    .single();
-
-  if (error) throw new Error(`removeSourceEntry read failed: ${error.message}`);
-  if (!data?.source_entries) return;
-
-  const filtered = (data.source_entries as any[]).filter(
-    (s: any) => s.id !== sourceEntryId
-  );
-
-  const { error: updateError } = await sb
-    .from("entries")
-    .update({ source_entries: filtered.length > 0 ? filtered : null })
-    .eq("id", entryId);
-
-  if (updateError) throw new Error(`removeSourceEntry update failed: ${updateError.message}`);
 }
