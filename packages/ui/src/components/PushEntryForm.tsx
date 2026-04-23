@@ -70,7 +70,7 @@ export function PushEntryDialog() {
     <Dialog open={open} onOpenChange={(o) => !o && closeModal()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Push Entry</DialogTitle>
+          <DialogTitle>Add Note</DialogTitle>
           <DialogDescription>Add a manual context note to this bundle.</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">

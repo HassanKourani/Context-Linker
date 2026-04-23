@@ -108,6 +108,18 @@ export async function joinBundle(
   return { bundle_id: bundle.id, name: bundle.name };
 }
 
+/** Get the team_id for a cloud bundle. Returns null for legacy bundles without teams. */
+export async function getBundleTeamId(bundleId: string): Promise<string | null> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("bundles")
+    .select("team_id")
+    .eq("id", bundleId)
+    .single();
+  if (error || !data) return null;
+  return data.team_id ?? null;
+}
+
 export async function assertTokenValid(bundleId: string): Promise<void> {
   // For team-based bundles, check team membership instead of per-bundle token
   const { assertBundleTeamAccess } = await import("./teams.js");

@@ -1,5 +1,5 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { MoreHorizontal, Trash2 } from "lucide-react";
+import { Cloud, MoreHorizontal, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,6 +33,8 @@ export function BundleNode({ data }: NodeProps) {
     openModal("delete-bundle");
   };
 
+  const isLocal = mode === "local";
+
   return (
     <div
       className="bg-card border border-border rounded-lg min-w-[180px] shadow-lg cursor-pointer hover:border-primary/50 transition-colors"
@@ -44,9 +46,12 @@ export function BundleNode({ data }: NodeProps) {
         className="!w-2 !h-2 !bg-[#585b70] !border-border"
       />
       <div className="px-3 py-2 border-b border-border flex items-center justify-between">
-        <span className="font-semibold text-sm text-foreground truncate">
-          {bundleName}
-        </span>
+        <div className="flex items-center gap-1.5 min-w-0">
+          {!isLocal && <Cloud className="w-3 h-3 text-blue/60 shrink-0" />}
+          <span className="font-semibold text-sm text-foreground truncate">
+            {bundleName}
+          </span>
+        </div>
         <DropdownMenu>
           <DropdownMenuTrigger
             onClick={(e) => e.stopPropagation()}

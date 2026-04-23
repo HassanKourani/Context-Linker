@@ -29,6 +29,7 @@ import {
   syncNewEntries,
   deleteCloudSession,
   deleteCloudSessionEntry,
+  getBundleTeamId,
   rewindProject,
   restoreRewound,
   listRewinds,
@@ -419,11 +420,19 @@ const server = Bun.serve({
             );
           }
 
-          // Cloud: sync to cloud first if session is cloud-enabled
+          // Cloud bundle: session must be pushed to cloud first so entries exist in cloud_session_entries
           const session = loadActiveSession(sessionId);
-          if (session?.cloud_session_id) {
+          if (session && !session.cloud_session_id) {
+            // Auto-push session to cloud under the bundle's team
+            const teamId = await getBundleTeamId(bundle_id);
+            if (teamId) {
+              await pushSessionToCloud(sessionId, teamId);
+            }
+          } else if (session?.cloud_session_id) {
+            // Already in cloud — just sync any new entries
             await syncNewEntries(session);
           }
+
           const result = await addEntriesToBundle(bundle_id, ids);
           return Response.json(
             { ok: true, pushed: result.added, skipped: result.skipped, total: ids.length },
@@ -464,6 +473,18 @@ const server = Bun.serve({
           const sessionId = match[1];
           const { bundle_id } = await req.json();
           const mode = resolveBundleMode(bundle_id);
+
+          // Auto-push session to cloud when connecting to a cloud bundle
+          if (mode === "cloud") {
+            const session = loadActiveSession(sessionId);
+            if (session && !session.cloud_session_id) {
+              const teamId = await getBundleTeamId(bundle_id);
+              if (teamId) {
+                await pushSessionToCloud(sessionId, teamId);
+              }
+            }
+          }
+
           const session = connectSessionToBundle(sessionId, bundle_id, mode);
           return Response.json({ ok: true, session }, { headers: corsHeaders });
         } catch (err: any) {

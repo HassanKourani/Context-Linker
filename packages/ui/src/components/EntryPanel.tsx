@@ -164,7 +164,7 @@ export function EntryPanel() {
                 className="text-xs"
                 onClick={() => openModal("push-entry")}
               >
-                Push
+                + Add Note
               </Button>
             )}
             {isSession && selectedEntryIds.size > 0 && (
