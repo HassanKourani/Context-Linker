@@ -135,5 +135,8 @@ Remove a session's connection to a bundle. Body:
 
 Removes the bundle from the active session's bundles array. Same behavior for local and cloud — only the link is removed, session and entries are preserved.
 
+### DELETE /api/sessions/:id
+Delete an active session and its accumulated context entries.
+
 ### GET /api/sessions
 List active Claude Code sessions (from `~/.ctx-link/active-sessions/`).

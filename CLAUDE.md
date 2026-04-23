@@ -115,6 +115,7 @@ Endpoints:
 - `POST /api/bundles/:id/restore` — restore entries
 - `GET /api/bundles/:id/rewinds` — rewind history
 - `POST /api/unlink-session` — remove session link (local or cloud)
+- `DELETE /api/sessions/:id` — delete active session + its context entries
 - `GET /api/sessions` — list active Claude Code sessions
 
 ### Mutation Hooks (optimistic updates)
