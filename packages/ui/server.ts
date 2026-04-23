@@ -23,6 +23,7 @@ import {
   pushSessionEntry,
   connectSessionToBundle,
   disconnectSessionFromBundle,
+  deleteActiveSession,
 } from "@ctx-link/core";
 
 const server = Bun.serve({
@@ -447,6 +448,23 @@ const server = Bun.serve({
           }
 
           return Response.json({ ok: true, session }, { headers: corsHeaders });
+        } catch (err: any) {
+          return Response.json(
+            { error: err.message ?? String(err) },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+      }
+    }
+
+    // ── DELETE /api/sessions/:id ────────────────────────────────────────────
+    {
+      const match = url.pathname.match(/^\/api\/sessions\/([^/]+)$/);
+      if (match && req.method === "DELETE") {
+        try {
+          const sessionId = match[1];
+          deleteActiveSession(sessionId);
+          return Response.json({ ok: true }, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
             { error: err.message ?? String(err) },

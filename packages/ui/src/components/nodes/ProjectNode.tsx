@@ -1,6 +1,8 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
+import { X } from "lucide-react";
 import { relativeTime } from "@/lib/time";
 import { useUIStore } from "@/stores/uiStore";
+import { useDeleteActiveSession } from "@/hooks/mutations/useDeleteActiveSession";
 
 interface SessionData {
   id: string;
@@ -19,15 +21,19 @@ export function ProjectNode({ data }: NodeProps) {
 
   const openBundlePanel = useUIStore((s) => s.openBundlePanel);
   const openSessionPanel = useUIStore((s) => s.openSessionPanel);
+  const deleteMutation = useDeleteActiveSession();
 
   const handleSessionClick = (s: SessionData) => {
     if (s.bundleId) {
-      // Connected session — show bundle entries filtered by this project
       openBundlePanel(s.bundleId, projectName);
     } else {
-      // Unlinked session — show session-level context
       openSessionPanel(s.id, projectName);
     }
+  };
+
+  const handleDelete = (e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation();
+    deleteMutation.mutate(sessionId);
   };
 
   return (
@@ -38,7 +44,7 @@ export function ProjectNode({ data }: NodeProps) {
       {sessions.map((s) => (
         <div
           key={s.id}
-          className="px-3 py-1.5 flex items-center gap-2 text-xs text-muted-foreground relative cursor-pointer hover:bg-accent/50 transition-colors"
+          className="group px-3 py-1.5 flex items-center gap-2 text-xs text-muted-foreground relative cursor-pointer hover:bg-accent/50 transition-colors"
           onClick={() => handleSessionClick(s)}
         >
           <span className="font-mono text-[11px]" title={s.id}>
@@ -52,6 +58,13 @@ export function ProjectNode({ data }: NodeProps) {
           <span className="ml-auto text-muted-foreground/60 text-[10px]">
             {relativeTime(s.lastActiveAt)}
           </span>
+          <button
+            className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive"
+            onClick={(e) => handleDelete(e, s.id)}
+            title="Delete session"
+          >
+            <X className="w-3 h-3" />
+          </button>
           <Handle
             type="source"
             position={Position.Right}

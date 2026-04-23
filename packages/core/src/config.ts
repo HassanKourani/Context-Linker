@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { z } from "zod";
@@ -181,6 +181,14 @@ export function loadActiveSession(sessionId: string): ActiveSession | null {
   const path = activeSessionPath(sessionId);
   if (!existsSync(path)) return null;
   return JSON.parse(readFileSync(path, "utf8"));
+}
+
+export function deleteActiveSession(sessionId: string): void {
+  const path = activeSessionPath(sessionId);
+  if (existsSync(path)) rmSync(path);
+  // Also remove the session entries file
+  const entriesPath = join(globalConfigDir(), "session-entries", `${sessionId}.json`);
+  if (existsSync(entriesPath)) rmSync(entriesPath);
 }
 
 /** Read the active session_id from .cxtl-active-session marker file in CWD */

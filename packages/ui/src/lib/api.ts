@@ -83,6 +83,10 @@ export function fetchSessionEntries(sessionId: string) {
   return apiGet<EntryRow[]>(`/api/sessions/${sessionId}/entries`);
 }
 
+export function deleteSessionApi(sessionId: string) {
+  return apiDelete<{ ok: true }>(`/api/sessions/${sessionId}`);
+}
+
 export function connectSessionToBundle(sessionId: string, body: { bundle_id: string }) {
   return apiPost<{ ok: true }>(`/api/sessions/${sessionId}/connect`, body);
 }
