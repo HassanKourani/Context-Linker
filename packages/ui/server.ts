@@ -29,6 +29,7 @@ import {
   listTeamSessions,
   deleteCloudSession,
   deleteCloudSessionEntry,
+  getCloudSessionEntries,
   getBundleTeamId,
   rewindProject,
   restoreRewound,
@@ -357,8 +358,14 @@ const server = Bun.serve({
       if (match && req.method === "GET") {
         try {
           const sessionId = match[1];
-          const entries = getSessionEntries(sessionId);
-          return Response.json(entries, { headers: corsHeaders });
+          // Try local session entries first
+          const localEntries = getSessionEntries(sessionId);
+          if (localEntries.length > 0) {
+            return Response.json(localEntries, { headers: corsHeaders });
+          }
+          // Fall back to cloud session entries
+          const cloudEntries = await getCloudSessionEntries(sessionId);
+          return Response.json(cloudEntries, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
             { error: err.message ?? String(err) },
