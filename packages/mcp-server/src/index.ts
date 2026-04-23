@@ -239,12 +239,15 @@ const tools = [
     name: "session_connect",
     description:
       "Connect the current Claude Code session to a bundle. A session can connect to multiple bundles. " +
-      "Push/pull will then operate on all connected bundles.",
+      "Push/pull will then operate on all connected bundles. " +
+      "When connecting, provide a summary of what this session has done so far — " +
+      "this gets auto-pushed to the bundle so other sessions see your context immediately.",
     inputSchema: {
       type: "object",
       properties: {
         bundle_id: { type: "string", description: "The bundle to connect to" },
         mode: { type: "string", enum: ["local", "cloud"], description: "Storage mode for this bundle" },
+        summary: { type: "string", description: "Summary of what this session has done so far. Auto-pushed to the bundle on connect." },
       },
       required: ["bundle_id"],
     },
@@ -496,7 +499,11 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
 
       case "session_connect": {
-        const a = z.object({ bundle_id: z.string(), mode: z.enum(["local", "cloud"]).default("local") }).parse(args);
+        const a = z.object({
+          bundle_id: z.string(),
+          mode: z.enum(["local", "cloud"]).default("local"),
+          summary: z.string().optional(),
+        }).parse(args);
         const session = getSession();
         if (!session) return fail("No active session. Open Claude Code in a project first.");
         if (session.bundles.some((b) => b.bundle_id === a.bundle_id)) {
@@ -504,6 +511,22 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         }
         session.bundles.push({ bundle_id: a.bundle_id, mode: a.mode });
         saveActiveSession(session);
+
+        // Auto-push session context to the new bundle
+        const connectSummary = a.summary
+          ?? `${session.project_name} joined the bundle (branch: ${session.branch ?? "unknown"}).`;
+        try {
+          await pushEntry({
+            bundle_id: a.bundle_id,
+            project_name: session.project_name,
+            event_type: "manual",
+            trigger_ref: session.branch,
+            raw_context: `Session connected from ${session.project_name} on branch ${session.branch ?? "unknown"}`,
+            summary: connectSummary,
+            mode: a.mode,
+          });
+        } catch { /* non-fatal */ }
+
         return ok({ connected: true, bundle_id: a.bundle_id, total_bundles: session.bundles.length });
       }
 

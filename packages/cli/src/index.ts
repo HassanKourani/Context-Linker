@@ -266,6 +266,35 @@ program
 
     session.bundles.push({ bundle_id: bundleId, mode });
     saveActiveSession(session);
+
+    // Auto-push session context to the new bundle
+    try {
+      let recentWork = "";
+      try {
+        // Get commits since session started
+        const since = session.started_at;
+        recentWork = execSync(
+          `git log --oneline --since="${since}" 2>/dev/null || echo "(no commits yet)"`,
+          { encoding: "utf8" }
+        ).trim();
+      } catch {
+        recentWork = "(could not read git history)";
+      }
+
+      await pushEntry({
+        bundle_id: bundleId,
+        project_name: session.project_name,
+        event_type: "manual",
+        trigger_ref: session.branch,
+        raw_context: `Session connected. Branch: ${session.branch ?? "unknown"}. Recent work:\n${recentWork}`,
+        summary: `${session.project_name} joined the bundle (branch: ${session.branch ?? "unknown"}). ${recentWork !== "(no commits yet)" ? `Recent commits:\n${recentWork}` : "No commits yet in this session."}`,
+        mode,
+      });
+      console.log(`Pushed session context to bundle.`);
+    } catch {
+      // Non-fatal
+    }
+
     console.log(`Connected session ${sessionId.slice(0, 8)}... to bundle ${bundleId}`);
     console.log(`Session now has ${session.bundles.length} bundle(s).`);
   });
