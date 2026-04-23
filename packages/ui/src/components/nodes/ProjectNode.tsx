@@ -1,10 +1,8 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { Cloud, RefreshCw, X } from "lucide-react";
+import { X } from "lucide-react";
 import { relativeTime } from "@/lib/time";
 import { useUIStore } from "@/stores/uiStore";
 import { useDeleteActiveSession } from "@/hooks/mutations/useDeleteActiveSession";
-import { useSyncToCloud } from "@/hooks/mutations/useSyncToCloud";
-import { useGraphData } from "@/hooks/useGraphData";
 
 interface SessionData {
   id: string;
@@ -28,22 +26,7 @@ export function ProjectNode({ data }: NodeProps) {
 
   const openBundlePanel = useUIStore((s) => s.openBundlePanel);
   const openSessionPanel = useUIStore((s) => s.openSessionPanel);
-  const openModal = useUIStore((s) => s.openModal);
-  const setPushToCloudTarget = useUIStore((s) => s.setPushToCloudTarget);
   const deleteMutation = useDeleteActiveSession();
-  const syncMutation = useSyncToCloud();
-  const { data: graphData } = useGraphData();
-
-  // Cloud session IDs that have a linked local active session (syncable)
-  const syncableCloudIds = new Set<string>();
-  if (graphData?.sessions) {
-    for (const s of graphData.sessions) {
-      if (s.cloud_session_id) syncableCloudIds.add(s.cloud_session_id);
-      if (s.cloud_copies) {
-        for (const c of s.cloud_copies) syncableCloudIds.add(c.cloud_session_id);
-      }
-    }
-  }
 
   const handleSessionClick = (s: SessionData) => {
     if (s.bundleId) {
@@ -78,34 +61,6 @@ export function ProjectNode({ data }: NodeProps) {
               You
             </span>
           )}
-          {s.id === s.cloudSessionId && syncableCloudIds.has(s.id) ? (
-            <button
-              className="flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium bg-[#89b4fa]/15 text-[#89b4fa] hover:bg-[#89b4fa]/25 transition-colors"
-              onClick={(e) => {
-                e.stopPropagation();
-                syncMutation.mutate(s.id);
-              }}
-              title="Sync new entries from local session"
-              disabled={syncMutation.isPending}
-            >
-              <RefreshCw className={`w-2.5 h-2.5 ${syncMutation.isPending ? "animate-spin" : ""}`} />
-              Sync
-            </button>
-          ) : s.cloudSessionId ? (
-            <span title="Synced to cloud"><Cloud className="w-3 h-3 text-[#89b4fa]" /></span>
-          ) : s.isYou ? (
-            <button
-              className="px-1 py-0.5 rounded text-[9px] font-medium bg-[#89b4fa]/15 text-[#89b4fa] hover:bg-[#89b4fa]/25 transition-colors"
-              onClick={(e) => {
-                e.stopPropagation();
-                setPushToCloudTarget(s.id);
-                openModal("push-to-cloud");
-              }}
-              title="Copy session to cloud"
-            >
-              ↑ Copy to Cloud
-            </button>
-          ) : null}
           <span className="ml-auto text-muted-foreground/60 text-[10px] whitespace-nowrap">
             {s.entryCount > 0 ? `${s.entryCount} entr${s.entryCount === 1 ? "y" : "ies"}` : relativeTime(s.lastActiveAt)}
           </span>
