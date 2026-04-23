@@ -32,15 +32,16 @@ supabase/
 ## Data Model
 
 ```
-teams → bundles → sessions → entries
+teams → cloud_sessions → cloud_session_entries
+                                    ↳ bundle_entry_refs → bundles
                               ↳ rewind_log (audit trail)
 ```
 
-- **Team**: access control container. Cloud bundles require team membership.
-- **Bundle**: shared context container. Has entries + sessions.
-- **Session**: (bundle, project, machine) tuple. The link between a project and a bundle.
-- **Entry**: a context handoff note — summary, files touched, decisions, event type.
-- **Rewind**: soft-delete (sets `superseded_at`), never hard-deletes. Audit via `rewind_log`.
+- **Team**: access control container. Cloud sessions and bundles require team membership.
+- **Session**: independent of bundles. Starts local, promoted to cloud under a team via "Push to Cloud". Has entries.
+- **Entry**: lives in a session (single source of truth). Bundles reference entries, not copy them.
+- **Bundle**: shared context container. References session entries via `bundle_entry_refs` junction table.
+- **Rewind**: soft-delete (sets `superseded_at` on `cloud_session_entries`), never hard-deletes. Audit via `rewind_log`.
 
 ## Core Functions (packages/core/src/)
 
@@ -51,15 +52,24 @@ All exported from `@ctx-link/core`:
 - `joinBundle(bundleId, token, projectName, mode?)` → `{ bundle_id, name }`
 - `deleteBundle(bundleId, mode?)` → void
 - `bundleStatus(bundleId, mode?, skipAuth?)` → `{ bundle_id, name, session_count, entry_count, last_entry_at }`
-- `listBundleSessions(bundleId, skipAuth?)` → `SessionInfo[]`
-- `deleteSession(sessionId)` → void (removes session row only, keeps entries)
 - `listLocalBundles()` → `LocalBundleInfo[]`
 
-### Entries (entries.ts)
-- `pushEntry(input)` → `PushResult` — auto-creates/updates session. Also saves to active session's entry log if one exists.
-- `pullEntries(input)` → `EntryRow[]` — filters by since/limit/project, hides rewound
+### Entries (entries.ts) — Reference Model
+- `pullEntries(input)` → `EntryRow[]` — JOINs `bundle_entry_refs` → `cloud_session_entries`, filters rewound
+- `addEntriesToBundle(bundleId, entryIds)` → `{ added, skipped }` — creates `bundle_entry_refs`, skips existing
+- `removeEntryFromBundle(bundleId, entryId)` → void — removes single ref, entry stays in session
+- `getUnpushedEntries(cloudSessionId, bundleId)` → `string[]` — entry IDs not yet referenced by bundle
 - `renderEntriesForClaude(entries)` → string (markdown format for LLM context)
-- `removeSourceEntry(bundleId, entryId, sourceEntryId)` → void — removes a source entry from a consolidated entry
+
+### Cloud Sessions (cloud-sessions.ts)
+- `pushSessionToCloud(sessionId, teamId)` → `{ cloud_session_id, entries_synced }` — promote local session to cloud
+- `syncNewEntries(session)` → number — sync local entries not yet in cloud
+- `syncEntryToCloud(session, entry)` → void — sync single entry
+- `deleteCloudSession(cloudSessionId)` → void — cascades entries → bundle refs
+- `deleteCloudSessionEntry(entryId)` → void — cascades bundle refs
+- `listTeamSessions(teamId)` → `CloudSession[]`
+- `getCloudSessionEntries(cloudSessionId)` → `CloudSessionEntry[]`
+- `getEntryBundleRefs(entryId)` → `{ bundle_id, added_at }[]`
 
 ### Rewind (rewind.ts)
 - `rewindProject(input)` → `RewindResult` — strategies: since, last_n, entry_ids, after_ref
@@ -80,14 +90,15 @@ All exported from `@ctx-link/core`:
 - `loadSessionLog()` / `logSession(entry)` — session history across projects
 - `listActiveSessions()` → active Claude Code sessions from `~/.ctx-link/active-sessions/`
 - `pushSessionEntry(sessionId, entry)` / `getSessionEntries(sessionId)` — per-session entry log
-- `getUnpushedSessionEntries(sessionId)` / `markSessionEntriesPushed(sessionId, entryIds)`
+- `getUnpushedSessionEntries(sessionId)` — entries not yet pushed
 - `deleteSessionEntry(sessionId, entryId)` — remove entry from session log
 
-### Local Store (local-store.ts)
-- Mirrors cloud functions for `mode: "local"`: `localCreateBundle`, `localJoinBundle`, `localPushEntry`, `localPullEntries`, etc.
-- `listAllLocalBundleDetails()` → bundle + project list derived from entries
-- `localDeleteProjectFromBundle(bundleId, projectName)` → removes entries for a project
-- `localRemoveSourceEntry(bundleId, entryId, sourceEntryId)` → remove source from consolidated entry
+### Local Store (local-store.ts) — Reference Model
+- Mirrors cloud functions for `mode: "local"`: `localCreateBundle`, `localJoinBundle`, `localPullEntries`, etc.
+- `localAddEntriesToBundle(bundleId, entryIds, sessionId)` → `{ added, skipped }` — creates refs in `entry_refs.json`
+- `localRemoveEntryFromBundle(bundleId, entryId)` → removes single ref
+- `listAllLocalBundleDetails()` → bundle + project list derived from refs
+- Local bundles use `entry_refs.json` (references to session entries) instead of copying entries
 
 ## UI Architecture (packages/ui/)
 
@@ -117,16 +128,19 @@ Endpoints:
 - `POST /api/bundles` — create bundle
 - `DELETE /api/bundles/:id` — delete bundle
 - `POST /api/bundles/:id/join` — link project to bundle
-- `GET/POST /api/bundles/:id/entries` — fetch/push entries
+- `GET /api/bundles/:id/entries` — fetch entries via refs
+- `DELETE /api/bundles/:id/entries/:entryId` — remove entry ref from bundle (entry stays in session)
 - `POST /api/bundles/:id/rewind` — rewind entries
 - `POST /api/bundles/:id/restore` — restore entries
 - `GET /api/bundles/:id/rewinds` — rewind history
 - `POST /api/unlink-session` — remove session link (local or cloud)
 - `GET /api/sessions/:id/entries` — get entries for a session
-- `DELETE /api/sessions/:id` — delete active session + its context entries
+- `DELETE /api/sessions/:id` — delete active session + cloud session
 - `POST /api/sessions/:id/connect` — connect active session to a bundle
-- `POST /api/sessions/:id/push-to-bundle` — consolidate session entries and push to bundle
-- `DELETE /api/sessions/:id/entries/:entryId` — delete a single session entry
+- `POST /api/sessions/:id/push-to-bundle` — add session entry refs to bundle (no copying)
+- `POST /api/sessions/:id/push-to-cloud` — promote local session to cloud under a team
+- `DELETE /api/sessions/:id/entries/:entryId` — delete session entry (cascades to bundle refs)
+- `GET /api/teams/:id/sessions` — list cloud sessions for a team
 
 ### Mutation Hooks (optimistic updates)
 All write operations use TanStack Query mutations with optimistic updates:
@@ -135,8 +149,9 @@ All write operations use TanStack Query mutations with optimistic updates:
 - `useDeleteBundle` — instantly removes bundle node
 - `useDeleteSession` — instantly removes edge from graph
 - `useConnectSession` — connects active session to bundle
-- `usePushEntry` — instantly prepends entry to timeline
-- `usePushSessionToBundle` — consolidates session entries and pushes to bundle
+- `usePushSessionToBundle` — adds session entry refs to bundle
+- `usePushToCloud` — promotes session to cloud under a team
+- `useRemoveBundleEntryRef` — removes entry ref from bundle
 - `useRewind` / `useRestore` — instantly removes/restores entries from list
 - `useDeleteSessionEntry` — removes entry from session log
 - `useCreateTeam` / `useJoinTeam` — team management
@@ -168,19 +183,21 @@ All roll back on error and refetch on settle.
   local/               Local bundles
     <bundle_id>/
       meta.json        { id, name, created_at }
-      entries.json     Array of entries
+      entry_refs.json  Array of { entry_id, session_id, added_at } references
 ```
 
 ## Supabase Schema
 
-Tables: `teams`, `team_members`, `bundles`, `sessions`, `entries`, `rewind_log`
+Tables: `teams`, `team_members`, `bundles`, `cloud_sessions`, `cloud_session_entries`, `bundle_entry_refs`, `rewind_log`
 
-Migrations: 0001_init (core tables), 0002_rewind (soft-delete + audit), 0003_teams (access control), 0004_source_entries (consolidation tracking)
+Migrations: 0001_init (core tables), 0002_rewind (soft-delete + audit), 0003_teams (access control), 0004_source_entries (legacy), 0005_cloud_sessions (reference model)
 
-- Entries have `superseded_at` for soft-delete (rewind)
-- Entries have `source_entries` (jsonb) for tracking consolidated session entries
-- Sessions have `ON DELETE CASCADE` from bundles
-- Entries have `ON DELETE SET NULL` from sessions (entries survive session removal)
+- `cloud_sessions` are independent of bundles, owned by a team
+- `cloud_session_entries` are the single source of truth for entries (owned by session, CASCADE delete)
+- `bundle_entry_refs` is a junction table — bundles reference entries, not copy them (CASCADE delete both ways)
+- `cloud_session_entries.superseded_at` for soft-delete (rewind)
+- Delete entry from session → cascades to all bundle refs
+- Delete bundle → cascades refs only (session entries survive)
 - Teams use argon2 password hashing
 - Service role key is hardcoded (shared backend, app-level auth)
 
@@ -199,10 +216,11 @@ bun run cli -- <args>          # run CLI
 
 - **No `asChild` prop** — shadcn/ui in this project uses `@base-ui/react`, not Radix. Use `render` prop for composition.
 - **Edge interaction** — React Flow's pane layer intercepts clicks. Use `onPointerDown` (not `onClick`) for buttons in `EdgeLabelRenderer`. Set `zIndex: 1000`.
-- **Local bundle "sessions"** — local bundles derive project lists from entries, not sessions. Joining a local bundle pushes a placeholder entry.
+- **Sessions are local-first** — sessions start as local files in `~/.ctx-link/active-sessions/`. "Push to Cloud" promotes them under a team to Supabase. Future entries auto-sync.
+- **Entries are the source of truth** — entries live in sessions. Bundles reference them via `bundle_entry_refs`. Delete from session → cascades to all bundles. Remove from bundle → only removes the ref.
+- **No entry copying** — `addEntriesToBundle` creates references, not copies. `localAddEntriesToBundle` creates refs in `entry_refs.json`.
 - **`@/` alias** — resolves to `packages/ui/src/` (tsconfig paths + vite alias).
 - **Optimistic updates** — mutations snapshot cache in `onMutate`, roll back in `onError`, refetch in `onSettled`.
 - **Mode is server-resolved** — UI API endpoints operating on existing bundles do NOT require `mode`. The server checks `isLocalBundle(bundleId)` to determine local vs cloud. Only `POST /api/bundles` (create) takes `mode` since the bundle doesn't exist yet.
 - **Local and cloud behave identically** — same user-facing behavior for connect, disconnect, delete, push. Only the storage backend differs.
-- **Every push saves to the active session** — `pushEntry` and `localPushEntry` both auto-save to `~/.ctx-link/session-entries/{session_id}.json` if an active session exists (via `.cxtl-active-session` marker). This means clicking a session in the UI shows all context accumulated during that session.
 - **Interactive CLI** — CLI commands prompt for options when flags aren't provided (mode, team, bundle, strategy, etc.) via `@inquirer/prompts`. Flags still work for scripting. `connect` and `join` auto-detect mode via `isLocalBundle()`.
