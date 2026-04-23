@@ -234,7 +234,7 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
 
   // Edges from active sessions to their connected bundles
   // (one session can connect to multiple bundles — each gets its own edge)
-  // Only create edges to bundles that exist in THIS group
+  // Edges can cross groups (e.g. cloud session → local bundle)
   const groupBundleIds = new Set(bundles.map((b) => b.bundle_id));
 
   if (activeSessions) {
@@ -244,13 +244,12 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
       if (!projectSessions.has(as.project_name)) continue;
 
       for (const b of as.bundles) {
-        // Only draw edge if the bundle node exists in this group
-        if (!groupBundleIds.has(b.bundle_id)) continue;
-
         const edgeId = `edge-active-${as.session_id}-${b.bundle_id}`;
         // Skip if this edge already exists
         if (edges.some((e) => e.id === edgeId)) continue;
 
+        // For in-group bundles, use dagre layout. For cross-group, still create the edge
+        // — React Flow renders cross-parent edges fine.
         edges.push({
           id: edgeId,
           source: projectNodeId,
