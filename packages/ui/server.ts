@@ -10,8 +10,6 @@ import {
   createBundle,
   deleteBundle,
   joinBundle,
-  deleteSession,
-  localDeleteProjectFromBundle,
   getBundleToken,
   pushEntry,
   pullEntries,
@@ -161,6 +159,15 @@ const server = Bun.serve({
         try {
           const bundleId = match[1];
           const mode = (url.searchParams.get("mode") || "cloud") as "local" | "cloud";
+
+          // Disconnect all active sessions from this bundle first
+          const activeSessions = listActiveSessions();
+          for (const s of activeSessions) {
+            if (s.bundles.some((b) => b.bundle_id === bundleId)) {
+              disconnectSessionFromBundle(s.session_id, bundleId);
+            }
+          }
+
           await deleteBundle(bundleId, mode);
           return Response.json({ ok: true }, { headers: corsHeaders });
         } catch (err: any) {
@@ -198,15 +205,16 @@ const server = Bun.serve({
                 mode,
               });
             }
-          } else if (mode === "local") {
+          } else {
             // No session context to copy — push a "linked" placeholder
+            // Same for both local and cloud
             await pushEntry({
               bundle_id: bundleId,
               project_name,
               event_type: "manual" as const,
               summary: `Project "${project_name}" linked to bundle`,
               raw_context: "",
-              mode: "local",
+              mode,
             });
           }
 
@@ -281,7 +289,17 @@ const server = Bun.serve({
       if (match && req.method === "POST") {
         try {
           const bundleId = match[1];
-          const { project_name, strategy, reason, dry_run, force } = await req.json();
+          const { project_name, strategy, reason, dry_run, force, mode } = await req.json();
+
+          // Rewind only supported for cloud bundles (uses Supabase soft-delete)
+          // For local bundles, return unsupported message
+          if (mode === "local") {
+            return Response.json(
+              { applied: false, dry_run: false, affected_count: 0, affected_entries: [], message: "Rewind is not yet supported for local bundles." },
+              { headers: corsHeaders }
+            );
+          }
+
           const result = await rewindProject({
             bundle_id: bundleId,
             project_name,
@@ -306,7 +324,15 @@ const server = Bun.serve({
       if (match && req.method === "POST") {
         try {
           const bundleId = match[1];
-          const { project_name, entry_ids, rewind_log_id } = await req.json();
+          const { project_name, entry_ids, rewind_log_id, mode } = await req.json();
+
+          if (mode === "local") {
+            return Response.json(
+              { restored_count: 0, restored_ids: [] },
+              { headers: corsHeaders }
+            );
+          }
+
           const result = await restoreRewound({
             bundle_id: bundleId,
             project_name,
