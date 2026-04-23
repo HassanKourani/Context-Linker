@@ -420,16 +420,15 @@ const server = Bun.serve({
             );
           }
 
-          // Cloud bundle: session must be pushed to cloud first so entries exist in cloud_session_entries
+          // Cloud bundle: session must already be in the cloud
           const session = loadActiveSession(sessionId);
           if (session && !session.cloud_session_id) {
-            // Auto-push session to cloud under the bundle's team
-            const teamId = await getBundleTeamId(bundle_id);
-            if (teamId) {
-              await pushSessionToCloud(sessionId, teamId);
-            }
-          } else if (session?.cloud_session_id) {
-            // Already in cloud — just sync any new entries
+            return Response.json(
+              { error: "Push session to cloud first before pushing entries to a cloud bundle." },
+              { status: 400, headers: corsHeaders }
+            );
+          }
+          if (session?.cloud_session_id) {
             await syncNewEntries(session);
           }
 
