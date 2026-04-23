@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useEffect, useState } from "react";
+import { useMemo, useCallback, useEffect, useRef } from "react";
 import {
   ReactFlow,
   Background,
@@ -6,6 +6,7 @@ import {
   MiniMap,
   useNodesState,
   useEdgesState,
+  type ReactFlowInstance,
   type NodeTypes,
   type EdgeTypes,
   type EdgeMouseHandler,
@@ -46,6 +47,7 @@ export function App() {
   const { data, isLoading, dataUpdatedAt } = useGraphData();
   const hoveredEdgeId = useUIStore((s) => s.hoveredEdgeId);
   const hideEmptySessions = useUIStore((s) => s.hideEmptySessions);
+  const rfInstance = useRef<ReactFlowInstance | null>(null);
 
   // Build graph from API data
   const built = useMemo(
@@ -74,6 +76,17 @@ export function App() {
       return new Map(Object.entries(obj));
     } catch { return new Map(); }
   }, []);
+
+  // Reset all nodes to dagre-computed positions (tidy up)
+  const tidyUp = useCallback(() => {
+    try { localStorage.removeItem("ctx-link-node-positions"); } catch {}
+    setNodes(fitGroupsToChildren([...built.nodes]));
+    setEdges(built.edges);
+    // Re-center viewport after layout reset
+    requestAnimationFrame(() => {
+      rfInstance.current?.fitView({ padding: 0.2 });
+    });
+  }, [built, setNodes, setEdges]);
 
   // Wrap onNodesChange to recalculate group bounds after dragging + persist
   const onNodesChange = useCallback(
@@ -165,6 +178,7 @@ export function App() {
         machineId={data?.machine_id}
         isLoading={isLoading}
         dataUpdatedAt={dataUpdatedAt}
+        onTidyUp={tidyUp}
       />
       <div className="flex-1">
         <ReactFlow
@@ -181,6 +195,7 @@ export function App() {
           isValidConnection={isValidConnection}
           onEdgeMouseEnter={onEdgeMouseEnter}
           onEdgeMouseLeave={onEdgeMouseLeave}
+          onInit={(instance) => { rfInstance.current = instance; }}
           connectionLineStyle={{ stroke: "#a6e3a1", strokeWidth: 2 }}
           fitView
           fitViewOptions={{ padding: 0.2 }}

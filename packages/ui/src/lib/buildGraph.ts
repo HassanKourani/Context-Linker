@@ -8,8 +8,8 @@ const PROJECT_NODE_HEADER = 36;
 const PROJECT_NODE_ROW = 32;
 const BUNDLE_NODE_WIDTH = 200;
 const BUNDLE_NODE_HEIGHT = 88;
-const GROUP_PADDING = 40;
-const GROUP_HEADER = 30;
+const GROUP_PADDING = 60;
+const GROUP_HEADER = 40;
 const GROUP_GAP = 60;
 
 function projectNodeHeight(sessionCount: number): number {
@@ -107,6 +107,20 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
   }
 
   if (layoutNodes.length === 0) return { nodes, edges };
+
+  // Ensure dagre always ranks projects left of bundles.
+  // Without edges, dagre puts disconnected nodes in the same rank.
+  // Add phantom edges from every project to every bundle to enforce LR flow.
+  const projectNodeIds = [...projectSessions.keys()].map((p) => `project-${groupId}-${p}`);
+  const bundleNodeIds = bundles.map((b) => `bundle-${b.bundle_id}`);
+  const realTargets = new Set(layoutEdges.map((e) => `${e.source}->${e.target}`));
+  for (const pid of projectNodeIds) {
+    for (const bid of bundleNodeIds) {
+      if (!realTargets.has(`${pid}->${bid}`)) {
+        layoutEdges.push({ source: pid, target: bid });
+      }
+    }
+  }
 
   // Compute layout
   const layout = computeLayout(layoutNodes, layoutEdges);

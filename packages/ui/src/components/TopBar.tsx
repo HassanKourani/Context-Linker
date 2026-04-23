@@ -1,4 +1,4 @@
-import { Plus, Users, EyeOff, Eye } from "lucide-react";
+import { Plus, Users, EyeOff, Eye, LayoutGrid } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useUIStore } from "@/stores/uiStore";
 
@@ -6,9 +6,10 @@ interface TopBarProps {
   machineId: string | undefined;
   isLoading: boolean;
   dataUpdatedAt: number;
+  onTidyUp?: () => void;
 }
 
-export function TopBar({ machineId, isLoading, dataUpdatedAt }: TopBarProps) {
+export function TopBar({ machineId, isLoading, dataUpdatedAt, onTidyUp }: TopBarProps) {
   const openModal = useUIStore((s) => s.openModal);
   const hideEmptySessions = useUIStore((s) => s.hideEmptySessions);
   const toggleHideEmptySessions = useUIStore((s) => s.toggleHideEmptySessions);
@@ -40,6 +41,16 @@ export function TopBar({ machineId, isLoading, dataUpdatedAt }: TopBarProps) {
           >
             <Users className="w-3.5 h-3.5 mr-1" />
             Teams
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-xs text-muted-foreground hover:text-foreground"
+            onClick={onTidyUp}
+            title="Reset layout to auto-arranged positions"
+          >
+            <LayoutGrid className="w-3.5 h-3.5 mr-1" />
+            Tidy up
           </Button>
         </div>
       </div>
