@@ -157,17 +157,16 @@ export function App() {
       if (bundleMode === "cloud") {
         const session = data?.sessions?.find((s) => s.session_id === sessionId);
 
-        // Needs copy-to-cloud if: no cloud session yet, OR cloud session is in a
-        // different team than the target bundle (can't cross-connect teams).
+        // Needs copy-to-cloud if: no cloud copy exists in the target bundle's team.
         const needsCopy = (() => {
           if (!session) return false;
-          if (!session.cloud_session_id) return true;
-          // Check if session's cloud team matches the target bundle's team
-          const sessionTeam = session.team_id;
+          const copies = session.cloud_copies ?? [];
+          if (copies.length === 0 && !session.cloud_session_id) return true;
           const bundleTeam = data?.teams?.find((t) =>
             t.bundles.some((b) => b.bundle_id === bundleId)
           )?.team_id;
-          return bundleTeam && sessionTeam && bundleTeam !== sessionTeam;
+          if (!bundleTeam) return false;
+          return !copies.some((c) => c.team_id === bundleTeam);
         })();
 
         if (needsCopy) {

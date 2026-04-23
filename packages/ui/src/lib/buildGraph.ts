@@ -66,6 +66,9 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
     if (activeSessions) {
       for (const as of activeSessions) {
         if (as.cloud_session_id) activeCloudIds.add(as.cloud_session_id);
+        if (as.cloud_copies) {
+          for (const c of as.cloud_copies) activeCloudIds.add(c.cloud_session_id);
+        }
       }
     }
 
@@ -272,16 +275,19 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
   // Edges from cloud sessions to their connected bundles
   // (derived from bundle_entry_refs on the server side)
   if (cloudSessions) {
-    const activeCloudIds = new Set<string>();
+    const activeCloudIds2 = new Set<string>();
     if (activeSessions) {
       for (const as of activeSessions) {
-        if (as.cloud_session_id) activeCloudIds.add(as.cloud_session_id);
+        if (as.cloud_session_id) activeCloudIds2.add(as.cloud_session_id);
+        if (as.cloud_copies) {
+          for (const c of as.cloud_copies) activeCloudIds2.add(c.cloud_session_id);
+        }
       }
     }
 
     for (const cs of cloudSessions) {
       // Skip cloud sessions already represented by an active session (edges handled above)
-      if (activeCloudIds.has(cs.id)) continue;
+      if (activeCloudIds2.has(cs.id)) continue;
       if (!cs.bundles?.length) continue;
       if (!projectSessions.has(cs.project_name)) continue;
 

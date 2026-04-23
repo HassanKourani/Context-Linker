@@ -8,6 +8,7 @@ export interface ActiveSessionData {
   entry_count?: number;
   cloud_session_id?: string | null;
   team_id?: string | null;
+  cloud_copies?: Array<{ cloud_session_id: string; team_id: string }>;
 }
 
 export interface CloudSessionData {

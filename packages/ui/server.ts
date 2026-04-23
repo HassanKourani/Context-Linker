@@ -529,7 +529,8 @@ const server = Bun.serve({
 
           // Prevent copying the same session twice into the same team
           const activeSession = loadActiveSession(sessionId);
-          if (activeSession?.cloud_session_id && activeSession?.team_id === team_id) {
+          const copies = activeSession?.cloud_copies ?? [];
+          if (copies.some((c) => c.team_id === team_id)) {
             return Response.json(
               { error: "This session has already been copied to this team." },
               { status: 409, headers: corsHeaders }
@@ -538,13 +539,15 @@ const server = Bun.serve({
 
           const result = await copySessionToCloud(sessionId, team_id);
 
-          // Link the active session to the cloud copy so future syncs work.
-          // Only set cloud_session_id if not already linked — a second copy to
-          // another team is an independent snapshot; overwriting would break the
-          // existing cloud link and make the session "disappear" from its original team.
-          if (activeSession && !activeSession.cloud_session_id) {
-            activeSession.cloud_session_id = result.cloud_session_id;
-            activeSession.team_id = team_id;
+          // Track cloud copy so sync works for all copies
+          if (activeSession) {
+            if (!activeSession.cloud_copies) activeSession.cloud_copies = [];
+            activeSession.cloud_copies.push({ cloud_session_id: result.cloud_session_id, team_id });
+            // Keep legacy fields pointing to first copy
+            if (!activeSession.cloud_session_id) {
+              activeSession.cloud_session_id = result.cloud_session_id;
+              activeSession.team_id = team_id;
+            }
             saveActiveSession(activeSession);
           }
 
@@ -584,7 +587,10 @@ const server = Bun.serve({
 
           // Find the local active session linked to this cloud session
           const allSessions = listActiveSessions();
-          const localSession = allSessions.find((s) => s.cloud_session_id === cloudSessionId);
+          const localSession = allSessions.find((s) =>
+            s.cloud_session_id === cloudSessionId ||
+            (s.cloud_copies ?? []).some((c) => c.cloud_session_id === cloudSessionId)
+          );
           if (!localSession) {
             return Response.json(
               { error: "No local session linked to this cloud session" },
@@ -636,23 +642,18 @@ const server = Bun.serve({
 
           if (localSession) {
             if (mode === "cloud") {
-              // If session has been copied to cloud, use the cloud session ID to connect
-              if (localSession.cloud_session_id) {
-                // Block cross-team connections — the cloud session must be in the same
-                // team as the target bundle. Otherwise the UI should copy-to-cloud first.
-                const bundleTeamId = await getBundleTeamId(bundle_id);
-                const cloudSession = await getCloudSession(localSession.cloud_session_id);
-                if (bundleTeamId && cloudSession && cloudSession.team_id !== bundleTeamId) {
-                  return Response.json(
-                    { error: "Session's cloud copy is in a different team. Use 'Copy to Cloud' to create a copy in the target team first." },
-                    { status: 400, headers: corsHeaders }
-                  );
-                }
-                connectCloudSessionToBundle(localSession.cloud_session_id, bundle_id, mode);
-                connectSessionToBundle(sessionId, bundle_id, mode);
+              // Find the cloud copy in the same team as the target bundle
+              const bundleTeamId = await getBundleTeamId(bundle_id);
+              const copies = localSession.cloud_copies ?? [];
+              const copy = copies.find((c) => c.team_id === bundleTeamId)
+                ?? (localSession.cloud_session_id && localSession.team_id === bundleTeamId
+                  ? { cloud_session_id: localSession.cloud_session_id, team_id: localSession.team_id }
+                  : null);
+              if (copy) {
+                connectCloudSessionToBundle(copy.cloud_session_id, bundle_id, mode);
                 return Response.json({ ok: true }, { headers: corsHeaders });
               }
-              // Otherwise block — needs Copy to Cloud first
+              // No cloud copy in the target team — needs Copy to Cloud first
               return Response.json(
                 { error: "Use 'Copy to Cloud' to connect a local session to a cloud bundle." },
                 { status: 400, headers: corsHeaders }
@@ -685,7 +686,7 @@ const server = Bun.serve({
           const entryId = match[2];
           deleteSessionEntry(sessionId, entryId);
           const session = loadActiveSession(sessionId);
-          if (session?.cloud_session_id) {
+          if (session?.cloud_copies?.length || session?.cloud_session_id) {
             try { await deleteCloudSessionEntry(entryId); } catch {}
           }
           return Response.json({ ok: true }, { headers: corsHeaders });
@@ -708,7 +709,11 @@ const server = Bun.serve({
           const localSession = loadActiveSession(sessionId);
 
           if (localSession) {
-            // Deleting a local active session — also delete its cloud copy if any
+            // Deleting a local active session — also delete all cloud copies
+            for (const c of (localSession.cloud_copies ?? [])) {
+              try { await deleteCloudSession(c.cloud_session_id); } catch {}
+            }
+            // Legacy fallback
             if (localSession.cloud_session_id) {
               try { await deleteCloudSession(localSession.cloud_session_id); } catch {}
             }
@@ -717,12 +722,22 @@ const server = Bun.serve({
             // sessionId is a cloud session ID — only delete from Supabase, keep local
             try { await deleteCloudSession(sessionId); } catch {}
 
-            // Clear the cloud_session_id link on any local session that pointed here
+            // Remove from cloud_copies on any local session that had this cloud copy
             const allSessions = listActiveSessions();
-            const linked = allSessions.find((s) => s.cloud_session_id === sessionId);
+            const linked = allSessions.find((s) =>
+              s.cloud_session_id === sessionId ||
+              (s.cloud_copies ?? []).some((c) => c.cloud_session_id === sessionId)
+            );
             if (linked) {
-              linked.cloud_session_id = null;
-              linked.team_id = null;
+              linked.cloud_copies = (linked.cloud_copies ?? []).filter(
+                (c) => c.cloud_session_id !== sessionId
+              );
+              if (linked.cloud_session_id === sessionId) {
+                // Promote next copy or clear
+                const next = linked.cloud_copies[0] ?? null;
+                linked.cloud_session_id = next?.cloud_session_id ?? null;
+                linked.team_id = next?.team_id ?? null;
+              }
               saveActiveSession(linked);
             }
           }
@@ -756,7 +771,10 @@ const server = Bun.serve({
           // session_id might be a cloud session ID
           cloudSessionId = session_id;
           // Check if any active session maps to this cloud session
-          const match = listActiveSessions().find((s) => s.cloud_session_id === session_id);
+          const match = listActiveSessions().find((s) =>
+            s.cloud_session_id === session_id ||
+            (s.cloud_copies ?? []).some((c) => c.cloud_session_id === session_id)
+          );
           if (match) localSessionId = match.session_id;
         }
 

@@ -649,15 +649,18 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const a = z.object({ team_id: z.string() }).parse(args);
         const session = getSession();
         if (!session) return fail("No active session.");
-        if (session.cloud_session_id && session.team_id === a.team_id) {
+        const copies = session.cloud_copies ?? [];
+        if (copies.some((c) => c.team_id === a.team_id)) {
           return fail("This session has already been copied to this team.");
         }
         const result = await copySessionToCloud(session.session_id, a.team_id);
+        if (!session.cloud_copies) session.cloud_copies = [];
+        session.cloud_copies.push({ cloud_session_id: result.cloud_session_id, team_id: a.team_id });
         if (!session.cloud_session_id) {
           session.cloud_session_id = result.cloud_session_id;
           session.team_id = a.team_id;
-          saveActiveSession(session);
         }
+        saveActiveSession(session);
         return ok({
           cloud_session_id: result.cloud_session_id,
           entries_copied: result.entries_copied,

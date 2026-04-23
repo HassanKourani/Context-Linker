@@ -39,6 +39,9 @@ export function ProjectNode({ data }: NodeProps) {
   if (graphData?.sessions) {
     for (const s of graphData.sessions) {
       if (s.cloud_session_id) syncableCloudIds.add(s.cloud_session_id);
+      if (s.cloud_copies) {
+        for (const c of s.cloud_copies) syncableCloudIds.add(c.cloud_session_id);
+      }
     }
   }
 

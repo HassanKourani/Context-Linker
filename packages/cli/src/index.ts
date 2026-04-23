@@ -233,6 +233,7 @@ program
       branch,
       cloud_session_id: null,
       team_id: null,
+      cloud_copies: [],
     });
 
     // Write marker file so MCP server and hooks can find the session
@@ -388,14 +389,20 @@ program
       });
     }
     const session = loadActiveSession(sessionId);
-    if (session?.cloud_session_id && session?.team_id === teamId) {
+    const copies = session?.cloud_copies ?? [];
+    if (copies.some((c) => c.team_id === teamId)) {
       console.error("This session has already been copied to this team.");
       process.exit(1);
     }
     const result = await copySessionToCloud(sessionId, teamId);
-    if (session && !session.cloud_session_id) {
-      session.cloud_session_id = result.cloud_session_id;
-      session.team_id = teamId;
+    if (session) {
+      if (!session.cloud_copies) session.cloud_copies = [];
+      session.cloud_copies.push({ cloud_session_id: result.cloud_session_id, team_id: teamId });
+      // Keep legacy fields pointing to first copy
+      if (!session.cloud_session_id) {
+        session.cloud_session_id = result.cloud_session_id;
+        session.team_id = teamId;
+      }
       saveActiveSession(session);
     }
     console.log(`Session copied to cloud.`);

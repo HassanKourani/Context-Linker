@@ -161,8 +161,9 @@ export interface ActiveSession {
   bundles: Array<{ bundle_id: string; mode: "local" | "cloud" }>;
   started_at: string;
   branch: string | null;
-  cloud_session_id: string | null;  // null until pushed to cloud
-  team_id: string | null;           // team the cloud session belongs to
+  cloud_session_id: string | null;  // DEPRECATED: first cloud copy (kept for compat)
+  team_id: string | null;           // DEPRECATED: team of first cloud copy
+  cloud_copies: Array<{ cloud_session_id: string; team_id: string }>;  // all cloud copies
 }
 
 function activeSessionsDir(): string {
