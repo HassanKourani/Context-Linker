@@ -3,7 +3,7 @@ import type {
   CreateBundleResult,
   JoinBundleResult,
   EntryRow,
-  PushResult,
+  CloudSessionData,
   RewindResult,
   RestoreResult,
   RewindLogRow,
@@ -127,17 +127,8 @@ export function fetchEntries(
   return apiGet<EntryRow[]>(`/api/bundles/${bundleId}/entries?${qs}`);
 }
 
-export function pushEntry(
-  bundleId: string,
-  body: {
-    project_name: string;
-    event_type: string;
-    summary: string;
-    files_touched?: string[];
-    decisions?: Array<{ decision: string; rationale?: string; affects: string[] }>;
-  },
-) {
-  return apiPost<PushResult>(`/api/bundles/${bundleId}/entries`, body);
+export function removeEntryRefFromBundle(bundleId: string, entryId: string) {
+  return apiDelete<{ ok: true }>(`/api/bundles/${bundleId}/entries/${entryId}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -188,4 +179,19 @@ export function createTeam(body: { name: string; password: string }) {
 
 export function joinTeam(body: { name: string; password: string }) {
   return apiPost<CreateTeamResult>("/api/teams/join", body);
+}
+
+// ---------------------------------------------------------------------------
+// Cloud Sessions
+// ---------------------------------------------------------------------------
+
+export function pushSessionToCloud(sessionId: string, body: { team_id: string }) {
+  return apiPost<{ cloud_session_id: string; entries_synced: number }>(
+    `/api/sessions/${sessionId}/push-to-cloud`,
+    body,
+  );
+}
+
+export function fetchTeamSessions(teamId: string) {
+  return apiGet<CloudSessionData[]>(`/api/teams/${teamId}/sessions`);
 }
