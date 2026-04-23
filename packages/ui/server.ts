@@ -31,6 +31,7 @@ import {
   deleteCloudSessionEntry,
   getCloudSessionEntries,
   getCloudSessionBundleIds,
+  syncCloudSessionFromLocal,
   getBundleTeamId,
   rewindProject,
   restoreRewound,
@@ -499,6 +500,23 @@ const server = Bun.serve({
       }
     }
 
+    // ── POST /api/sessions/:id/sync-from-local ────────────────────────────
+    {
+      const match = url.pathname.match(/^\/api\/sessions\/([^/]+)\/sync-from-local$/);
+      if (match && req.method === "POST") {
+        try {
+          const cloudSessionId = match[1];
+          const result = await syncCloudSessionFromLocal(cloudSessionId);
+          return Response.json(result, { headers: corsHeaders });
+        } catch (err: any) {
+          return Response.json(
+            { error: err.message ?? String(err) },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+      }
+    }
+
     // ── POST /api/sessions/:id/connect ──────────────────────────────────────
     {
       const match = url.pathname.match(/^\/api\/sessions\/([^/]+)\/connect$/);
@@ -508,26 +526,40 @@ const server = Bun.serve({
           const { bundle_id } = await req.json();
           const mode = resolveBundleMode(bundle_id);
 
-          // Block local sessions from connecting to cloud bundles
-          // Use the "Copy to Cloud" flow instead
-          if (mode === "cloud") {
-            const sess = loadActiveSession(sessionId);
-            if (sess) {
-              // This is a local active session — can't connect directly to cloud
+          // Check if this is an active (local) session
+          const activeSession = loadActiveSession(sessionId);
+
+          if (activeSession) {
+            // Block local sessions from connecting to cloud bundles
+            if (mode === "cloud") {
               return Response.json(
                 { error: "Use 'Copy to Cloud' to connect a local session to a cloud bundle." },
                 { status: 400, headers: corsHeaders }
               );
             }
-            // If no active session found, it might be a cloud session — allow it
-            // but check same-team
-            const bundleTeamId = await getBundleTeamId(bundle_id);
-            // We can't easily check the cloud session's team from here,
-            // but the bundle's team auth will catch cross-team attempts
+            // Local active session → local bundle: normal path
+            const session = connectSessionToBundle(sessionId, bundle_id, mode);
+            return Response.json({ ok: true, session }, { headers: corsHeaders });
           }
 
-          const session = connectSessionToBundle(sessionId, bundle_id, mode);
-          return Response.json({ ok: true, session }, { headers: corsHeaders });
+          // Not an active session — must be a cloud session ID
+          // Get its entries and add refs to the bundle
+          const cloudEntries = await getCloudSessionEntries(sessionId);
+          const entryIds = cloudEntries.map((e: any) => e.id);
+
+          if (mode === "local") {
+            // Cloud session → local bundle: add entry refs
+            if (entryIds.length > 0) {
+              localAddEntriesToBundle(bundle_id, entryIds, sessionId);
+            }
+          } else {
+            // Cloud session → cloud bundle: add entry refs via Supabase
+            if (entryIds.length > 0) {
+              await addEntriesToBundle(bundle_id, entryIds);
+            }
+          }
+
+          return Response.json({ ok: true, entries_added: entryIds.length }, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
             { error: err.message ?? String(err) },

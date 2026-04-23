@@ -198,3 +198,7 @@ export function copySessionToCloud(
 export function fetchTeamSessions(teamId: string) {
   return apiGet<CloudSessionData[]>(`/api/teams/${teamId}/sessions`);
 }
+
+export function syncSessionFromLocal(cloudSessionId: string) {
+  return apiPost<{ synced: number }>(`/api/sessions/${cloudSessionId}/sync-from-local`, {});
+}
