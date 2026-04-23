@@ -14,7 +14,7 @@ build/
 
 # ctx-link local project state
 .ctx-link.json
-.cxtl-active-session
+.ctx-link-active-session
 
 # Last-push timestamp (written by post-commit hook)
 .ctx-link-last-push

@@ -191,16 +191,16 @@ export function deleteActiveSession(sessionId: string): void {
   if (existsSync(entriesPath)) rmSync(entriesPath);
 }
 
-/** Read the active session_id from .cxtl-active-session marker file in CWD */
+/** Read the active session_id from .ctx-link-active-session marker file in CWD */
 export function getActiveSessionId(cwd: string = process.cwd()): string | null {
-  const marker = join(cwd, ".cxtl-active-session");
+  const marker = join(cwd, ".ctx-link-active-session");
   if (!existsSync(marker)) return null;
   return readFileSync(marker, "utf8").trim();
 }
 
 /** Write the active session_id marker file in the project directory */
 export function setActiveSessionId(sessionId: string, cwd: string = process.cwd()): void {
-  writeFileSync(join(cwd, ".cxtl-active-session"), sessionId);
+  writeFileSync(join(cwd, ".ctx-link-active-session"), sessionId);
 }
 
 /** List all active sessions across all projects */
