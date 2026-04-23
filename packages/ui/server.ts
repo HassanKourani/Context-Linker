@@ -427,14 +427,9 @@ const server = Bun.serve({
         const { session_id, bundle_id, project_name, mode } = await req.json();
 
         // Remove from active session's bundles array
+        // Remove the bundle from the active session's bundles array
+        // Same behavior for both local and cloud — only the link is removed
         disconnectSessionFromBundle(session_id, bundle_id);
-
-        // Also clean up the data store
-        if (mode === "local") {
-          localDeleteProjectFromBundle(bundle_id, project_name);
-        } else {
-          await deleteSession(session_id);
-        }
         return Response.json({ ok: true }, { headers: corsHeaders });
       } catch (err: any) {
         return Response.json(
