@@ -60,8 +60,19 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
   }
 
   // Add cloud sessions (from Supabase — sessions from other machines or past sessions)
+  // Skip cloud sessions that are already represented by an active session (same cloud_session_id)
   if (cloudSessions) {
+    const activeCloudIds = new Set<string>();
+    if (activeSessions) {
+      for (const as of activeSessions) {
+        if (as.cloud_session_id) activeCloudIds.add(as.cloud_session_id);
+      }
+    }
+
     for (const cs of cloudSessions) {
+      // Skip if this cloud session is already shown as an active session
+      if (activeCloudIds.has(cs.id)) continue;
+
       const key = cs.project_name;
       if (!projectSessions.has(key)) projectSessions.set(key, []);
       const existing = projectSessions.get(key)!;
@@ -223,6 +234,9 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
 
   // Edges from active sessions to their connected bundles
   // (one session can connect to multiple bundles — each gets its own edge)
+  // Only create edges to bundles that exist in THIS group
+  const groupBundleIds = new Set(bundles.map((b) => b.bundle_id));
+
   if (activeSessions) {
     for (const as of activeSessions) {
       const projectNodeId = `project-${groupId}-${as.project_name}`;
@@ -230,8 +244,11 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
       if (!projectSessions.has(as.project_name)) continue;
 
       for (const b of as.bundles) {
+        // Only draw edge if the bundle node exists in this group
+        if (!groupBundleIds.has(b.bundle_id)) continue;
+
         const edgeId = `edge-active-${as.session_id}-${b.bundle_id}`;
-        // Skip if this edge already exists (from Supabase sessions)
+        // Skip if this edge already exists
         if (edges.some((e) => e.id === edgeId)) continue;
 
         edges.push({
