@@ -59,8 +59,8 @@ const server = Bun.serve({
             const bundlesWithDetails = await Promise.all(
               bundles.map(async (b) => {
                 const [status, sessions] = await Promise.all([
-                  bundleStatus(b.bundle_id, "cloud"),
-                  listBundleSessions(b.bundle_id),
+                  bundleStatus(b.bundle_id, "cloud", true),
+                  listBundleSessions(b.bundle_id, true),
                 ]);
                 return {
                   bundle_id: b.bundle_id,
@@ -211,6 +211,7 @@ const server = Bun.serve({
                 decisions: entry.decisions,
                 raw_context: "",
                 mode,
+                skipAuth: true,
               });
             }
           } else {
@@ -223,6 +224,7 @@ const server = Bun.serve({
               summary: `Project "${project_name}" linked to bundle`,
               raw_context: "",
               mode,
+              skipAuth: true,
             });
           }
 
@@ -252,6 +254,7 @@ const server = Bun.serve({
             limit,
             exclude_project,
             mode,
+            skipAuth: true,
           });
           return Response.json(entries, { headers: corsHeaders });
         } catch (err: any) {
@@ -281,6 +284,7 @@ const server = Bun.serve({
             decisions,
             raw_context: "",
             mode,
+            skipAuth: true,
           });
           return Response.json(result, { headers: corsHeaders });
         } catch (err: any) {
@@ -444,6 +448,7 @@ const server = Bun.serve({
               decisions: entry.decisions,
               raw_context: "",
               mode,
+              skipAuth: true,
             });
           }
 

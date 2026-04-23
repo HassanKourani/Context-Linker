@@ -131,13 +131,13 @@ export interface BundleStatus {
   last_entry_at: string | null;
 }
 
-export async function bundleStatus(bundleId: string, mode: "local" | "cloud" = "cloud"): Promise<BundleStatus> {
+export async function bundleStatus(bundleId: string, mode: "local" | "cloud" = "cloud", skipAuth = false): Promise<BundleStatus> {
   if (mode === "local") {
     const { localBundleStatus } = await import("./local-store.js");
     return localBundleStatus(bundleId);
   }
 
-  await assertTokenValid(bundleId);
+  if (!skipAuth) await assertTokenValid(bundleId);
   const sb = getSupabase();
 
   const [{ data: bundle }, { count: sCount }, { data: entries }, { count: eCount }] =
@@ -210,9 +210,10 @@ export interface SessionInfo {
 }
 
 export async function listBundleSessions(
-  bundleId: string
+  bundleId: string,
+  skipAuth = false
 ): Promise<SessionInfo[]> {
-  await assertTokenValid(bundleId);
+  if (!skipAuth) await assertTokenValid(bundleId);
   const sb = getSupabase();
 
   const { data, error } = await sb

@@ -13,6 +13,7 @@ export interface PushInput {
   decisions?: Array<{ decision: string; rationale?: string; affects: string[] }>;
   store_raw?: boolean;
   mode?: "local" | "cloud";
+  skipAuth?: boolean;
 }
 
 export interface PushResult {
@@ -28,7 +29,7 @@ export async function pushEntry(input: PushInput): Promise<PushResult> {
     return localPushEntry(input);
   }
 
-  await assertTokenValid(input.bundle_id);
+  if (!input.skipAuth) await assertTokenValid(input.bundle_id);
   const cfg = loadGlobalConfig();
   const sb = getSupabase();
 
@@ -120,6 +121,7 @@ export interface PullInput {
   limit?: number;           // default 20
   exclude_project?: string; // useful: "don't show me my own project's entries"
   mode?: "local" | "cloud";
+  skipAuth?: boolean;       // trusted server-side calls can skip team membership check
 }
 
 export interface EntryRow {
@@ -139,7 +141,7 @@ export async function pullEntries(input: PullInput): Promise<EntryRow[]> {
     return localPullEntries(input);
   }
 
-  await assertTokenValid(input.bundle_id);
+  if (!input.skipAuth) await assertTokenValid(input.bundle_id);
   const sb = getSupabase();
 
   let query = sb
