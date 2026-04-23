@@ -230,6 +230,8 @@ program
       bundles: [],
       started_at: new Date().toISOString(),
       branch,
+      cloud_session_id: null,
+      team_id: null,
     });
 
     // Write marker file so MCP server and hooks can find the session

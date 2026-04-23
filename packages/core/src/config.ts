@@ -161,6 +161,8 @@ export interface ActiveSession {
   bundles: Array<{ bundle_id: string; mode: "local" | "cloud" }>;
   started_at: string;
   branch: string | null;
+  cloud_session_id: string | null;  // null until pushed to cloud
+  team_id: string | null;           // team the cloud session belongs to
 }
 
 function activeSessionsDir(): string {
@@ -263,9 +265,10 @@ export interface SessionEntry {
   files_touched: string[];
   decisions: Array<{ decision: string; rationale?: string; affects: string[] }>;
   pushed_at: string | null; // null = not yet pushed, ISO string = when consolidated
+  superseded_at: string | null;  // soft-delete for rewind
 }
 
-export function pushSessionEntry(sessionId: string, entry: Omit<SessionEntry, "id" | "created_at" | "pushed_at">): SessionEntry {
+export function pushSessionEntry(sessionId: string, entry: Omit<SessionEntry, "id" | "created_at" | "pushed_at" | "superseded_at">): SessionEntry {
   const dir = sessionEntriesDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
 
@@ -276,6 +279,7 @@ export function pushSessionEntry(sessionId: string, entry: Omit<SessionEntry, "i
     id: crypto.randomUUID(),
     created_at: new Date().toISOString(),
     pushed_at: null,
+    superseded_at: null,
     ...entry,
   };
   entries.push(newEntry);
