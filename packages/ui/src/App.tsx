@@ -71,7 +71,9 @@ export function App() {
 
       if (!projectName || !bundleId) return;
 
-      joinMutation.mutate({ bundleId, project_name: projectName, mode });
+      // Pass the session_id so its context flows into the bundle
+      const sessionId = connection.sourceHandle || undefined;
+      joinMutation.mutate({ bundleId, project_name: projectName, mode, session_id: sessionId });
     },
     [nodes, joinMutation]
   );

@@ -10,11 +10,13 @@ export function useJoinBundle() {
       bundleId,
       project_name,
       mode,
+      session_id,
     }: {
       bundleId: string;
       project_name: string;
       mode: "local" | "cloud";
-    }) => joinBundle(bundleId, { project_name, mode }),
+      session_id?: string;
+    }) => joinBundle(bundleId, { project_name, mode, session_id }),
 
     onMutate: async ({ bundleId, project_name, mode }) => {
       await qc.cancelQueries({ queryKey: ["graph"] });

@@ -203,6 +203,52 @@ export function listActiveSessions(): ActiveSession[] {
   return files.map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")));
 }
 
+// ---------- Session-Level Entries ----------
+// Each session accumulates its own entries, independent of bundles.
+// When connected to a bundle, session entries flow into the bundle.
+
+function sessionEntriesDir(): string {
+  return join(globalConfigDir(), "session-entries");
+}
+
+function sessionEntriesPath(sessionId: string): string {
+  return join(sessionEntriesDir(), `${sessionId}.json`);
+}
+
+interface SessionEntry {
+  id: string;
+  created_at: string;
+  project_name: string;
+  event_type: string;
+  trigger_ref: string | null;
+  summary: string;
+  files_touched: string[];
+  decisions: Array<{ decision: string; rationale?: string; affects: string[] }>;
+}
+
+export function pushSessionEntry(sessionId: string, entry: Omit<SessionEntry, "id" | "created_at">): SessionEntry {
+  const dir = sessionEntriesDir();
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+
+  const path = sessionEntriesPath(sessionId);
+  const entries: SessionEntry[] = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : [];
+
+  const newEntry: SessionEntry = {
+    id: crypto.randomUUID(),
+    created_at: new Date().toISOString(),
+    ...entry,
+  };
+  entries.push(newEntry);
+  writeFileSync(path, JSON.stringify(entries, null, 2));
+  return newEntry;
+}
+
+export function getSessionEntries(sessionId: string): SessionEntry[] {
+  const path = sessionEntriesPath(sessionId);
+  if (!existsSync(path)) return [];
+  return JSON.parse(readFileSync(path, "utf8"));
+}
+
 export function storeBundleToken(
   bundleId: string,
   token: string,

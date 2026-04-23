@@ -20,6 +20,8 @@ import {
   listRewinds,
   createTeam,
   joinTeam,
+  getSessionEntries,
+  pushSessionEntry,
 } from "@ctx-link/core";
 
 const server = Bun.serve({
@@ -174,13 +176,28 @@ const server = Bun.serve({
       if (match && req.method === "POST") {
         try {
           const bundleId = match[1];
-          const { project_name, mode } = await req.json();
+          const { project_name, mode, session_id } = await req.json();
           const token = getBundleToken(bundleId) || "";
           const result = await joinBundle(bundleId, token, project_name, mode);
 
-          // For local mode, push a "linked" entry so the project shows up
-          // (local bundles derive projects from entries, not sessions)
-          if (mode === "local") {
+          // Copy session entries into the bundle (session context flows to parent)
+          if (session_id) {
+            const sessionEntries = getSessionEntries(session_id);
+            for (const entry of sessionEntries) {
+              await pushEntry({
+                bundle_id: bundleId,
+                project_name: entry.project_name || project_name,
+                event_type: entry.event_type as any,
+                trigger_ref: entry.trigger_ref,
+                summary: entry.summary,
+                files_touched: entry.files_touched,
+                decisions: entry.decisions,
+                raw_context: "",
+                mode,
+              });
+            }
+          } else if (mode === "local") {
+            // No session context to copy — push a "linked" placeholder
             await pushEntry({
               bundle_id: bundleId,
               project_name,
@@ -314,6 +331,48 @@ const server = Bun.serve({
           const limit = parseInt(url.searchParams.get("limit") || "20");
           const rewinds = await listRewinds(bundleId, project_name, limit);
           return Response.json(rewinds, { headers: corsHeaders });
+        } catch (err: any) {
+          return Response.json(
+            { error: err.message ?? String(err) },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+      }
+    }
+
+    // ── GET /api/sessions/:id/entries ────────────────────────────────────────
+    {
+      const match = url.pathname.match(/^\/api\/sessions\/([^/]+)\/entries$/);
+      if (match && req.method === "GET") {
+        try {
+          const sessionId = match[1];
+          const entries = getSessionEntries(sessionId);
+          return Response.json(entries, { headers: corsHeaders });
+        } catch (err: any) {
+          return Response.json(
+            { error: err.message ?? String(err) },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+      }
+    }
+
+    // ── POST /api/sessions/:id/entries ───────────────────────────────────────
+    {
+      const match = url.pathname.match(/^\/api\/sessions\/([^/]+)\/entries$/);
+      if (match && req.method === "POST") {
+        try {
+          const sessionId = match[1];
+          const { project_name, event_type, summary, trigger_ref, files_touched, decisions } = await req.json();
+          const entry = pushSessionEntry(sessionId, {
+            project_name,
+            event_type,
+            trigger_ref: trigger_ref ?? null,
+            summary,
+            files_touched: files_touched ?? [],
+            decisions: decisions ?? [],
+          });
+          return Response.json(entry, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
             { error: err.message ?? String(err) },

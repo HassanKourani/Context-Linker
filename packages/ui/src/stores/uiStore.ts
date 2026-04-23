@@ -14,12 +14,15 @@ type ModalType =
   | "rewind"
   | null;
 
+type PanelView =
+  | { kind: "bundle"; bundleId: string; mode: "local" | "cloud"; filterProject: string | null }
+  | { kind: "session"; sessionId: string; projectName: string }
+  | null;
+
 interface UIState {
   // Side panel
-  selectedBundleId: string | null;
-  selectedBundleMode: "local" | "cloud";
+  panel: PanelView;
   panelTab: "entries" | "rewinds";
-  filterProject: string | null;
 
   // Modals
   activeModal: ModalType;
@@ -32,7 +35,8 @@ interface UIState {
   hoveredEdgeId: string | null;
 
   // Actions
-  openPanel: (bundleId: string, mode: "local" | "cloud", filterProject?: string) => void;
+  openBundlePanel: (bundleId: string, mode: "local" | "cloud", filterProject?: string) => void;
+  openSessionPanel: (sessionId: string, projectName: string) => void;
   closePanel: () => void;
   setPanelTab: (tab: "entries" | "rewinds") => void;
   setFilterProject: (project: string | null) => void;
@@ -42,32 +46,65 @@ interface UIState {
   toggleEntry: (entryId: string) => void;
   clearEntrySelection: () => void;
   setHoveredEdge: (id: string | null) => void;
+
+  // Legacy compat — keep openPanel as alias for openBundlePanel
+  openPanel: (bundleId: string, mode: "local" | "cloud", filterProject?: string) => void;
+  selectedBundleId: string | null;
+  selectedBundleMode: "local" | "cloud";
+  filterProject: string | null;
 }
 
-export const useUIStore = create<UIState>((set) => ({
-  selectedBundleId: null,
-  selectedBundleMode: "cloud",
+export const useUIStore = create<UIState>((set, get) => ({
+  panel: null,
   panelTab: "entries",
-  filterProject: null,
   activeModal: null,
   deleteBundleTarget: null,
   selectedEntryIds: new Set(),
   hoveredEdgeId: null,
 
+  // Computed getters for backward compat
+  get selectedBundleId() {
+    const p = get().panel;
+    return p?.kind === "bundle" ? p.bundleId : null;
+  },
+  get selectedBundleMode() {
+    const p = get().panel;
+    return p?.kind === "bundle" ? p.mode : "cloud";
+  },
+  get filterProject() {
+    const p = get().panel;
+    return p?.kind === "bundle" ? p.filterProject : null;
+  },
+
+  openBundlePanel: (bundleId, mode, filterProject) =>
+    set({
+      panel: { kind: "bundle", bundleId, mode, filterProject: filterProject ?? null },
+      panelTab: "entries",
+    }),
+
+  openSessionPanel: (sessionId, projectName) =>
+    set({
+      panel: { kind: "session", sessionId, projectName },
+      panelTab: "entries",
+    }),
+
+  // Legacy alias
   openPanel: (bundleId, mode, filterProject) =>
     set({
-      selectedBundleId: bundleId,
-      selectedBundleMode: mode,
+      panel: { kind: "bundle", bundleId, mode, filterProject: filterProject ?? null },
       panelTab: "entries",
-      filterProject: filterProject ?? null,
     }),
 
   closePanel: () =>
-    set({ selectedBundleId: null, selectedEntryIds: new Set(), filterProject: null }),
+    set({ panel: null, selectedEntryIds: new Set() }),
 
   setPanelTab: (tab) => set({ panelTab: tab }),
 
-  setFilterProject: (project) => set({ filterProject: project }),
+  setFilterProject: (project) =>
+    set((state) => {
+      if (state.panel?.kind !== "bundle") return {};
+      return { panel: { ...state.panel, filterProject: project } };
+    }),
 
   openModal: (modal) => set({ activeModal: modal }),
 

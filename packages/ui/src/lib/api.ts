@@ -71,13 +71,17 @@ export function deleteBundle(bundleId: string, mode: "local" | "cloud") {
   return apiDelete<{ ok: true }>(`/api/bundles/${bundleId}?mode=${mode}`);
 }
 
-export function joinBundle(bundleId: string, body: { project_name: string; mode: "local" | "cloud" }) {
+export function joinBundle(bundleId: string, body: { project_name: string; mode: "local" | "cloud"; session_id?: string }) {
   return apiPost<JoinBundleResult>(`/api/bundles/${bundleId}/join`, body);
 }
 
 // ---------------------------------------------------------------------------
 // Sessions
 // ---------------------------------------------------------------------------
+
+export function fetchSessionEntries(sessionId: string) {
+  return apiGet<EntryRow[]>(`/api/sessions/${sessionId}/entries`);
+}
 
 export function unlinkSession(body: {
   session_id: string;

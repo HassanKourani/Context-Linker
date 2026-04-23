@@ -17,11 +17,17 @@ export function ProjectNode({ data }: NodeProps) {
     sessions: SessionData[];
   };
 
-  const openPanel = useUIStore((s) => s.openPanel);
+  const openBundlePanel = useUIStore((s) => s.openBundlePanel);
+  const openSessionPanel = useUIStore((s) => s.openSessionPanel);
 
   const handleSessionClick = (s: SessionData) => {
-    if (!s.bundleId) return;
-    openPanel(s.bundleId, s.mode, projectName);
+    if (s.bundleId) {
+      // Connected session — show bundle entries filtered by this project
+      openBundlePanel(s.bundleId, s.mode, projectName);
+    } else {
+      // Unlinked session — show session-level context
+      openSessionPanel(s.id, projectName);
+    }
   };
 
   return (
@@ -32,7 +38,7 @@ export function ProjectNode({ data }: NodeProps) {
       {sessions.map((s) => (
         <div
           key={s.id}
-          className={`px-3 py-1.5 flex items-center gap-2 text-xs text-muted-foreground relative ${s.bundleId ? "cursor-pointer hover:bg-accent/50 transition-colors" : ""}`}
+          className="px-3 py-1.5 flex items-center gap-2 text-xs text-muted-foreground relative cursor-pointer hover:bg-accent/50 transition-colors"
           onClick={() => handleSessionClick(s)}
         >
           <span className="font-mono text-[11px]" title={s.id}>
