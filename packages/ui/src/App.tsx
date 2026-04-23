@@ -1,9 +1,11 @@
-import { useMemo, useCallback } from "react";
+import { useMemo, useCallback, useEffect, useState } from "react";
 import {
   ReactFlow,
   Background,
   Controls,
   MiniMap,
+  useNodesState,
+  useEdgesState,
   type NodeTypes,
   type EdgeTypes,
   type EdgeMouseHandler,
@@ -41,20 +43,34 @@ export function App() {
   const { data, isLoading, dataUpdatedAt } = useGraphData();
   const hoveredEdgeId = useUIStore((s) => s.hoveredEdgeId);
 
-  const { nodes, edges: rawEdges } = useMemo(
+  // Build graph from API data
+  const built = useMemo(
     () => (data ? buildFlowGraph(data) : { nodes: [], edges: [] }),
     [data]
   );
 
-  const edges = useMemo(
-    () =>
-      rawEdges.map((e) =>
+  // Controlled node/edge state — allows dragging to update positions
+  const [nodes, setNodes, onNodesChange] = useNodesState(built.nodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(built.edges);
+
+  // Sync when API data changes (new nodes/edges from server)
+  useEffect(() => {
+    setNodes(built.nodes);
+    setEdges(built.edges);
+  }, [built, setNodes, setEdges]);
+
+  // Inject _hovered into the hovered edge's data
+  useEffect(() => {
+    setEdges((eds) =>
+      eds.map((e) =>
         e.id === hoveredEdgeId
           ? { ...e, data: { ...e.data, _hovered: true } }
-          : e
-      ),
-    [rawEdges, hoveredEdgeId]
-  );
+          : e.data?._hovered
+            ? { ...e, data: { ...e.data, _hovered: false } }
+            : e
+      )
+    );
+  }, [hoveredEdgeId, setEdges]);
 
   const connectMutation = useConnectSession();
 
@@ -104,6 +120,8 @@ export function App() {
         <ReactFlow
           nodes={nodes}
           edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           nodesConnectable={true}
