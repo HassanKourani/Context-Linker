@@ -78,6 +78,45 @@ function readEntryRefs(bundleId: string): LocalEntryRef[] {
   return JSON.parse(readFileSync(p, "utf8"));
 }
 
+/** Read legacy entries.json for pre-migration local bundles */
+interface LegacyLocalEntry {
+  id: string;
+  created_at: string;
+  project_name: string;
+  event_type: string;
+  trigger_ref: string | null;
+  summary: string;
+  files_touched: string[];
+  decisions: Array<{ decision: string; rationale?: string; affects: string[] }>;
+  superseded_at: string | null;
+}
+
+function readLegacyEntries(bundleId: string): LegacyLocalEntry[] {
+  const p = entriesPath(bundleId);
+  if (!existsSync(p)) return [];
+  return JSON.parse(readFileSync(p, "utf8"));
+}
+
+/** Check if this bundle uses the legacy entries.json format (no entry_refs.json) */
+function isLegacyBundle(bundleId: string): boolean {
+  return !existsSync(entryRefsPath(bundleId)) && existsSync(entriesPath(bundleId));
+}
+
+function legacyEntriesToRows(entries: LegacyLocalEntry[]): EntryRow[] {
+  return entries
+    .filter((e) => !e.superseded_at)
+    .map((e) => ({
+      id: e.id,
+      created_at: e.created_at,
+      project_name: e.project_name,
+      event_type: e.event_type,
+      trigger_ref: e.trigger_ref,
+      summary: e.summary,
+      files_touched: e.files_touched ?? [],
+      decisions: e.decisions ?? [],
+    }));
+}
+
 function writeEntryRefs(bundleId: string, refs: LocalEntryRef[]): void {
   writeFileSync(entryRefsPath(bundleId), JSON.stringify(refs, null, 2));
 }
@@ -176,6 +215,20 @@ export function localDeleteBundle(bundleId: string): void {
 
 export function localBundleStatus(bundleId: string): BundleStatus {
   const meta = readMeta(bundleId);
+
+  // Legacy fallback: read from old entries.json if no entry_refs.json
+  if (isLegacyBundle(bundleId)) {
+    const entries = legacyEntriesToRows(readLegacyEntries(bundleId));
+    const sorted = entries.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    return {
+      bundle_id: meta.id,
+      name: meta.name,
+      session_count: 0,
+      entry_count: entries.length,
+      last_entry_at: sorted[0]?.created_at ?? null,
+    };
+  }
+
   const refs = readEntryRefs(bundleId);
   const resolved = resolveEntryRefs(refs);
   const sorted = resolved.sort((a, b) => b.created_at.localeCompare(a.created_at));
@@ -223,8 +276,15 @@ export function localAddEntriesToBundle(
 
 export function localPullEntries(input: PullInput): EntryRow[] {
   readMeta(input.bundle_id); // validate bundle exists
-  const refs = readEntryRefs(input.bundle_id);
-  let entries = resolveEntryRefs(refs);
+
+  // Legacy fallback: read from old entries.json if no entry_refs.json
+  let entries: EntryRow[];
+  if (isLegacyBundle(input.bundle_id)) {
+    entries = legacyEntriesToRows(readLegacyEntries(input.bundle_id));
+  } else {
+    const refs = readEntryRefs(input.bundle_id);
+    entries = resolveEntryRefs(refs);
+  }
 
   // Sort by created_at descending
   entries.sort((a, b) => b.created_at.localeCompare(a.created_at));
@@ -271,8 +331,9 @@ export function listAllLocalBundleDetails(): LocalBundleDetail[] {
 
   return bundleIds.map((id) => {
     const meta = readMeta(id);
-    const refs = readEntryRefs(id);
-    const entries = resolveEntryRefs(refs);
+    const entries = isLegacyBundle(id)
+      ? legacyEntriesToRows(readLegacyEntries(id))
+      : resolveEntryRefs(readEntryRefs(id));
     const sorted = entries.sort((a, b) =>
       b.created_at.localeCompare(a.created_at)
     );
