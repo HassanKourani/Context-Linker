@@ -203,6 +203,36 @@ export function listActiveSessions(): ActiveSession[] {
   return files.map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")));
 }
 
+/** Connect an active session to a bundle (adds to its bundles array) */
+export function connectSessionToBundle(
+  sessionId: string,
+  bundleId: string,
+  mode: "local" | "cloud"
+): ActiveSession {
+  const session = loadActiveSession(sessionId);
+  if (!session) throw new Error(`Active session ${sessionId} not found.`);
+
+  // Don't add duplicate connections
+  if (session.bundles.some((b) => b.bundle_id === bundleId)) {
+    return session;
+  }
+
+  session.bundles.push({ bundle_id: bundleId, mode });
+  saveActiveSession(session);
+  return session;
+}
+
+/** Disconnect an active session from a bundle */
+export function disconnectSessionFromBundle(
+  sessionId: string,
+  bundleId: string
+): void {
+  const session = loadActiveSession(sessionId);
+  if (!session) return;
+  session.bundles = session.bundles.filter((b) => b.bundle_id !== bundleId);
+  saveActiveSession(session);
+}
+
 // ---------- Session-Level Entries ----------
 // Each session accumulates its own entries, independent of bundles.
 // When connected to a bundle, session entries flow into the bundle.

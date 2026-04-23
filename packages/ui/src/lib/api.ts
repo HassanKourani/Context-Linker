@@ -83,6 +83,10 @@ export function fetchSessionEntries(sessionId: string) {
   return apiGet<EntryRow[]>(`/api/sessions/${sessionId}/entries`);
 }
 
+export function connectSessionToBundle(sessionId: string, body: { bundle_id: string; mode: "local" | "cloud" }) {
+  return apiPost<{ ok: true }>(`/api/sessions/${sessionId}/connect`, body);
+}
+
 export function unlinkSession(body: {
   session_id: string;
   bundle_id: string;

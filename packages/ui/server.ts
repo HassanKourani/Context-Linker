@@ -22,6 +22,8 @@ import {
   joinTeam,
   getSessionEntries,
   pushSessionEntry,
+  connectSessionToBundle,
+  disconnectSessionFromBundle,
 } from "@ctx-link/core";
 
 const server = Bun.serve({
@@ -382,10 +384,52 @@ const server = Bun.serve({
       }
     }
 
+    // ── POST /api/sessions/:id/connect ──────────────────────────────────────
+    {
+      const match = url.pathname.match(/^\/api\/sessions\/([^/]+)\/connect$/);
+      if (match && req.method === "POST") {
+        try {
+          const sessionId = match[1];
+          const { bundle_id, mode } = await req.json();
+
+          // Update the active session's bundles array
+          const session = connectSessionToBundle(sessionId, bundle_id, mode);
+
+          // Copy session entries into the bundle
+          const sessionEntries = getSessionEntries(sessionId);
+          for (const entry of sessionEntries) {
+            await pushEntry({
+              bundle_id,
+              project_name: entry.project_name || session.project_name,
+              event_type: entry.event_type as any,
+              trigger_ref: entry.trigger_ref,
+              summary: entry.summary,
+              files_touched: entry.files_touched,
+              decisions: entry.decisions,
+              raw_context: "",
+              mode,
+            });
+          }
+
+          return Response.json({ ok: true, session }, { headers: corsHeaders });
+        } catch (err: any) {
+          return Response.json(
+            { error: err.message ?? String(err) },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+      }
+    }
+
     // ── POST /api/unlink-session ────────────────────────────────────────────
     if (url.pathname === "/api/unlink-session" && req.method === "POST") {
       try {
         const { session_id, bundle_id, project_name, mode } = await req.json();
+
+        // Remove from active session's bundles array
+        disconnectSessionFromBundle(session_id, bundle_id);
+
+        // Also clean up the data store
         if (mode === "local") {
           localDeleteProjectFromBundle(bundle_id, project_name);
         } else {

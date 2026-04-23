@@ -10,7 +10,7 @@ import {
   type Connection,
   type Edge,
 } from "@xyflow/react";
-import { useJoinBundle } from "./hooks/mutations/useJoinBundle";
+import { useConnectSession } from "./hooks/mutations/useConnectSession";
 import { useGraphData } from "./hooks/useGraphData";
 import { useUIStore } from "./stores/uiStore";
 import { buildFlowGraph } from "./lib/buildGraph";
@@ -56,7 +56,7 @@ export function App() {
     [rawEdges, hoveredEdgeId]
   );
 
-  const joinMutation = useJoinBundle();
+  const connectMutation = useConnectSession();
 
   const onConnect = useCallback(
     (connection: Connection) => {
@@ -65,17 +65,15 @@ export function App() {
       if (!sourceNode || !targetNode) return;
       if (sourceNode.type !== "project" || targetNode.type !== "bundle") return;
 
-      const projectName = (sourceNode.data as any).projectName;
       const bundleId = (targetNode.data as any).bundleId;
       const mode = (targetNode.data as any).mode || "cloud";
+      const sessionId = connection.sourceHandle;
 
-      if (!projectName || !bundleId) return;
+      if (!bundleId || !sessionId) return;
 
-      // Pass the session_id so its context flows into the bundle
-      const sessionId = connection.sourceHandle || undefined;
-      joinMutation.mutate({ bundleId, project_name: projectName, mode, session_id: sessionId });
+      connectMutation.mutate({ sessionId, bundle_id: bundleId, mode });
     },
-    [nodes, joinMutation]
+    [nodes, connectMutation]
   );
 
   const isValidConnection = useCallback(
