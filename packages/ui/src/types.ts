@@ -20,6 +20,7 @@ export interface CloudSessionData {
   started_at: string;
   last_active_at: string;
   entry_count?: number;
+  bundles?: string[];  // bundle IDs that reference this session's entries
 }
 
 export interface GraphData {

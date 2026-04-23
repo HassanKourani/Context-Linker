@@ -269,6 +269,36 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
     }
   }
 
+  // Edges from cloud sessions to their connected bundles
+  if (cloudSessions) {
+    for (const cs of cloudSessions) {
+      if (!cs.bundles || cs.bundles.length === 0) continue;
+      const projectNodeId = `project-${groupId}-${cs.project_name}`;
+      if (!projectSessions.has(cs.project_name)) continue;
+
+      for (const bundleId of cs.bundles) {
+        const edgeId = `edge-cloud-${cs.id}-${bundleId}`;
+        if (edges.some((e) => e.id === edgeId)) continue;
+
+        edges.push({
+          id: edgeId,
+          source: projectNodeId,
+          sourceHandle: cs.id,
+          target: `bundle-${bundleId}`,
+          type: "deletable",
+          animated: true,
+          data: {
+            sessionId: cs.id,
+            bundleId,
+            projectName: cs.project_name,
+            mode: "cloud" as const,
+          },
+          style: { stroke: "#585b70", strokeWidth: 2 },
+        });
+      }
+    }
+  }
+
   return { nodes, edges };
 }
 

@@ -30,6 +30,7 @@ import {
   deleteCloudSession,
   deleteCloudSessionEntry,
   getCloudSessionEntries,
+  getCloudSessionBundleIds,
   getBundleTeamId,
   rewindProject,
   restoreRewound,
@@ -83,11 +84,18 @@ const server = Bun.serve({
                 };
               })
             );
-            // Enrich cloud sessions with entry counts
+            // Enrich cloud sessions with entry counts and bundle connections
             const enrichedSessions = await Promise.all(
               cloudSessions.map(async (cs) => {
-                const entries = await getCloudSessionEntries(cs.id);
-                return { ...cs, entry_count: entries.length };
+                const [entries, connectedBundles] = await Promise.all([
+                  getCloudSessionEntries(cs.id),
+                  getCloudSessionBundleIds(cs.id),
+                ]);
+                return {
+                  ...cs,
+                  entry_count: entries.length,
+                  bundles: connectedBundles,
+                };
               })
             );
 

@@ -162,6 +162,23 @@ export async function getCloudSessionEntries(
 }
 
 /**
+ * Get which bundles a cloud session's entries are referenced by.
+ */
+export async function getCloudSessionBundleIds(cloudSessionId: string): Promise<string[]> {
+  const sb = getSupabase();
+  const entries = await getCloudSessionEntries(cloudSessionId);
+  const entryIds = entries.map((e) => e.id);
+  if (entryIds.length === 0) return [];
+
+  const { data: refs } = await sb
+    .from("bundle_entry_refs")
+    .select("bundle_id")
+    .in("entry_id", entryIds);
+
+  return [...new Set((refs ?? []).map((r: any) => r.bundle_id as string))];
+}
+
+/**
  * Get which bundles reference a given entry.
  */
 export async function getEntryBundleRefs(
