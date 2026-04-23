@@ -7,6 +7,7 @@ import { useEntries } from "@/hooks/useEntries";
 import { useSessionEntries } from "@/hooks/useSessionEntries";
 import { useGraphData } from "@/hooks/useGraphData";
 import { useDeleteSessionEntry } from "@/hooks/mutations/useDeleteSessionEntry";
+import { useRemoveBundleEntryRef } from "@/hooks/mutations/useRemoveBundleEntryRef";
 import { EntryCard } from "./EntryCard";
 import { RewindHistoryTab } from "./RewindHistoryTab";
 
@@ -35,11 +36,17 @@ export function EntryPanel() {
   const isLoading = isBundle ? bundleLoading : sessionLoading;
   const refetch = isBundle ? refetchBundle : refetchSession;
   const deleteSessionEntryMutation = useDeleteSessionEntry();
+  const removeBundleEntryRefMutation = useRemoveBundleEntryRef();
 
   const handleDeleteSelected = () => {
-    if (!sessionId || selectedEntryIds.size === 0) return;
-    for (const entryId of selectedEntryIds) {
-      deleteSessionEntryMutation.mutate({ sessionId, entryId });
+    if (isSession && sessionId && selectedEntryIds.size > 0) {
+      for (const entryId of selectedEntryIds) {
+        deleteSessionEntryMutation.mutate({ sessionId, entryId });
+      }
+    } else if (isBundle && bundleId && selectedEntryIds.size > 0) {
+      for (const entryId of selectedEntryIds) {
+        removeBundleEntryRefMutation.mutate({ bundleId, entryId });
+      }
     }
     clearEntrySelection();
   };
@@ -129,15 +136,26 @@ export function EntryPanel() {
           )}
           <div className="ml-auto flex items-center gap-1">
             {isBundle && selectedEntryIds.size > 0 && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-xs text-destructive"
-                onClick={() => openModal("rewind")}
-              >
-                <Undo2 className="w-3 h-3 mr-1" />
-                Rewind ({selectedEntryIds.size})
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs text-destructive"
+                  onClick={handleDeleteSelected}
+                >
+                  <Trash2 className="w-3 h-3 mr-1" />
+                  Remove ({selectedEntryIds.size})
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs text-destructive"
+                  onClick={() => openModal("rewind")}
+                >
+                  <Undo2 className="w-3 h-3 mr-1" />
+                  Rewind ({selectedEntryIds.size})
+                </Button>
+              </>
             )}
             {isBundle && (
               <Button

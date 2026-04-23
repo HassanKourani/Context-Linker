@@ -11,6 +11,7 @@ type ModalType =
   | "team-management"
   | "push-entry"
   | "push-session"
+  | "push-to-cloud"
   | "rewind"
   | null;
 
@@ -31,6 +32,9 @@ interface UIState {
   // Entry selection (for rewind)
   selectedEntryIds: Set<string>;
 
+  // Push-to-cloud target
+  pushToCloudTarget: string | null;
+
   // Edge hover
   hoveredEdgeId: string | null;
 
@@ -46,6 +50,7 @@ interface UIState {
   openModal: (modal: ModalType) => void;
   closeModal: () => void;
   setDeleteTarget: (target: DeleteTarget | null) => void;
+  setPushToCloudTarget: (sessionId: string | null) => void;
   toggleEntry: (entryId: string) => void;
   clearEntrySelection: () => void;
   setHoveredEdge: (id: string | null) => void;
@@ -62,6 +67,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   panelTab: "entries",
   activeModal: null,
   deleteBundleTarget: null,
+  pushToCloudTarget: null,
   selectedEntryIds: new Set(),
   hoveredEdgeId: null,
   hideEmptySessions: (() => {
@@ -109,9 +115,11 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   openModal: (modal) => set({ activeModal: modal }),
 
-  closeModal: () => set({ activeModal: null, deleteBundleTarget: null }),
+  closeModal: () => set({ activeModal: null, deleteBundleTarget: null, pushToCloudTarget: null }),
 
   setDeleteTarget: (target) => set({ deleteBundleTarget: target }),
+
+  setPushToCloudTarget: (sessionId) => set({ pushToCloudTarget: sessionId }),
 
   toggleEntry: (entryId) =>
     set((state) => {

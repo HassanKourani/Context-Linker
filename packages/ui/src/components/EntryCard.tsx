@@ -7,7 +7,7 @@ import { teamColor } from "@/lib/colors";
 import { useUIStore } from "@/stores/uiStore";
 import type { EntryRow } from "@/types";
 
-export function EntryCard({ entry }: { entry: EntryRow }) {
+export function EntryCard({ entry, bundleRefCount }: { entry: EntryRow; bundleRefCount?: number }) {
   const [expanded, setExpanded] = useState(false);
   const selectedEntryIds = useUIStore((s) => s.selectedEntryIds);
   const toggleEntry = useUIStore((s) => s.toggleEntry);
@@ -35,6 +35,11 @@ export function EntryCard({ entry }: { entry: EntryRow }) {
             {entry.trigger_ref && (
               <span className="font-mono text-[10px] text-muted-foreground/60">
                 {entry.trigger_ref.slice(0, 8)}
+              </span>
+            )}
+            {bundleRefCount != null && bundleRefCount > 0 && (
+              <span className="text-xs text-mauve bg-surface0 px-1.5 py-0.5 rounded">
+                in {bundleRefCount} bundle{bundleRefCount !== 1 ? "s" : ""}
               </span>
             )}
             <span className="ml-auto text-[10px] text-muted-foreground/60" title={entry.created_at}>
