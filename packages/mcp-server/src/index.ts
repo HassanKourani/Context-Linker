@@ -14,14 +14,20 @@ import {
   pushEntry,
   pullEntries,
   renderEntriesForClaude,
+  removeSourceEntry,
   rewindProject,
   restoreRewound,
   listRewinds,
   getActiveSessionId,
   loadActiveSession,
   saveActiveSession,
+  pushSessionEntry,
+  getSessionEntries,
+  getUnpushedSessionEntries,
+  markSessionEntriesPushed,
   type ActiveSession,
   type RewindStrategy,
+  isLocalBundle,
 } from "@ctx-link/core";
 import { z } from "zod";
 
@@ -90,13 +96,13 @@ const tools = [
   {
     name: "context_push",
     description:
-      "Push a cross-project context handoff note to the session's connected bundles. " +
-      "YOU (Claude) must generate the summary — write a 2-4 sentence note focused on cross-project impact " +
-      "(API shapes, contracts, breaking changes, schema updates, new endpoints, dependency changes). " +
-      "List files_touched and decisions with an affects array (e.g. ['frontend', 'mobile']). " +
-      "PROACTIVE USE: You SHOULD call this automatically (without being asked) when you make changes that " +
-      "other projects need to know about: new/changed API endpoints, breaking contract changes, schema migrations, " +
-      "key architectural decisions, or dependency updates. Skip purely internal refactors with no cross-project impact. " +
+      "Push a cross-project context handoff note to a bundle. " +
+      "CONSOLIDATED PUSH (preferred): Before calling this, use session_entries to see pending entries. " +
+      "Read all pending entries, then generate a single STATE-BASED summary describing what exists now — " +
+      "not a history of changes. If entry 1 says 'added GET /api/users' and entry 3 says " +
+      "'changed GET /api/users to return pagination', summarize as 'GET /api/users returns paginated results'. " +
+      "Pass all source entry IDs in source_entry_ids. " +
+      "DIRECT PUSH: If source_entry_ids is omitted, works as a direct push (backward compatible). " +
       "If bundle_id is omitted, pushes to ALL bundles connected to the current session.",
     inputSchema: {
       type: "object",
@@ -117,7 +123,7 @@ const tools = [
         },
         summary: {
           type: "string",
-          description: "YOUR summary of the context (2-4 sentences, cross-project impact focus). Required when calling from Claude Code.",
+          description: "YOUR summary of the context (2-4 sentences, cross-project impact focus).",
         },
         files_touched: {
           type: "array",
@@ -140,6 +146,11 @@ const tools = [
         store_raw: {
           type: "boolean",
           description: "If true, also stores the raw context in the DB. Default false.",
+        },
+        source_entry_ids: {
+          type: "array",
+          items: { type: "string" },
+          description: "IDs of session entries being consolidated in this push. These get marked as pushed and stored as source_entries in the bundle entry.",
         },
       },
       required: ["bundle_id", "project_name", "event_type", "raw_context", "summary"],
@@ -265,10 +276,90 @@ const tools = [
   },
   {
     name: "session_info",
-    description: "Show the current session: project name, branch, connected bundles.",
+    description:
+      "Show the current session: project name, branch, connected bundles, and pending (un-pushed) session entries.",
     inputSchema: {
       type: "object",
       properties: {},
+    },
+  },
+  {
+    name: "session_log",
+    description:
+      "Log a context entry to the current session (local only, NOT pushed to bundles). " +
+      "PROACTIVE USE: You SHOULD call this after every meaningful interaction — code changes, decisions, " +
+      "API modifications, architecture choices, file creations, configuration updates. " +
+      "Keep summaries state-focused: describe WHAT EXISTS now, not what changed from before. " +
+      "These entries accumulate locally and get consolidated when the user triggers context_push.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        summary: {
+          type: "string",
+          description: "What happened / what exists now. State-focused, 1-2 sentences.",
+        },
+        files_touched: {
+          type: "array",
+          items: { type: "string" },
+        },
+        decisions: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              decision: { type: "string" },
+              rationale: { type: "string" },
+              affects: { type: "array", items: { type: "string" } },
+            },
+            required: ["decision"],
+          },
+        },
+        event_type: {
+          type: "string",
+          enum: ["commit", "pr_open", "manual", "session_end"],
+          description: "Default: manual",
+        },
+        trigger_ref: {
+          type: "string",
+          description: "Commit SHA, PR number, etc.",
+        },
+      },
+      required: ["summary"],
+    },
+  },
+  {
+    name: "session_entries",
+    description:
+      "List accumulated session entries. Use before context_push to see what needs consolidating.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        only_unpushed: {
+          type: "boolean",
+          description: "If true (default), only show entries not yet pushed to a bundle.",
+        },
+      },
+    },
+  },
+  {
+    name: "source_entry_delete",
+    description:
+      "Remove a specific source entry from a consolidated bundle entry. " +
+      "The bundle entry's summary remains; only the referenced source is removed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bundle_id: { type: "string" },
+        entry_id: {
+          type: "string",
+          description: "The consolidated bundle entry containing the source.",
+        },
+        source_entry_id: {
+          type: "string",
+          description: "The source entry to remove.",
+        },
+      },
+      required: ["bundle_id", "entry_id", "source_entry_id"],
     },
   },
 ];
@@ -298,6 +389,7 @@ const ContextPushArgs = z.object({
     affects: z.array(z.string()).default([]),
   })).optional(),
   store_raw: z.boolean().optional(),
+  source_entry_ids: z.array(z.string()).optional(),
 });
 const ContextPullArgs = z.object({
   bundle_id: z.string(),
@@ -334,6 +426,28 @@ const RewindHistoryArgs = z.object({
   bundle_id: z.string(),
   project_name: z.string().optional(),
   limit: z.number().optional(),
+});
+
+const SessionLogArgs = z.object({
+  summary: z.string(),
+  files_touched: z.array(z.string()).optional(),
+  decisions: z.array(z.object({
+    decision: z.string(),
+    rationale: z.string().optional(),
+    affects: z.array(z.string()).default([]),
+  })).optional(),
+  event_type: z.enum(["commit", "pr_open", "manual", "session_end"]).default("manual"),
+  trigger_ref: z.string().optional(),
+});
+
+const SessionEntriesArgs = z.object({
+  only_unpushed: z.boolean().default(true),
+});
+
+const SourceEntryDeleteArgs = z.object({
+  bundle_id: z.string(),
+  entry_id: z.string(),
+  source_entry_id: z.string(),
 });
 
 function ok(result: unknown) {
@@ -375,18 +489,25 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       case "bundle_status": {
         const a = BundleStatusArgs.parse(args);
-        const session = getSession();
-        const b = session?.bundles.find((x) => x.bundle_id === a.bundle_id);
-        return ok(await bundleStatus(a.bundle_id, b?.mode ?? "local"));
+        const mode = isLocalBundle(a.bundle_id) ? "local" : "cloud";
+        return ok(await bundleStatus(a.bundle_id, mode));
       }
 
       case "context_push": {
         const a = ContextPushArgs.parse(args);
         const session = getSession();
 
+        // Resolve source entries if consolidating
+        let sourceEntries = null;
+        if (a.source_entry_ids && a.source_entry_ids.length > 0 && session) {
+          const allEntries = getSessionEntries(session.session_id);
+          const idSet = new Set(a.source_entry_ids);
+          sourceEntries = allEntries.filter((e) => idSet.has(e.id));
+        }
+
         // If bundle_id is provided, push to that specific bundle
         if (a.bundle_id) {
-          const b = session?.bundles.find((x) => x.bundle_id === a.bundle_id);
+          const mode = isLocalBundle(a.bundle_id) ? "local" : "cloud";
           const r = await pushEntry({
             bundle_id: a.bundle_id,
             project_name: a.project_name,
@@ -397,8 +518,15 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
             files_touched: a.files_touched,
             decisions: a.decisions,
             store_raw: a.store_raw ?? false,
-            mode: b?.mode ?? "local",
+            source_entries: sourceEntries,
+            mode,
           });
+
+          // Mark session entries as pushed
+          if (a.source_entry_ids && session) {
+            markSessionEntriesPushed(session.session_id, a.source_entry_ids);
+          }
+
           return ok(r);
         }
 
@@ -408,6 +536,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         }
         const results = [];
         for (const b of session.bundles) {
+          const mode = isLocalBundle(b.bundle_id) ? "local" : "cloud";
           const r = await pushEntry({
             bundle_id: b.bundle_id,
             project_name: a.project_name,
@@ -418,10 +547,17 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
             files_touched: a.files_touched,
             decisions: a.decisions,
             store_raw: a.store_raw ?? false,
-            mode: b.mode,
+            source_entries: sourceEntries,
+            mode,
           });
           results.push(r);
         }
+
+        // Mark session entries as pushed
+        if (a.source_entry_ids && session) {
+          markSessionEntriesPushed(session.session_id, a.source_entry_ids);
+        }
+
         return ok({ pushed_to: results.length, results });
       }
 
@@ -431,13 +567,13 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
         // If bundle_id is provided, pull from that specific bundle
         if (a.bundle_id) {
-          const b = session?.bundles.find((x) => x.bundle_id === a.bundle_id);
+          const mode = isLocalBundle(a.bundle_id) ? "local" : "cloud";
           const rows = await pullEntries({
             bundle_id: a.bundle_id,
             since: a.since ?? null,
             limit: a.limit,
             exclude_project: a.exclude_project,
-            mode: b?.mode ?? "local",
+            mode,
           });
           const rendered = renderEntriesForClaude(rows);
           return ok({ count: rows.length, rendered, entries: rows });
@@ -492,9 +628,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       case "bundle_delete": {
         const a = z.object({ bundle_id: z.string() }).parse(args);
-        const session = getSession();
-        const b = session?.bundles.find((x) => x.bundle_id === a.bundle_id);
-        await deleteBundle(a.bundle_id, b?.mode ?? "local");
+        const mode = isLocalBundle(a.bundle_id) ? "local" : "cloud";
+        await deleteBundle(a.bundle_id, mode);
         return ok({ deleted: true, bundle_id: a.bundle_id });
       }
 
@@ -542,7 +677,50 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "session_info": {
         const session = getSession();
         if (!session) return ok({ active: false });
-        return ok({ active: true, ...session });
+        const pending = getUnpushedSessionEntries(session.session_id);
+        return ok({
+          active: true,
+          ...session,
+          pending_entries_count: pending.length,
+          pending_entries: pending,
+        });
+      }
+
+      case "session_log": {
+        const a = SessionLogArgs.parse(args);
+        const session = getSession();
+        if (!session) return fail("No active session. Open Claude Code in a project first.");
+        const entry = pushSessionEntry(session.session_id, {
+          project_name: session.project_name,
+          event_type: a.event_type,
+          trigger_ref: a.trigger_ref ?? null,
+          summary: a.summary,
+          files_touched: a.files_touched ?? [],
+          decisions: a.decisions ?? [],
+        });
+        return ok({ logged: true, entry_id: entry.id, session_id: session.session_id });
+      }
+
+      case "session_entries": {
+        const a = SessionEntriesArgs.parse(args);
+        const session = getSession();
+        if (!session) return fail("No active session.");
+        const entries = a.only_unpushed
+          ? getUnpushedSessionEntries(session.session_id)
+          : getSessionEntries(session.session_id);
+        return ok({ count: entries.length, entries });
+      }
+
+      case "source_entry_delete": {
+        const a = SourceEntryDeleteArgs.parse(args);
+        const mode = isLocalBundle(a.bundle_id) ? "local" : "cloud";
+        if (mode === "local") {
+          const { localRemoveSourceEntry } = await import("@ctx-link/core");
+          localRemoveSourceEntry(a.bundle_id, a.entry_id, a.source_entry_id);
+        } else {
+          await removeSourceEntry(a.bundle_id, a.entry_id, a.source_entry_id);
+        }
+        return ok({ deleted: true, entry_id: a.entry_id, source_entry_id: a.source_entry_id });
       }
 
       case "rewind_history": {
