@@ -39,6 +39,11 @@ import {
   joinTeam,
   listMyTeams,
   listTeamBundles,
+  pushSessionEntry,
+  getSessionEntries,
+  getUnpushedSessionEntries,
+  markSessionEntriesPushed,
+  isLocalBundle,
   type RewindStrategy,
 } from "@ctx-link/core";
 
@@ -167,7 +172,7 @@ program
 // ==================== SESSION TRACKING ====================
 
 program
-  .command("session-log")
+  .command("session-start")
   .description(
     "Record the current project as an active session. Called by SessionStart hook.\n" +
     "Captures Claude Code's session_id and creates an active session record."
@@ -182,7 +187,21 @@ program
       branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf8" }).trim();
     } catch {}
 
-    const sessionId = opts.sessionId ?? `local-${Date.now()}`;
+    if (!opts.sessionId) {
+      console.error("--session-id is required.");
+      process.exit(1);
+    }
+    const sessionId = opts.sessionId;
+
+    // Check if this session already exists (e.g. /resume)
+    const existing = loadActiveSession(sessionId);
+    if (existing) {
+      // Session exists — just update the marker file and branch
+      existing.branch = branch;
+      saveActiveSession(existing);
+      setActiveSessionId(sessionId);
+      return;
+    }
 
     // Log to session history
     logSession({
@@ -195,7 +214,7 @@ program
       mode: cfg?.mode ?? "local",
     });
 
-    // Create active session record
+    // Create new active session record
     saveActiveSession({
       session_id: sessionId,
       project_name: projectName,
@@ -230,6 +249,101 @@ program
       const bundleInfo = s.bundle ? ` → ${s.bundle.slice(0, 8)}...` : "";
       console.log(`${s.started_at}  ${s.project_name}  [${s.mode}]  ${s.branch ?? "no-branch"}${bundleInfo}`);
       console.log(`  ${s.project_path}`);
+    }
+  });
+
+// ==================== SESSION ENTRIES ====================
+
+program
+  .command("session-log")
+  .description(
+    "Log a context entry to the current session (local only, NOT pushed to bundles).\n" +
+    "Entries accumulate until you run 'cxtl push --consolidate'.\n\n" +
+    "Examples:\n" +
+    "  $ cxtl session-log --message 'Added GET /api/users endpoint'\n" +
+    "  $ cxtl session-log --event commit --ref $(git rev-parse HEAD) --diff"
+  )
+  .option("--event <type>", "event type", "manual")
+  .option("--ref <ref>", "commit SHA, PR number, or reference")
+  .option("--diff", "use git diff HEAD~1 as raw context for summary", false)
+  .option("--message <text>", "summary text")
+  .option("--summary <text>", "explicit summary (use with --diff)")
+  .action(async (opts) => {
+    const sessionId = getActiveSessionId();
+    if (!sessionId) {
+      console.error("No active session.");
+      process.exit(1);
+    }
+    const session = loadActiveSession(sessionId);
+    if (!session) {
+      console.error(`Session ${sessionId} not found.`);
+      process.exit(1);
+    }
+
+    let summary: string;
+    if (opts.diff) {
+      if (opts.summary) {
+        summary = opts.summary;
+      } else {
+        const ref = opts.ref ?? "HEAD";
+        try {
+          summary = execSync(`git log -1 --pretty=%B ${ref}`, { encoding: "utf8" }).trim();
+        } catch {
+          summary = "";
+        }
+        if (!summary) {
+          console.error("--diff requires --summary (could not extract commit message).");
+          process.exit(1);
+        }
+      }
+    } else {
+      if (!opts.message) {
+        console.error("Provide --message <text> or use --diff.");
+        process.exit(1);
+      }
+      summary = opts.message;
+    }
+
+    const entry = pushSessionEntry(sessionId, {
+      project_name: session.project_name,
+      event_type: opts.event,
+      trigger_ref: opts.ref ?? null,
+      summary,
+      files_touched: [],
+      decisions: [],
+    });
+
+    console.log(`Logged entry ${entry.id} to session ${sessionId.slice(0, 8)}...`);
+    console.log(`  ${summary}`);
+  });
+
+program
+  .command("session-entries")
+  .description(
+    "List accumulated session entries (un-pushed by default).\n\n" +
+    "Example:\n" +
+    "  $ cxtl session-entries\n" +
+    "  $ cxtl session-entries --all"
+  )
+  .option("--all", "show all entries (including already pushed)", false)
+  .action((opts) => {
+    const sessionId = getActiveSessionId();
+    if (!sessionId) {
+      console.error("No active session.");
+      process.exit(1);
+    }
+    const entries = opts.all
+      ? getSessionEntries(sessionId)
+      : getUnpushedSessionEntries(sessionId);
+
+    if (entries.length === 0) {
+      console.log("No pending session entries.");
+      return;
+    }
+    for (const e of entries) {
+      const status = e.pushed_at ? `[pushed ${e.pushed_at}]` : "[pending]";
+      console.log(`${e.id}  ${e.created_at}  ${status}`);
+      console.log(`  ${e.summary}`);
     }
   });
 
@@ -433,23 +547,25 @@ program
 program
   .command("push")
   .description(
-    "Push a context entry to this project's bundle. Reads bundle from .cxtl.json.\n\n" +
+    "Push a context entry to connected bundles.\n\n" +
     "Usage:\n" +
-    "  cxtl push --message <text>      Use your text as summary + raw context\n" +
-    "  cxtl push --diff                Use git diff as raw context, commit message as summary\n" +
-    "  cxtl push --diff --summary <s>  Use git diff + explicit summary\n\n" +
+    "  cxtl push --message <text>         Direct push with your text as summary\n" +
+    "  cxtl push --diff                   Direct push using git diff + commit message\n" +
+    "  cxtl push --consolidate --message  Consolidate pending session entries into one push\n\n" +
     "Options:\n" +
-    "  --event <type>   commit | pr_open | manual | session_end (default: manual)\n" +
-    "  --ref <ref>      commit SHA, PR number, or branch name\n\n" +
+    "  --event <type>     commit | pr_open | manual | session_end (default: manual)\n" +
+    "  --ref <ref>        commit SHA, PR number, or branch name\n" +
+    "  --consolidate      consolidate un-pushed session entries into one bundle entry\n\n" +
     "Examples:\n" +
     "  $ cxtl push --message 'Added /api/auth endpoint with JWT'\n" +
-    "  $ cxtl push --event commit --ref $(git rev-parse HEAD) --diff"
+    "  $ cxtl push --consolidate --message 'Session summary: built auth system'"
   )
   .option("--event <type>", "event type", "manual")
   .option("--ref <ref>", "commit SHA, PR number, or reference")
   .option("--diff", "use git diff HEAD~1 as raw context", false)
   .option("--message <text>", "summary text (also used as raw context when --diff is not set)")
   .option("--summary <text>", "explicit summary (use with --diff)")
+  .option("--consolidate", "consolidate pending session entries into one push", false)
   .action(async (opts) => {
     // Get bundles from active session
     const sessionId = getActiveSessionId();
@@ -462,8 +578,25 @@ program
 
     let raw: string;
     let summary: string;
+    let sourceEntries = null;
+    let sourceEntryIds: string[] | undefined;
 
-    if (opts.diff) {
+    // Consolidate mode: read pending session entries
+    if (opts.consolidate) {
+      if (!opts.message) {
+        console.error("--consolidate requires --message <text> with the consolidated summary.");
+        process.exit(1);
+      }
+      const pending = getUnpushedSessionEntries(session.session_id);
+      if (pending.length === 0) {
+        console.error("No pending session entries to consolidate.");
+        process.exit(1);
+      }
+      sourceEntries = pending;
+      sourceEntryIds = pending.map((e) => e.id);
+      raw = pending.map((e) => `[${e.created_at}] ${e.summary}`).join("\n");
+      summary = opts.message;
+    } else if (opts.diff) {
       try {
         raw = execSync("git diff HEAD~1", { encoding: "utf8" });
       } catch {
@@ -485,7 +618,7 @@ program
       }
     } else {
       if (!opts.message) {
-        console.error("Provide --message <text> or use --diff.\nRun 'cxtl push --help' for examples.");
+        console.error("Provide --message <text>, use --diff, or use --consolidate.\nRun 'cxtl push --help' for examples.");
         process.exit(1);
       }
       raw = opts.message;
@@ -494,6 +627,7 @@ program
 
     // Push to ALL connected bundles
     for (const b of session.bundles) {
+      const mode = isLocalBundle(b.bundle_id) ? "local" : "cloud";
       const r = await pushEntry({
         bundle_id: b.bundle_id,
         project_name: session.project_name,
@@ -501,10 +635,17 @@ program
         trigger_ref: opts.ref ?? null,
         raw_context: raw,
         summary,
-        mode: b.mode,
+        source_entries: sourceEntries,
+        mode,
       });
       console.log(`[${b.bundle_id}] pushed entry ${r.entry_id}`);
       console.log(`  ${r.summary}`);
+    }
+
+    // Mark session entries as pushed
+    if (sourceEntryIds) {
+      markSessionEntriesPushed(session.session_id, sourceEntryIds);
+      console.log(`Marked ${sourceEntryIds.length} session entries as pushed.`);
     }
   });
 

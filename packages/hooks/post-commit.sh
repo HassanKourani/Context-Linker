@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cxtl: post-commit hook
-# Pushes the latest commit to all bundles configured for the current project.
+# Logs the latest commit to the active session (entries accumulate until push).
 #
 # Install as a git hook:
 #   cp packages/hooks/post-commit.sh .git/hooks/post-commit
@@ -38,9 +38,9 @@ fi
 SHA=$(git rev-parse HEAD)
 SHORT_SHA=$(git rev-parse --short HEAD)
 
-echo "cxtl: pushing commit $SHORT_SHA"
-cxtl push --event commit --ref "$SHA" --diff || {
-  echo "cxtl: push failed (non-fatal)" >&2
+echo "cxtl: logging commit $SHORT_SHA to session"
+cxtl session-log --event commit --ref "$SHA" --diff || {
+  echo "cxtl: session-log failed (non-fatal)" >&2
   exit 0
 }
 

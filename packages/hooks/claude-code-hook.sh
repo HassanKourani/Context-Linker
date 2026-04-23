@@ -2,7 +2,7 @@
 # cxtl: Claude Code PostToolUse hook
 #
 # Reads the tool-use JSON from stdin, looks for git commit / gh pr create,
-# and auto-pushes to all bundles connected to the active session.
+# and logs to the active session (entries accumulate until user triggers push).
 
 set -euo pipefail
 
@@ -23,10 +23,10 @@ if [[ "$CMD" =~ git[[:space:]]+commit || "$CMD" =~ gh[[:space:]]+pr[[:space:]]+c
     EVENT="commit"
     [[ "$CMD" =~ gh[[:space:]]+pr ]] && EVENT="pr_open"
 
-    # Async push so we don't block Claude Code's next action
+    # Async log to session so we don't block Claude Code's next action
     (
       SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
-      cxtl push --event "$EVENT" --ref "$SHA" --diff >/dev/null 2>&1 || true
+      cxtl session-log --event "$EVENT" --ref "$SHA" --diff >/dev/null 2>&1 || true
     ) &
   fi
 fi
