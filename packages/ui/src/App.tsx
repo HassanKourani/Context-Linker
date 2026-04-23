@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from "react";
+import { useMemo, useCallback, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -6,6 +6,7 @@ import {
   MiniMap,
   type NodeTypes,
   type EdgeTypes,
+  type EdgeMouseHandler,
   type Connection,
   type Edge,
 } from "@xyflow/react";
@@ -36,10 +37,22 @@ const edgeTypes: EdgeTypes = {
 
 export function App() {
   const { data, isLoading, dataUpdatedAt } = useGraphData();
+  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
 
-  const { nodes, edges } = useMemo(
+  const { nodes, edges: rawEdges } = useMemo(
     () => (data ? buildFlowGraph(data) : { nodes: [], edges: [] }),
     [data]
+  );
+
+  // Inject _hovered flag into edge data for the hovered edge
+  const edges = useMemo(
+    () =>
+      rawEdges.map((e) =>
+        e.id === hoveredEdgeId
+          ? { ...e, data: { ...e.data, _hovered: true } }
+          : e
+      ),
+    [rawEdges, hoveredEdgeId]
   );
 
   const joinMutation = useJoinBundle();
@@ -71,6 +84,14 @@ export function App() {
     [nodes]
   );
 
+  const onEdgeMouseEnter: EdgeMouseHandler = useCallback((_event, edge) => {
+    setHoveredEdgeId(edge.id);
+  }, []);
+
+  const onEdgeMouseLeave: EdgeMouseHandler = useCallback(() => {
+    setHoveredEdgeId(null);
+  }, []);
+
   return (
     <div className="h-screen w-screen bg-[#11111b] text-[#cdd6f4] flex flex-col">
       <TopBar
@@ -89,6 +110,8 @@ export function App() {
           elementsSelectable={true}
           onConnect={onConnect}
           isValidConnection={isValidConnection}
+          onEdgeMouseEnter={onEdgeMouseEnter}
+          onEdgeMouseLeave={onEdgeMouseLeave}
           connectionLineStyle={{ stroke: "#a6e3a1", strokeWidth: 2 }}
           fitView
           fitViewOptions={{ padding: 0.2 }}

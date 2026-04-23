@@ -1,4 +1,3 @@
-import { useState } from "react";
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -17,8 +16,8 @@ export function DeletableEdge({
   sourcePosition,
   targetPosition,
   data,
+  selected,
 }: EdgeProps) {
-  const [hovered, setHovered] = useState(false);
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
@@ -29,6 +28,7 @@ export function DeletableEdge({
   });
 
   const sessionId = (data as any)?.sessionId as string | undefined;
+  const isHovered = (data as any)?._hovered as boolean | undefined;
   const deleteMutation = useDeleteSession();
 
   const handleDelete = (e: React.MouseEvent) => {
@@ -37,27 +37,21 @@ export function DeletableEdge({
     deleteMutation.mutate(sessionId);
   };
 
+  const showButton = isHovered || selected;
+
   return (
     <>
-      {/* Invisible wide path for hover detection */}
-      <path
-        d={edgePath}
-        fill="none"
-        stroke="transparent"
-        strokeWidth={20}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-      />
       <BaseEdge
         id={id}
         path={edgePath}
+        interactionWidth={20}
         style={{
-          stroke: hovered ? "#f38ba8" : "#585b70",
-          strokeWidth: hovered ? 2.5 : 2,
+          stroke: showButton ? "#f38ba8" : "#585b70",
+          strokeWidth: showButton ? 2.5 : 2,
           transition: "stroke 0.15s, stroke-width 0.15s",
         }}
       />
-      {sessionId && hovered && (
+      {sessionId && showButton && (
         <EdgeLabelRenderer>
           <button
             className="nodrag nopan absolute bg-destructive text-destructive-foreground rounded-full w-5 h-5 flex items-center justify-center shadow-md hover:scale-125 cursor-pointer transition-transform"
@@ -66,8 +60,6 @@ export function DeletableEdge({
               pointerEvents: "all",
             }}
             onClick={handleDelete}
-            onMouseEnter={() => setHovered(true)}
-            onMouseLeave={() => setHovered(false)}
             title="Unlink session"
           >
             <X className="w-3 h-3" />
