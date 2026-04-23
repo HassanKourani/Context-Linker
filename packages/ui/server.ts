@@ -29,6 +29,8 @@ import {
   listTeamSessions,
   deleteCloudSession,
   deleteCloudSessionEntry,
+  getCloudSessionEntries,
+  getSupabase,
   getBundleTeamId,
   rewindProject,
   restoreRewound,
@@ -357,7 +359,31 @@ const server = Bun.serve({
       if (match && req.method === "GET") {
         try {
           const sessionId = match[1];
-          const entries = getSessionEntries(sessionId);
+          // Try local session entries first
+          let entries: any[] = getSessionEntries(sessionId);
+          // If empty, try cloud session entries (sessionId might be a cloud session ID)
+          if (entries.length === 0) {
+            try {
+              const cloudEntries = await getCloudSessionEntries(sessionId);
+              // Get project name from the cloud session
+              const { data: cs } = await getSupabase()
+                .from("cloud_sessions")
+                .select("project_name")
+                .eq("id", sessionId)
+                .single();
+              const projectName = cs?.project_name ?? "unknown";
+              entries = cloudEntries.map((e) => ({
+                id: e.id,
+                created_at: e.created_at,
+                project_name: projectName,
+                event_type: e.event_type,
+                trigger_ref: e.trigger_ref,
+                summary: e.summary,
+                files_touched: e.files_touched ?? [],
+                decisions: e.decisions ?? [],
+              }));
+            } catch { /* not a cloud session */ }
+          }
           return Response.json(entries, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
