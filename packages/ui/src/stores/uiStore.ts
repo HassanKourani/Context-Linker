@@ -12,6 +12,7 @@ type ModalType =
   | "push-entry"
   | "push-session"
   | "push-to-cloud"
+  | "push-to-cloud-prompt"
   | "rewind"
   | null;
 
@@ -34,6 +35,9 @@ interface UIState {
 
   // Push-to-cloud target
   pushToCloudTarget: string | null;
+
+  // Pending connect after push-to-cloud (session → cloud bundle blocked until session is in cloud)
+  pendingCloudConnect: { sessionId: string; bundleId: string } | null;
 
   // Edge hover
   hoveredEdgeId: string | null;
@@ -68,6 +72,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   activeModal: null,
   deleteBundleTarget: null,
   pushToCloudTarget: null,
+  pendingCloudConnect: null,
   selectedEntryIds: new Set(),
   hoveredEdgeId: null,
   hideEmptySessions: (() => {
@@ -115,7 +120,7 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   openModal: (modal) => set({ activeModal: modal }),
 
-  closeModal: () => set({ activeModal: null, deleteBundleTarget: null, pushToCloudTarget: null }),
+  closeModal: () => set({ activeModal: null, deleteBundleTarget: null, pushToCloudTarget: null, pendingCloudConnect: null }),
 
   setDeleteTarget: (target) => set({ deleteBundleTarget: target }),
 

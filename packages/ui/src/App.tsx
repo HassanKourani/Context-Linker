@@ -32,6 +32,7 @@ import { RewindDialog } from "./components/RewindDialog";
 import { TeamManagementDialog } from "./components/TeamManagementDialog";
 import { PushSessionToBundleDialog } from "./components/PushSessionToBundleDialog";
 import { PushToCloudDialog } from "./components/PushToCloudDialog";
+import { PushToCloudPromptDialog } from "./components/PushToCloudPromptDialog";
 import { DeletableEdge } from "./components/edges/DeletableEdge";
 
 const nodeTypes: NodeTypes = {
@@ -147,13 +148,27 @@ export function App() {
       if (sourceNode.type !== "project" || targetNode.type !== "bundle") return;
 
       const bundleId = (targetNode.data as any).bundleId;
+      const bundleMode = (targetNode.data as any).mode as string;
       const sessionId = connection.sourceHandle;
 
       if (!bundleId || !sessionId) return;
 
+      // Check if this is a local session trying to connect to a cloud bundle
+      if (bundleMode === "cloud") {
+        const session = data?.sessions?.find((s) => s.session_id === sessionId);
+        if (session && !session.cloud_session_id) {
+          // Block: show prompt to push session to cloud first
+          useUIStore.setState({
+            pendingCloudConnect: { sessionId, bundleId },
+            activeModal: "push-to-cloud-prompt",
+          });
+          return;
+        }
+      }
+
       connectMutation.mutate({ sessionId, bundle_id: bundleId });
     },
-    [nodes, connectMutation]
+    [nodes, data, connectMutation]
   );
 
   const isValidConnection = useCallback(
@@ -222,6 +237,7 @@ export function App() {
       <TeamManagementDialog />
       <PushSessionToBundleDialog />
       <PushToCloudDialog />
+      <PushToCloudPromptDialog />
     </div>
   );
 }
