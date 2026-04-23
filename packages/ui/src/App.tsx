@@ -17,6 +17,7 @@ import { useGraphData } from "./hooks/useGraphData";
 import { useUIStore } from "./stores/uiStore";
 import { buildFlowGraph } from "./lib/buildGraph";
 import { hoverEdge, unhoverEdge } from "./lib/edgeHover";
+import { fitGroupsToChildren } from "./lib/fitGroups";
 import { ProjectNode } from "./components/nodes/ProjectNode";
 import { BundleNode } from "./components/nodes/BundleNode";
 import { TeamGroupNode } from "./components/nodes/TeamGroupNode";
@@ -50,8 +51,21 @@ export function App() {
   );
 
   // Controlled node/edge state — allows dragging to update positions
-  const [nodes, setNodes, onNodesChange] = useNodesState(built.nodes);
+  const [nodes, setNodes, baseOnNodesChange] = useNodesState(built.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(built.edges);
+
+  // Wrap onNodesChange to recalculate group bounds after dragging
+  const onNodesChange = useCallback(
+    (changes: any) => {
+      baseOnNodesChange(changes);
+      // After position changes, refit groups
+      const hasDrag = changes.some((c: any) => c.type === "position" && c.dragging);
+      if (hasDrag) {
+        setNodes((ns) => fitGroupsToChildren([...ns]));
+      }
+    },
+    [baseOnNodesChange, setNodes]
+  );
 
   // Sync when API data changes — preserve positions of nodes the user has dragged
   useEffect(() => {
@@ -60,10 +74,11 @@ export function App() {
       for (const n of current) {
         posMap.set(n.id, n.position);
       }
-      return built.nodes.map((n) => {
+      const merged = built.nodes.map((n) => {
         const saved = posMap.get(n.id);
         return saved ? { ...n, position: saved } : n;
       });
+      return fitGroupsToChildren(merged);
     });
     setEdges(built.edges);
   }, [built, setNodes, setEdges]);
