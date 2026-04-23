@@ -56,7 +56,7 @@ All exported from `@ctx-link/core`:
 - `listLocalBundles()` → `LocalBundleInfo[]`
 
 ### Entries (entries.ts)
-- `pushEntry(input)` → `PushResult` — auto-creates/updates session
+- `pushEntry(input)` → `PushResult` — auto-creates/updates session. Also saves to active session's entry log if one exists.
 - `pullEntries(input)` → `EntryRow[]` — filters by since/limit/project, hides rewound
 - `renderEntriesForClaude(entries)` → string (markdown format for LLM context)
 
@@ -182,3 +182,4 @@ bun run cli -- <args>          # run CLI
 - **Optimistic updates** — mutations snapshot cache in `onMutate`, roll back in `onError`, refetch in `onSettled`.
 - **Mode is server-resolved** — UI API endpoints operating on existing bundles do NOT require `mode`. The server checks `isLocalBundle(bundleId)` to determine local vs cloud. Only `POST /api/bundles` (create) takes `mode` since the bundle doesn't exist yet.
 - **Local and cloud behave identically** — same user-facing behavior for connect, disconnect, delete, push. Only the storage backend differs.
+- **Every push saves to the active session** — `pushEntry` and `localPushEntry` both auto-save to `~/.ctx-link/session-entries/{session_id}.json` if an active session exists (via `.cxtl-active-session` marker). This means clicking a session in the UI shows all context accumulated during that session.
