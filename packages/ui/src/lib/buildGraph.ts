@@ -280,45 +280,24 @@ export function buildFlowGraph(
   const allEdges: Edge[] = [];
   let yOffset = 0;
 
-  // Group active sessions by team or local
-  const bundleToTeam = new Map<string, string>();
-  for (const team of data.teams) {
-    for (const bundle of team.bundles) {
-      bundleToTeam.set(bundle.bundle_id, team.team_id);
-    }
-  }
-
-  // Categorize active sessions into team groups or local
-  const sessionsByTeam = new Map<string, ActiveSessionData[]>();
+  // Active sessions always go to the local group.
+  // Cloud sessions are per-team (passed via team.cloud_sessions).
   const localActiveSessions: ActiveSessionData[] = [];
 
   const filteredSessions = options?.hideEmptySessions
     ? (data.sessions ?? []).filter((s) => s.entry_count === undefined || s.entry_count > 0)
     : data.sessions;
 
+  // Active sessions (from local files) always go to the local group.
+  // Cloud sessions come from listTeamSessions and are passed as cloudSessions per team.
   if (filteredSessions) {
     for (const session of filteredSessions) {
-      // Check if session has a team_id (pushed to cloud) or any bundle belongs to a team
-      let assignedTeam: string | null = session.team_id ?? null;
-      if (!assignedTeam) {
-        for (const b of session.bundles) {
-          const teamId = bundleToTeam.get(b.bundle_id);
-          if (teamId) { assignedTeam = teamId; break; }
-        }
-      }
-      if (assignedTeam) {
-        if (!sessionsByTeam.has(assignedTeam)) sessionsByTeam.set(assignedTeam, []);
-        sessionsByTeam.get(assignedTeam)!.push(session);
-      } else {
-        localActiveSessions.push(session);
-      }
+      localActiveSessions.push(session);
     }
   }
 
   // Team groups
   for (const team of data.teams) {
-    const teamActiveSessions = sessionsByTeam.get(team.team_id) ?? [];
-
     const { nodes, edges } = buildGroup({
       groupId: `team-${team.team_id}`,
       groupName: team.team_name,
@@ -326,7 +305,6 @@ export function buildFlowGraph(
       bundles: team.bundles,
       machineId: data.machine_id,
       isLocal: false,
-      activeSessions: teamActiveSessions,
       cloudSessions: team.cloud_sessions,
     });
 
