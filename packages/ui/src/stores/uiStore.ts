@@ -19,6 +19,7 @@ interface UIState {
   selectedBundleId: string | null;
   selectedBundleMode: "local" | "cloud";
   panelTab: "entries" | "rewinds";
+  filterProject: string | null;
 
   // Modals
   activeModal: ModalType;
@@ -31,9 +32,10 @@ interface UIState {
   hoveredEdgeId: string | null;
 
   // Actions
-  openPanel: (bundleId: string, mode: "local" | "cloud") => void;
+  openPanel: (bundleId: string, mode: "local" | "cloud", filterProject?: string) => void;
   closePanel: () => void;
   setPanelTab: (tab: "entries" | "rewinds") => void;
+  setFilterProject: (project: string | null) => void;
   openModal: (modal: ModalType) => void;
   closeModal: () => void;
   setDeleteTarget: (target: DeleteTarget | null) => void;
@@ -46,18 +48,26 @@ export const useUIStore = create<UIState>((set) => ({
   selectedBundleId: null,
   selectedBundleMode: "cloud",
   panelTab: "entries",
+  filterProject: null,
   activeModal: null,
   deleteBundleTarget: null,
   selectedEntryIds: new Set(),
   hoveredEdgeId: null,
 
-  openPanel: (bundleId, mode) =>
-    set({ selectedBundleId: bundleId, selectedBundleMode: mode, panelTab: "entries" }),
+  openPanel: (bundleId, mode, filterProject) =>
+    set({
+      selectedBundleId: bundleId,
+      selectedBundleMode: mode,
+      panelTab: "entries",
+      filterProject: filterProject ?? null,
+    }),
 
   closePanel: () =>
-    set({ selectedBundleId: null, selectedEntryIds: new Set() }),
+    set({ selectedBundleId: null, selectedEntryIds: new Set(), filterProject: null }),
 
   setPanelTab: (tab) => set({ panelTab: tab }),
+
+  setFilterProject: (project) => set({ filterProject: project }),
 
   openModal: (modal) => set({ activeModal: modal }),
 

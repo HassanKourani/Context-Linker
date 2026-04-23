@@ -159,6 +159,8 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
           machineId: s.machineId,
           lastActiveAt: s.lastActiveAt,
           isYou: s.machineId === machineId,
+          bundleId: s.bundleId || null,
+          mode: isLocal ? "local" as const : "cloud" as const,
         })),
       },
     });

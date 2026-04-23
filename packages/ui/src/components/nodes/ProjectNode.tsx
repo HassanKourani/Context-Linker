@@ -1,17 +1,27 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { relativeTime } from "@/lib/time";
+import { useUIStore } from "@/stores/uiStore";
 
 interface SessionData {
   id: string;
   machineId: string;
   lastActiveAt: string | null;
   isYou: boolean;
+  bundleId: string | null;
+  mode: "local" | "cloud";
 }
 
 export function ProjectNode({ data }: NodeProps) {
   const { projectName, sessions } = data as {
     projectName: string;
     sessions: SessionData[];
+  };
+
+  const openPanel = useUIStore((s) => s.openPanel);
+
+  const handleSessionClick = (s: SessionData) => {
+    if (!s.bundleId) return;
+    openPanel(s.bundleId, s.mode, projectName);
   };
 
   return (
@@ -22,7 +32,8 @@ export function ProjectNode({ data }: NodeProps) {
       {sessions.map((s) => (
         <div
           key={s.id}
-          className="px-3 py-1.5 flex items-center gap-2 text-xs text-muted-foreground relative"
+          className={`px-3 py-1.5 flex items-center gap-2 text-xs text-muted-foreground relative ${s.bundleId ? "cursor-pointer hover:bg-accent/50 transition-colors" : ""}`}
+          onClick={() => handleSessionClick(s)}
         >
           <span className="font-mono text-[11px]" title={s.id}>
             {s.id.slice(0, 8)}

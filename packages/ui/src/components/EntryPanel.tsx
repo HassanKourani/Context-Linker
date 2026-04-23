@@ -1,6 +1,7 @@
+import { useMemo } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, Undo2 } from "lucide-react";
+import { RefreshCw, Undo2, X } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { useEntries } from "@/hooks/useEntries";
 import { useGraphData } from "@/hooks/useGraphData";
@@ -15,10 +16,19 @@ export function EntryPanel() {
   const openModal = useUIStore((s) => s.openModal);
   const panelTab = useUIStore((s) => s.panelTab);
   const setPanelTab = useUIStore((s) => s.setPanelTab);
+  const filterProject = useUIStore((s) => s.filterProject);
+  const setFilterProject = useUIStore((s) => s.setFilterProject);
   const open = !!selectedBundleId;
 
-  const { data: entries, isLoading, refetch } = useEntries(selectedBundleId, selectedBundleMode);
+  const { data: allEntries, isLoading, refetch } = useEntries(selectedBundleId, selectedBundleMode);
   const { data: graphData } = useGraphData();
+
+  // Filter entries by project if filter is active
+  const entries = useMemo(() => {
+    if (!allEntries) return undefined;
+    if (!filterProject) return allEntries;
+    return allEntries.filter((e) => e.project_name === filterProject);
+  }, [allEntries, filterProject]);
 
   // Find bundle name from graph data
   let bundleName = selectedBundleId ?? "";
@@ -38,8 +48,23 @@ export function EntryPanel() {
           <SheetTitle>{bundleName}</SheetTitle>
           <SheetDescription>
             {entries?.length ?? 0} entries
+            {filterProject && ` from ${filterProject}`}
           </SheetDescription>
         </SheetHeader>
+
+        {filterProject && (
+          <div className="mx-4 px-3 py-1.5 rounded bg-primary/10 border border-primary/20 flex items-center justify-between">
+            <span className="text-xs text-primary">
+              Filtered: <strong>{filterProject}</strong>
+            </span>
+            <button
+              onClick={() => setFilterProject(null)}
+              className="text-primary hover:text-foreground transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         <div className="flex items-center gap-2 px-4">
           <div className="flex gap-1">
@@ -98,7 +123,9 @@ export function EntryPanel() {
               )}
               {!isLoading && entries?.length === 0 && (
                 <div className="p-4 text-center text-muted-foreground text-sm">
-                  No entries yet. Push context from a project.
+                  {filterProject
+                    ? `No entries from ${filterProject} in this bundle.`
+                    : "No entries yet. Push context from a project."}
                 </div>
               )}
               {entries?.map((entry) => (
