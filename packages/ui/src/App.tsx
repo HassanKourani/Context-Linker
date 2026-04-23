@@ -53,9 +53,18 @@ export function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState(built.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(built.edges);
 
-  // Sync when API data changes (new nodes/edges from server)
+  // Sync when API data changes — preserve positions of nodes the user has dragged
   useEffect(() => {
-    setNodes(built.nodes);
+    setNodes((current) => {
+      const posMap = new Map<string, { x: number; y: number }>();
+      for (const n of current) {
+        posMap.set(n.id, n.position);
+      }
+      return built.nodes.map((n) => {
+        const saved = posMap.get(n.id);
+        return saved ? { ...n, position: saved } : n;
+      });
+    });
     setEdges(built.edges);
   }, [built, setNodes, setEdges]);
 
