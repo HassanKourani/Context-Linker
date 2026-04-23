@@ -13,7 +13,7 @@ export function EntryCard({ entry, bundleRefCount }: { entry: EntryRow; bundleRe
   const toggleEntry = useUIStore((s) => s.toggleEntry);
   const isSelected = selectedEntryIds.has(entry.id);
 
-  const projectColor = teamColor(entry.project_name);
+  const projectColor = teamColor(entry.project_name ?? "unknown");
 
   return (
     <div className={`border-b border-border p-3 ${isSelected ? "bg-primary/5" : ""}`}>
@@ -29,7 +29,7 @@ export function EntryCard({ entry, bundleRefCount }: { entry: EntryRow; bundleRe
               className="px-1.5 py-0.5 rounded text-[10px] font-medium"
               style={{ backgroundColor: `${projectColor}20`, color: projectColor }}
             >
-              {entry.project_name}
+              {entry.project_name ?? "unknown"}
             </span>
             <EventTypeBadge type={entry.event_type} />
             {entry.trigger_ref && (

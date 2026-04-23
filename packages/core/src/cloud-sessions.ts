@@ -15,7 +15,6 @@ export interface CloudSession {
   branch: string | null;
   started_at: string;
   last_active_at: string;
-  source_session_id: string | null;
 }
 
 export interface CloudSessionEntry {
@@ -57,7 +56,6 @@ export async function copySessionToCloud(
       machine_id: cfg.machine_id,
       branch: session.branch,
       started_at: session.started_at,
-      source_session_id: sessionId,
     })
     .select("id")
     .single();
@@ -114,6 +112,20 @@ export async function deleteCloudSessionEntry(entryId: string): Promise<void> {
 }
 
 /**
+ * Get a single cloud session by ID.
+ */
+export async function getCloudSession(cloudSessionId: string): Promise<CloudSession | null> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("cloud_sessions")
+    .select("*")
+    .eq("id", cloudSessionId)
+    .single();
+  if (error) return null;
+  return data as CloudSession;
+}
+
+/**
  * Delete a cloud session and all its entries (cascades via FK).
  */
 export async function deleteCloudSession(cloudSessionId: string): Promise<void> {
@@ -164,23 +176,6 @@ export async function getCloudSessionEntries(
 }
 
 /**
- * Get which bundles a cloud session's entries are referenced by.
- */
-export async function getCloudSessionBundleIds(cloudSessionId: string): Promise<string[]> {
-  const sb = getSupabase();
-  const entries = await getCloudSessionEntries(cloudSessionId);
-  const entryIds = entries.map((e) => e.id);
-  if (entryIds.length === 0) return [];
-
-  const { data: refs } = await sb
-    .from("bundle_entry_refs")
-    .select("bundle_id")
-    .in("entry_id", entryIds);
-
-  return [...new Set((refs ?? []).map((r: any) => r.bundle_id as string))];
-}
-
-/**
  * Get which bundles reference a given entry.
  */
 export async function getEntryBundleRefs(
@@ -193,64 +188,4 @@ export async function getEntryBundleRefs(
     .eq("entry_id", entryId);
   if (error) throw new Error(`getEntryBundleRefs failed: ${error.message}`);
   return (data ?? []) as Array<{ bundle_id: string; added_at: string }>;
-}
-
-/**
- * Sync new entries from the original local session into a cloud session.
- * Compares by summary+created_at to find entries not yet in cloud.
- * New entries get fresh UUIDs (independent copies).
- */
-export async function syncCloudSessionFromLocal(
-  cloudSessionId: string
-): Promise<{ synced: number }> {
-  const sb = getSupabase();
-
-  // Get the cloud session to find source_session_id
-  const { data: cs, error: csErr } = await sb
-    .from("cloud_sessions")
-    .select("source_session_id")
-    .eq("id", cloudSessionId)
-    .single();
-
-  if (csErr || !cs) throw new Error("Cloud session not found.");
-  if (!cs.source_session_id) throw new Error("This cloud session has no linked local session.");
-
-  // Get local entries
-  const localEntries = getSessionEntries(cs.source_session_id);
-  if (localEntries.length === 0) return { synced: 0 };
-
-  // Get existing cloud entries to deduplicate by summary+created_at
-  const cloudEntries = await getCloudSessionEntries(cloudSessionId, true);
-  const existingKeys = new Set(
-    cloudEntries.map((e) => `${e.summary}::${e.created_at}`)
-  );
-
-  // Find new entries not yet in cloud
-  const newEntries = localEntries.filter(
-    (e) => !existingKeys.has(`${e.summary}::${e.created_at}`)
-  );
-
-  if (newEntries.length === 0) return { synced: 0 };
-
-  const rows = newEntries.map((e) => ({
-    id: crypto.randomUUID(),
-    session_id: cloudSessionId,
-    event_type: e.event_type,
-    trigger_ref: e.trigger_ref,
-    summary: e.summary,
-    files_touched: e.files_touched,
-    decisions: e.decisions,
-    created_at: e.created_at,
-  }));
-
-  const { error } = await sb.from("cloud_session_entries").insert(rows);
-  if (error) throw new Error(`syncCloudSessionFromLocal failed: ${error.message}`);
-
-  // Update last_active_at
-  await sb
-    .from("cloud_sessions")
-    .update({ last_active_at: new Date().toISOString() })
-    .eq("id", cloudSessionId);
-
-  return { synced: newEntries.length };
 }

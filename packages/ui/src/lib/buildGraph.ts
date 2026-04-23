@@ -269,36 +269,6 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
     }
   }
 
-  // Edges from cloud sessions to their connected bundles
-  if (cloudSessions) {
-    for (const cs of cloudSessions) {
-      if (!cs.bundles || cs.bundles.length === 0) continue;
-      const projectNodeId = `project-${groupId}-${cs.project_name}`;
-      if (!projectSessions.has(cs.project_name)) continue;
-
-      for (const bundleId of cs.bundles) {
-        const edgeId = `edge-cloud-${cs.id}-${bundleId}`;
-        if (edges.some((e) => e.id === edgeId)) continue;
-
-        edges.push({
-          id: edgeId,
-          source: projectNodeId,
-          sourceHandle: cs.id,
-          target: `bundle-${bundleId}`,
-          type: "deletable",
-          animated: true,
-          data: {
-            sessionId: cs.id,
-            bundleId,
-            projectName: cs.project_name,
-            mode: "cloud" as const,
-          },
-          style: { stroke: "#585b70", strokeWidth: 2 },
-        });
-      }
-    }
-  }
-
   return { nodes, edges };
 }
 
@@ -310,24 +280,45 @@ export function buildFlowGraph(
   const allEdges: Edge[] = [];
   let yOffset = 0;
 
-  // Active sessions always go to the local group.
-  // Cloud sessions are per-team (passed via team.cloud_sessions).
+  // Group active sessions by team or local
+  const bundleToTeam = new Map<string, string>();
+  for (const team of data.teams) {
+    for (const bundle of team.bundles) {
+      bundleToTeam.set(bundle.bundle_id, team.team_id);
+    }
+  }
+
+  // Categorize active sessions into team groups or local
+  const sessionsByTeam = new Map<string, ActiveSessionData[]>();
   const localActiveSessions: ActiveSessionData[] = [];
 
   const filteredSessions = options?.hideEmptySessions
     ? (data.sessions ?? []).filter((s) => s.entry_count === undefined || s.entry_count > 0)
     : data.sessions;
 
-  // Active sessions (from local files) always go to the local group.
-  // Cloud sessions come from listTeamSessions and are passed as cloudSessions per team.
   if (filteredSessions) {
     for (const session of filteredSessions) {
-      localActiveSessions.push(session);
+      // Check if session has a team_id (pushed to cloud) or any bundle belongs to a team
+      let assignedTeam: string | null = session.team_id ?? null;
+      if (!assignedTeam) {
+        for (const b of session.bundles) {
+          const teamId = bundleToTeam.get(b.bundle_id);
+          if (teamId) { assignedTeam = teamId; break; }
+        }
+      }
+      if (assignedTeam) {
+        if (!sessionsByTeam.has(assignedTeam)) sessionsByTeam.set(assignedTeam, []);
+        sessionsByTeam.get(assignedTeam)!.push(session);
+      } else {
+        localActiveSessions.push(session);
+      }
     }
   }
 
   // Team groups
   for (const team of data.teams) {
+    const teamActiveSessions = sessionsByTeam.get(team.team_id) ?? [];
+
     const { nodes, edges } = buildGroup({
       groupId: `team-${team.team_id}`,
       groupName: team.team_name,
@@ -335,6 +326,7 @@ export function buildFlowGraph(
       bundles: team.bundles,
       machineId: data.machine_id,
       isLocal: false,
+      activeSessions: teamActiveSessions,
       cloudSessions: team.cloud_sessions,
     });
 

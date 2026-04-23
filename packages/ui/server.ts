@@ -30,7 +30,7 @@ import {
   deleteCloudSession,
   deleteCloudSessionEntry,
   getCloudSessionEntries,
-  getSupabase,
+  getCloudSession,
   getBundleTeamId,
   rewindProject,
   restoreRewound,
@@ -84,11 +84,22 @@ const server = Bun.serve({
                 };
               })
             );
+            // Enrich cloud sessions with entry counts and bundle connections
+            const enrichedSessions = await Promise.all(
+              cloudSessions.map(async (cs) => {
+                const entries = await getCloudSessionEntries(cs.id);
+                return {
+                  ...cs,
+                  entry_count: entries.length,
+                };
+              })
+            );
+
             return {
               team_id: team.team_id,
               team_name: team.name,
               bundles: bundlesWithDetails,
-              cloud_sessions: cloudSessions,
+              cloud_sessions: enrichedSessions,
             };
           })
         );
@@ -366,11 +377,7 @@ const server = Bun.serve({
             try {
               const cloudEntries = await getCloudSessionEntries(sessionId);
               // Get project name from the cloud session
-              const { data: cs } = await getSupabase()
-                .from("cloud_sessions")
-                .select("project_name")
-                .eq("id", sessionId)
-                .single();
+              const cs = await getCloudSession(sessionId);
               const projectName = cs?.project_name ?? "unknown";
               entries = cloudEntries.map((e) => ({
                 id: e.id,
@@ -583,10 +590,27 @@ const server = Bun.serve({
         try {
           const sessionId = match[1];
 
-          // Delete cloud session if it exists
+          // Try all possible ways to delete the cloud session:
+          // 1. sessionId is a local active session ID → look up its cloud_session_id
+          // 2. sessionId is itself a cloud session ID (cloud-only sessions)
+          // 3. An active session has this as its cloud_session_id
           const session = loadActiveSession(sessionId);
-          if (session?.cloud_session_id) {
-            try { await deleteCloudSession(session.cloud_session_id); } catch {}
+          const cloudIdFromActive = session?.cloud_session_id;
+
+          // Delete from Supabase — try both the linked cloud ID and sessionId itself
+          const cloudIdsToTry = new Set<string>();
+          if (cloudIdFromActive) cloudIdsToTry.add(cloudIdFromActive);
+          cloudIdsToTry.add(sessionId);
+
+          for (const cid of cloudIdsToTry) {
+            try { await deleteCloudSession(cid); } catch {}
+          }
+
+          // Clean up any active session whose cloud_session_id matches
+          const allSessions = listActiveSessions();
+          const matchingActive = allSessions.find((s) => s.cloud_session_id === sessionId);
+          if (matchingActive) {
+            deleteActiveSession(matchingActive.session_id);
           }
 
           // Delete the active session + its session-entries file

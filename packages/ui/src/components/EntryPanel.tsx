@@ -1,16 +1,13 @@
 import { useMemo } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { ArrowUpRight, CloudDownload, RefreshCw, Trash2, X } from "lucide-react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { ArrowUpRight, RefreshCw, Trash2, X } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { useEntries } from "@/hooks/useEntries";
 import { useSessionEntries } from "@/hooks/useSessionEntries";
 import { useGraphData } from "@/hooks/useGraphData";
 import { useDeleteSessionEntry } from "@/hooks/mutations/useDeleteSessionEntry";
 import { useRemoveBundleEntryRef } from "@/hooks/mutations/useRemoveBundleEntryRef";
-import { syncSessionFromLocal } from "@/lib/api";
 import { EntryCard } from "./EntryCard";
 import { RewindHistoryTab } from "./RewindHistoryTab";
 
@@ -40,33 +37,6 @@ export function EntryPanel() {
   const refetch = isBundle ? refetchBundle : refetchSession;
   const deleteSessionEntryMutation = useDeleteSessionEntry();
   const removeBundleEntryRefMutation = useRemoveBundleEntryRef();
-  const qc = useQueryClient();
-
-  // Check if this session is a cloud session (has source_session_id)
-  const isCloudSession = useMemo(() => {
-    if (!isSession || !sessionId || !graphData) return false;
-    for (const team of graphData.teams) {
-      if (team.cloud_sessions?.some((cs) => cs.id === sessionId && cs.source_session_id)) {
-        return true;
-      }
-    }
-    return false;
-  }, [isSession, sessionId, graphData]);
-
-  const syncFromLocalMutation = useMutation({
-    mutationFn: () => syncSessionFromLocal(sessionId!),
-    onSuccess: (data) => {
-      if (data.synced > 0) {
-        toast.success(`Synced ${data.synced} new entries from local.`);
-      } else {
-        toast.info("Already up to date — no new entries.");
-      }
-      qc.invalidateQueries({ queryKey: ["graph"] });
-      qc.invalidateQueries({ queryKey: ["sessionEntries", sessionId] });
-      refetchSession();
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
 
   const handleDeleteSelected = () => {
     if (isSession && sessionId && selectedEntryIds.size > 0) {
@@ -216,19 +186,7 @@ export function EntryPanel() {
               )}
             </div>
             <div className="flex items-center gap-1">
-              {isCloudSession && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="text-xs"
-                  onClick={() => syncFromLocalMutation.mutate()}
-                  disabled={syncFromLocalMutation.isPending}
-                >
-                  <CloudDownload className="w-3 h-3 mr-1" />
-                  {syncFromLocalMutation.isPending ? "Syncing..." : "Sync from Local"}
-                </Button>
-              )}
-              {entries.length > 0 && !isCloudSession && (
+              {entries.length > 0 && (
                 <Button
                   variant="default"
                   size="sm"
