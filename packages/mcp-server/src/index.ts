@@ -26,9 +26,7 @@ import {
   localAddEntriesToBundle,
   removeEntryFromBundle,
   localRemoveEntryFromBundle,
-  pushSessionToCloud,
-  syncNewEntries,
-  syncEntryToCloud,
+  copySessionToCloud,
   type ActiveSession,
   type RewindStrategy,
   isLocalBundle,
@@ -469,11 +467,6 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const entryIds = a.source_entry_ids ?? getUnpushedSessionEntries(session.session_id).map(e => e.id);
         if (entryIds.length === 0) return fail("No entries to push.");
 
-        // Sync to cloud first if cloud-enabled
-        if (session.cloud_session_id) {
-          await syncNewEntries(session);
-        }
-
         // Push to specified bundle or all connected bundles
         const targetBundles = a.bundle_id
           ? [{ bundle_id: a.bundle_id, mode: isLocalBundle(a.bundle_id) ? "local" as const : "cloud" as const }]
@@ -588,9 +581,6 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
             if (isLocalBundle(a.bundle_id)) {
               localAddEntriesToBundle(a.bundle_id, entryIds, session.session_id);
             } else {
-              if (session.cloud_session_id) {
-                await syncNewEntries(session);
-              }
               await addEntriesToBundle(a.bundle_id, entryIds);
             }
           } catch { /* non-fatal */ }
@@ -632,9 +622,6 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           files_touched: a.files_touched ?? [],
           decisions: a.decisions ?? [],
         });
-        if (session.cloud_session_id) {
-          try { await syncEntryToCloud(session, entry); } catch {}
-        }
         return ok({ logged: true, entry_id: entry.id, session_id: session.session_id });
       }
 
@@ -662,11 +649,11 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const a = z.object({ team_id: z.string() }).parse(args);
         const session = getSession();
         if (!session) return fail("No active session.");
-        const result = await pushSessionToCloud(session.session_id, a.team_id);
+        const result = await copySessionToCloud(session.session_id, a.team_id);
         return ok({
           cloud_session_id: result.cloud_session_id,
-          entries_synced: result.entries_synced,
-          message: `Session pushed to cloud. ${result.entries_synced} entries synced.`,
+          entries_copied: result.entries_copied,
+          message: `Session copied to cloud. ${result.entries_copied} entries copied.`,
         });
       }
 

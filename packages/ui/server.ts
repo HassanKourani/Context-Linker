@@ -25,9 +25,8 @@ import {
   disconnectSessionFromBundle,
   deleteActiveSession,
   loadActiveSession,
-  pushSessionToCloud,
+  copySessionToCloud,
   listTeamSessions,
-  syncNewEntries,
   deleteCloudSession,
   deleteCloudSessionEntry,
   getBundleTeamId,
@@ -421,22 +420,10 @@ const server = Bun.serve({
             );
           }
 
-          // Cloud bundle: session must already be in the cloud
-          const session = loadActiveSession(sessionId);
-          if (session && !session.cloud_session_id) {
-            return Response.json(
-              { error: "Push session to cloud first before pushing entries to a cloud bundle." },
-              { status: 400, headers: corsHeaders }
-            );
-          }
-          if (session?.cloud_session_id) {
-            await syncNewEntries(session);
-          }
-
-          const result = await addEntriesToBundle(bundle_id, ids);
+          // Cloud bundle: not allowed for local sessions (use copy-to-cloud flow instead)
           return Response.json(
-            { ok: true, pushed: result.added, skipped: result.skipped, total: ids.length },
-            { headers: corsHeaders }
+            { error: "Use 'Copy to Cloud' to push a local session's entries to a cloud bundle." },
+            { status: 400, headers: corsHeaders }
           );
         } catch (err: any) {
           return Response.json(
@@ -447,14 +434,38 @@ const server = Bun.serve({
       }
     }
 
-    // ── POST /api/sessions/:id/push-to-cloud ──────────────────────────────
+    // ── POST /api/sessions/:id/copy-to-cloud ─────────────────────────────
+    // Creates an independent copy of the session in the cloud.
+    // Optionally connects the cloud copy to a bundle and adds its entries.
     {
-      const match = url.pathname.match(/^\/api\/sessions\/([^/]+)\/push-to-cloud$/);
+      const match = url.pathname.match(/^\/api\/sessions\/([^/]+)\/copy-to-cloud$/);
       if (match && req.method === "POST") {
         try {
           const sessionId = match[1];
-          const { team_id } = await req.json();
-          const result = await pushSessionToCloud(sessionId, team_id);
+          const { team_id, bundle_id } = await req.json();
+          if (!team_id) {
+            return Response.json(
+              { error: "team_id is required" },
+              { status: 400, headers: corsHeaders }
+            );
+          }
+
+          const result = await copySessionToCloud(sessionId, team_id);
+
+          // If a bundle_id was provided, add the cloud entries to it
+          if (bundle_id) {
+            const bundleTeamId = await getBundleTeamId(bundle_id);
+            if (bundleTeamId !== team_id) {
+              return Response.json(
+                { error: "Bundle and session must be in the same team." },
+                { status: 400, headers: corsHeaders }
+              );
+            }
+            if (result.cloud_entry_ids.length > 0) {
+              await addEntriesToBundle(bundle_id, result.cloud_entry_ids);
+            }
+          }
+
           return Response.json(result, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
@@ -474,16 +485,22 @@ const server = Bun.serve({
           const { bundle_id } = await req.json();
           const mode = resolveBundleMode(bundle_id);
 
-          // Block local-only sessions from connecting to cloud bundles
-          // User must push session to cloud first
+          // Block local sessions from connecting to cloud bundles
+          // Use the "Copy to Cloud" flow instead
           if (mode === "cloud") {
             const sess = loadActiveSession(sessionId);
-            if (sess && !sess.cloud_session_id) {
+            if (sess) {
+              // This is a local active session — can't connect directly to cloud
               return Response.json(
-                { error: "Push session to cloud first before connecting to a cloud bundle." },
+                { error: "Use 'Copy to Cloud' to connect a local session to a cloud bundle." },
                 { status: 400, headers: corsHeaders }
               );
             }
+            // If no active session found, it might be a cloud session — allow it
+            // but check same-team
+            const bundleTeamId = await getBundleTeamId(bundle_id);
+            // We can't easily check the cloud session's team from here,
+            // but the bundle's team auth will catch cross-team attempts
           }
 
           const session = connectSessionToBundle(sessionId, bundle_id, mode);
@@ -551,6 +568,7 @@ const server = Bun.serve({
         const { session_id, bundle_id } = await req.json();
         const mode = resolveBundleMode(bundle_id);
 
+
         // Resolve the local session ID (session_id might be a cloud session ID)
         let localSessionId = session_id;
         const directSession = loadActiveSession(session_id);
@@ -565,9 +583,9 @@ const server = Bun.serve({
         const entries = getSessionEntries(localSessionId);
         const entryIds = entries.map((e) => e.id);
 
+
         // Remove entry refs from the bundle
         if (mode === "local") {
-          // Remove by session_id match (covers all refs for this session)
           localRemoveSessionRefsFromBundle(bundle_id, localSessionId);
           // Also try with the original session_id in case it differs
           if (localSessionId !== session_id) {

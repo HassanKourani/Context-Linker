@@ -73,9 +73,9 @@ export function ProjectNode({ data }: NodeProps) {
                 setPushToCloudTarget(s.id);
                 openModal("push-to-cloud");
               }}
-              title="Push session to cloud"
+              title="Copy session to cloud"
             >
-              ↑ Cloud
+              ↑ Copy to Cloud
             </button>
           ) : null}
           <span className="ml-auto text-muted-foreground/60 text-[10px] whitespace-nowrap">

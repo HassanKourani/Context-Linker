@@ -10,7 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useUIStore } from "@/stores/uiStore";
 import { useTeams } from "@/hooks/useTeams";
-import { usePushToCloud } from "@/hooks/mutations/usePushToCloud";
+import { useCopyToCloud } from "@/hooks/mutations/usePushToCloud";
 
 export function PushToCloudDialog() {
   const activeModal = useUIStore((s) => s.activeModal);
@@ -20,7 +20,7 @@ export function PushToCloudDialog() {
 
   const [selectedTeamId, setSelectedTeamId] = useState("");
   const { data: teams } = useTeams();
-  const mutation = usePushToCloud();
+  const mutation = useCopyToCloud();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,9 +40,10 @@ export function PushToCloudDialog() {
     <Dialog open={open} onOpenChange={(o) => !o && closeModal()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Push Session to Cloud</DialogTitle>
+          <DialogTitle>Copy Session to Cloud</DialogTitle>
           <DialogDescription>
-            Sync this session and its entries to a cloud team so they persist across machines.
+            Create an independent copy of this session in the cloud. The local session stays as-is
+            — changes to either version won't affect the other.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -70,7 +71,7 @@ export function PushToCloudDialog() {
           </div>
           <DialogFooter>
             <Button type="submit" disabled={mutation.isPending || !selectedTeamId}>
-              {mutation.isPending ? "Pushing..." : "Push to Cloud"}
+              {mutation.isPending ? "Copying..." : "Copy to Cloud"}
             </Button>
           </DialogFooter>
         </form>

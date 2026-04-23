@@ -185,9 +185,12 @@ export function joinTeam(body: { name: string; password: string }) {
 // Cloud Sessions
 // ---------------------------------------------------------------------------
 
-export function pushSessionToCloud(sessionId: string, body: { team_id: string }) {
-  return apiPost<{ cloud_session_id: string; entries_synced: number }>(
-    `/api/sessions/${sessionId}/push-to-cloud`,
+export function copySessionToCloud(
+  sessionId: string,
+  body: { team_id: string; bundle_id?: string },
+) {
+  return apiPost<{ cloud_session_id: string; cloud_entry_ids: string[]; entries_copied: number }>(
+    `/api/sessions/${sessionId}/copy-to-cloud`,
     body,
   );
 }

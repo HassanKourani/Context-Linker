@@ -1,15 +1,22 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { pushSessionToCloud } from "@/lib/api";
+import { copySessionToCloud } from "@/lib/api";
 import { toast } from "sonner";
 
-export function usePushToCloud() {
+export function useCopyToCloud() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ sessionId, teamId }: { sessionId: string; teamId: string }) =>
-      pushSessionToCloud(sessionId, { team_id: teamId }),
+    mutationFn: ({
+      sessionId,
+      teamId,
+      bundleId,
+    }: {
+      sessionId: string;
+      teamId: string;
+      bundleId?: string;
+    }) => copySessionToCloud(sessionId, { team_id: teamId, bundle_id: bundleId }),
 
     onSuccess: (data) => {
-      toast.success(`Session pushed to cloud. ${data.entries_synced} entries synced.`);
+      toast.success(`Session copied to cloud. ${data.entries_copied} entries copied.`);
       qc.invalidateQueries({ queryKey: ["graph"] });
     },
 

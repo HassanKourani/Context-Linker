@@ -2,10 +2,7 @@ import { getSupabase } from "./supabase.js";
 import {
   loadGlobalConfig,
   loadActiveSession,
-  saveActiveSession,
   getSessionEntries,
-  type ActiveSession,
-  type SessionEntry,
 } from "./config.js";
 import { assertTeamMember } from "./teams.js";
 
@@ -33,25 +30,23 @@ export interface CloudSessionEntry {
 }
 
 /**
- * Promote a local session to cloud. Creates cloud_sessions + cloud_session_entries rows.
- * Updates the local ActiveSession with cloud_session_id and team_id.
+ * Copy a local session to the cloud as an independent snapshot.
+ * Creates a new cloud_sessions row + new cloud_session_entries with fresh UUIDs.
+ * The local session is NOT modified — no link between local and cloud after copy.
+ * Returns the cloud session ID and the new cloud entry IDs (for adding to bundles).
  */
-export async function pushSessionToCloud(
+export async function copySessionToCloud(
   sessionId: string,
   teamId: string
-): Promise<{ cloud_session_id: string; entries_synced: number }> {
+): Promise<{ cloud_session_id: string; cloud_entry_ids: string[]; entries_copied: number }> {
   await assertTeamMember(teamId);
   const cfg = loadGlobalConfig();
   const session = loadActiveSession(sessionId);
   if (!session) throw new Error(`Active session ${sessionId} not found.`);
 
-  if (session.cloud_session_id && session.team_id === teamId) {
-    const synced = await syncNewEntries(session);
-    return { cloud_session_id: session.cloud_session_id, entries_synced: synced };
-  }
-
   const sb = getSupabase();
 
+  // Create cloud session
   const { data: cloudSession, error: sessionError } = await sb
     .from("cloud_sessions")
     .insert({
@@ -67,108 +62,46 @@ export async function pushSessionToCloud(
 
   if (sessionError) throw new Error(`Failed to create cloud session: ${sessionError.message}`);
 
+  // Copy all local entries with NEW UUIDs (independent copies)
   const localEntries = getSessionEntries(sessionId);
-  let entriesSynced = 0;
+  const cloudEntryIds: string[] = [];
 
   if (localEntries.length > 0) {
-    const rows = localEntries.map((e) => ({
-      id: e.id,
-      session_id: cloudSession.id,
-      event_type: e.event_type,
-      trigger_ref: e.trigger_ref,
-      summary: e.summary,
-      files_touched: e.files_touched,
-      decisions: e.decisions,
-      created_at: e.created_at,
-    }));
+    const rows = localEntries.map((e) => {
+      const newId = crypto.randomUUID();
+      cloudEntryIds.push(newId);
+      return {
+        id: newId,
+        session_id: cloudSession.id,
+        event_type: e.event_type,
+        trigger_ref: e.trigger_ref,
+        summary: e.summary,
+        files_touched: e.files_touched,
+        decisions: e.decisions,
+        created_at: e.created_at,
+      };
+    });
 
     const { error: entriesError } = await sb
       .from("cloud_session_entries")
-      .upsert(rows, { onConflict: "id" });
+      .insert(rows);
 
-    if (entriesError) throw new Error(`Failed to sync entries: ${entriesError.message}`);
-    entriesSynced = rows.length;
+    if (entriesError) throw new Error(`Failed to copy entries: ${entriesError.message}`);
   }
 
-  session.cloud_session_id = cloudSession.id;
-  session.team_id = teamId;
-  saveActiveSession(session);
+  // Local session is NOT modified — no cloud_session_id, no team_id.
+  // The two are completely independent from this point.
 
-  return { cloud_session_id: cloudSession.id, entries_synced: entriesSynced };
+  return {
+    cloud_session_id: cloudSession.id,
+    cloud_entry_ids: cloudEntryIds,
+    entries_copied: localEntries.length,
+  };
 }
 
-export async function syncNewEntries(session: ActiveSession): Promise<number> {
-  if (!session.cloud_session_id) return 0;
-
-  const sb = getSupabase();
-  const localEntries = getSessionEntries(session.session_id);
-
-  const { data: existing } = await sb
-    .from("cloud_session_entries")
-    .select("id")
-    .eq("session_id", session.cloud_session_id);
-
-  const existingIds = new Set((existing ?? []).map((e: any) => e.id));
-  const newEntries = localEntries.filter((e) => !existingIds.has(e.id));
-
-  if (newEntries.length === 0) return 0;
-
-  const rows = newEntries.map((e) => ({
-    id: e.id,
-    session_id: session.cloud_session_id!,
-    event_type: e.event_type,
-    trigger_ref: e.trigger_ref,
-    summary: e.summary,
-    files_touched: e.files_touched,
-    decisions: e.decisions,
-    created_at: e.created_at,
-  }));
-
-  const { error } = await sb
-    .from("cloud_session_entries")
-    .upsert(rows, { onConflict: "id" });
-
-  if (error) throw new Error(`syncNewEntries failed: ${error.message}`);
-
-  await sb
-    .from("cloud_sessions")
-    .update({ last_active_at: new Date().toISOString() })
-    .eq("id", session.cloud_session_id);
-
-  return newEntries.length;
-}
-
-export async function syncEntryToCloud(
-  session: ActiveSession,
-  entry: SessionEntry
-): Promise<void> {
-  if (!session.cloud_session_id) return;
-
-  const sb = getSupabase();
-  const { error } = await sb
-    .from("cloud_session_entries")
-    .upsert(
-      {
-        id: entry.id,
-        session_id: session.cloud_session_id,
-        event_type: entry.event_type,
-        trigger_ref: entry.trigger_ref,
-        summary: entry.summary,
-        files_touched: entry.files_touched,
-        decisions: entry.decisions,
-        created_at: entry.created_at,
-      },
-      { onConflict: "id" }
-    );
-
-  if (error) throw new Error(`syncEntryToCloud failed: ${error.message}`);
-
-  await sb
-    .from("cloud_sessions")
-    .update({ last_active_at: new Date().toISOString() })
-    .eq("id", session.cloud_session_id);
-}
-
+/**
+ * Delete a cloud session entry. Cascades removal from all bundle_entry_refs.
+ */
 export async function deleteCloudSessionEntry(entryId: string): Promise<void> {
   const sb = getSupabase();
   const { error } = await sb
@@ -178,6 +111,9 @@ export async function deleteCloudSessionEntry(entryId: string): Promise<void> {
   if (error) throw new Error(`deleteCloudSessionEntry failed: ${error.message}`);
 }
 
+/**
+ * Delete a cloud session and all its entries (cascades via FK).
+ */
 export async function deleteCloudSession(cloudSessionId: string): Promise<void> {
   const sb = getSupabase();
   const { error } = await sb
@@ -187,6 +123,9 @@ export async function deleteCloudSession(cloudSessionId: string): Promise<void> 
   if (error) throw new Error(`deleteCloudSession failed: ${error.message}`);
 }
 
+/**
+ * List all cloud sessions for a team.
+ */
 export async function listTeamSessions(teamId: string): Promise<CloudSession[]> {
   const sb = getSupabase();
   const { data, error } = await sb
@@ -199,6 +138,9 @@ export async function listTeamSessions(teamId: string): Promise<CloudSession[]> 
   return (data ?? []) as CloudSession[];
 }
 
+/**
+ * Get cloud session entries.
+ */
 export async function getCloudSessionEntries(
   cloudSessionId: string,
   includeSuperseded = false
@@ -219,6 +161,9 @@ export async function getCloudSessionEntries(
   return (data ?? []) as CloudSessionEntry[];
 }
 
+/**
+ * Get which bundles reference a given entry.
+ */
 export async function getEntryBundleRefs(
   entryId: string
 ): Promise<Array<{ bundle_id: string; added_at: string }>> {

@@ -10,12 +10,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { useUIStore } from "@/stores/uiStore";
 import { useTeams } from "@/hooks/useTeams";
-import { usePushToCloud } from "@/hooks/mutations/usePushToCloud";
-import { useConnectSession } from "@/hooks/mutations/useConnectSession";
+import { useCopyToCloud } from "@/hooks/mutations/usePushToCloud";
 
 /**
  * Shown when a user tries to connect a local session to a cloud bundle.
- * Explains that the session needs to be pushed to cloud first, offers to do it.
+ * Copies the session to cloud and adds its entries to the bundle in one step.
  */
 export function PushToCloudPromptDialog() {
   const activeModal = useUIStore((s) => s.activeModal);
@@ -25,51 +24,42 @@ export function PushToCloudPromptDialog() {
 
   const [selectedTeamId, setSelectedTeamId] = useState("");
   const { data: teams } = useTeams();
-  const pushMutation = usePushToCloud();
-  const connectMutation = useConnectSession();
+  const copyMutation = useCopyToCloud();
 
-  const handlePushAndConnect = (e: React.FormEvent) => {
+  const handleCopyAndConnect = (e: React.FormEvent) => {
     e.preventDefault();
     if (!pendingCloudConnect || !selectedTeamId) return;
 
-    pushMutation.mutate(
-      { sessionId: pendingCloudConnect.sessionId, teamId: selectedTeamId },
+    // Copy session to cloud AND add entries to the bundle in one API call
+    copyMutation.mutate(
+      {
+        sessionId: pendingCloudConnect.sessionId,
+        teamId: selectedTeamId,
+        bundleId: pendingCloudConnect.bundleId,
+      },
       {
         onSuccess: () => {
-          // Now connect to the bundle
-          connectMutation.mutate(
-            {
-              sessionId: pendingCloudConnect.sessionId,
-              bundle_id: pendingCloudConnect.bundleId,
-            },
-            {
-              onSuccess: () => {
-                closeModal();
-                setSelectedTeamId("");
-              },
-            },
-          );
+          closeModal();
+          setSelectedTeamId("");
         },
       },
     );
   };
 
-  const isPending = pushMutation.isPending || connectMutation.isPending;
-
   return (
     <Dialog open={open} onOpenChange={(o) => !o && closeModal()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Session Not in Cloud</DialogTitle>
+          <DialogTitle>Copy Session to Cloud</DialogTitle>
           <DialogDescription>
-            This session is local-only. To connect it to a cloud bundle, it needs to be
-            pushed to the cloud first. This will copy the session and its entries to the
-            cloud under a team — the local session stays as-is.
+            This session is local-only. To connect it to a cloud bundle, an independent
+            copy will be created in the cloud. The local session stays unchanged —
+            edits to either version won't affect the other.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handlePushAndConnect} className="space-y-4">
+        <form onSubmit={handleCopyAndConnect} className="space-y-4">
           <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">Push to team</label>
+            <label className="text-sm font-medium text-foreground">Copy to team</label>
             {(teams ?? []).length > 0 ? (
               <select
                 className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground"
@@ -94,8 +84,8 @@ export function PushToCloudPromptDialog() {
             <Button type="button" variant="ghost" onClick={closeModal}>
               Cancel
             </Button>
-            <Button type="submit" disabled={isPending || !selectedTeamId}>
-              {isPending ? "Pushing..." : "Push to Cloud & Connect"}
+            <Button type="submit" disabled={copyMutation.isPending || !selectedTeamId}>
+              {copyMutation.isPending ? "Copying..." : "Copy to Cloud & Connect"}
             </Button>
           </DialogFooter>
         </form>

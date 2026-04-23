@@ -34,8 +34,7 @@ import {
   getUnpushedSessionEntries,
   addEntriesToBundle,
   localAddEntriesToBundle,
-  pushSessionToCloud,
-  syncNewEntries,
+  copySessionToCloud,
   isLocalBundle,
   type RewindStrategy,
 } from "@ctx-link/core";
@@ -388,10 +387,10 @@ program
         choices: teams.map(t => ({ name: t.name, value: t.team_id, description: t.team_id })),
       });
     }
-    const result = await pushSessionToCloud(sessionId, teamId);
-    console.log(`Session pushed to cloud.`);
+    const result = await copySessionToCloud(sessionId, teamId);
+    console.log(`Session copied to cloud.`);
     console.log(`  Cloud ID: ${result.cloud_session_id}`);
-    console.log(`  Entries synced: ${result.entries_synced}`);
+    console.log(`  Entries copied: ${result.entries_copied}`);
   });
 
 // ==================== CONNECT / DISCONNECT ====================
@@ -437,9 +436,6 @@ program
         if (isLocalBundle(bundleId)) {
           localAddEntriesToBundle(bundleId, entryIds, session.session_id);
         } else {
-          if (session.cloud_session_id) {
-            await syncNewEntries(session);
-          }
           await addEntriesToBundle(bundleId, entryIds);
         }
         console.log(`Pushed ${entries.length} session entries to bundle.`);
@@ -654,11 +650,6 @@ program
     if (entryIds.length === 0) {
       console.log("No session entries to push.");
       return;
-    }
-
-    // Sync to cloud if cloud-enabled
-    if (session.cloud_session_id) {
-      await syncNewEntries(session);
     }
 
     for (const b of session.bundles) {
