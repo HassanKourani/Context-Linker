@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { ArrowUpRight, RefreshCw, Trash2, Undo2, X } from "lucide-react";
+import { ArrowUpRight, RefreshCw, Trash2, X } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { useEntries } from "@/hooks/useEntries";
 import { useSessionEntries } from "@/hooks/useSessionEntries";
@@ -136,26 +136,15 @@ export function EntryPanel() {
           )}
           <div className="ml-auto flex items-center gap-1">
             {isBundle && selectedEntryIds.size > 0 && (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="text-xs text-destructive"
-                  onClick={handleDeleteSelected}
-                >
-                  <Trash2 className="w-3 h-3 mr-1" />
-                  Remove ({selectedEntryIds.size})
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="text-xs text-destructive"
-                  onClick={() => openModal("rewind")}
-                >
-                  <Undo2 className="w-3 h-3 mr-1" />
-                  Rewind ({selectedEntryIds.size})
-                </Button>
-              </>
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs text-destructive"
+                onClick={handleDeleteSelected}
+              >
+                <Trash2 className="w-3 h-3 mr-1" />
+                Remove ({selectedEntryIds.size})
+              </Button>
             )}
             {isBundle && (
               <Button
