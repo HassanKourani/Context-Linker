@@ -35,18 +35,6 @@ export function DeletableEdge({
   const isHovered = (data as any)?._hovered as boolean | undefined;
   const deleteMutation = useDeleteSession();
 
-  const handleDelete = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    e.preventDefault();
-    if (!sessionId || !bundleId || !projectName) return;
-    deleteMutation.mutate({
-      session_id: sessionId,
-      bundle_id: bundleId,
-      project_name: projectName,
-      mode,
-    });
-  };
-
   const showButton = isHovered || selected;
 
   return (
@@ -64,18 +52,30 @@ export function DeletableEdge({
       {sessionId && showButton && (
         <EdgeLabelRenderer>
           <div
-            className="nodrag nopan absolute"
+            className="nodrag nopan"
             style={{
+              position: "absolute",
               transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
               pointerEvents: "all",
+              zIndex: 1000,
             }}
             onMouseEnter={keepEdgeHovered}
             onMouseLeave={unhoverEdge}
           >
             <button
+              style={{ pointerEvents: "all", zIndex: 1000 }}
               className="bg-destructive text-destructive-foreground rounded-full w-6 h-6 flex items-center justify-center shadow-lg hover:scale-125 cursor-pointer transition-transform border border-destructive-foreground/20"
-              onClick={handleDelete}
-              onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                if (!sessionId || !bundleId || !projectName) return;
+                deleteMutation.mutate({
+                  session_id: sessionId,
+                  bundle_id: bundleId,
+                  project_name: projectName,
+                  mode,
+                });
+              }}
               title="Unlink session"
             >
               <X className="w-3.5 h-3.5" />
