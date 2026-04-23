@@ -12,7 +12,7 @@ export type RewindStrategy =
 
 export interface RewindInput {
   bundle_id: string;
-  project_name: string;
+  project_name?: string;
   strategy: RewindStrategy;
   reason?: string;
   dry_run?: boolean;
@@ -49,6 +49,9 @@ async function findCandidates(input: RewindInput): Promise<RewindCandidate[]> {
   // Pivot lookup for after_ref has to happen before the main query.
   let sinceBound: string | null = null;
   if (input.strategy.kind === "after_ref") {
+    if (!input.project_name) {
+      throw new Error("after_ref strategy requires project_name.");
+    }
     const { data: pivot, error } = await sb
       .from("entries")
       .select("created_at, sessions!inner(project_name)")
@@ -67,15 +70,22 @@ async function findCandidates(input: RewindInput): Promise<RewindCandidate[]> {
     sinceBound = (pivot as any).created_at;
   }
 
+  const needsProjectScope = !!input.project_name;
+
   let q = sb
     .from("entries")
     .select(
-      "id, created_at, event_type, trigger_ref, summary, sessions!inner(project_name)"
+      needsProjectScope
+        ? "id, created_at, event_type, trigger_ref, summary, sessions!inner(project_name)"
+        : "id, created_at, event_type, trigger_ref, summary"
     )
     .eq("bundle_id", input.bundle_id)
     .is("superseded_at", null)
-    .eq("sessions.project_name", input.project_name)
     .order("created_at", { ascending: false });
+
+  if (needsProjectScope) {
+    q = q.eq("sessions.project_name", input.project_name!);
+  }
 
   switch (input.strategy.kind) {
     case "since":
@@ -159,7 +169,7 @@ export async function rewindProject(input: RewindInput): Promise<RewindResult> {
     .from("rewind_log")
     .insert({
       bundle_id: input.bundle_id,
-      project_name: input.project_name,
+      project_name: input.project_name ?? "",
       strategy_kind: input.strategy.kind,
       strategy_detail: input.strategy as any,
       affected_entry_ids: ids,

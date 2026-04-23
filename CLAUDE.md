@@ -8,7 +8,7 @@ ctx-link connects Claude Code sessions across repositories via shared "context b
 
 ## Architecture
 
-Bun monorepo with 4 packages:
+Bun monorepo with 5 packages:
 
 ```
 packages/
@@ -16,7 +16,7 @@ packages/
   mcp-server/    MCP protocol wrapper (stdio) — Claude Code talks to this
   cli/           CLI tool (`cxtl`) for manual operations
   ui/            React web dashboard — node graph + interactive management
-  hooks/         Git post-commit + Claude Code PostToolUse hook scripts
+  hooks/         Git post-commit + Claude Code PostToolUse hook scripts (session-log on commit/PR)
 supabase/
   migrations/    SQL schema (teams, bundles, sessions, entries, rewind_log)
 ```
@@ -47,11 +47,11 @@ teams → bundles → sessions → entries
 All exported from `@ctx-link/core`:
 
 ### Bundles (bundles.ts)
-- `createBundle(name, mode, teamId?)` → `{ bundle_id, name, join_token }`
-- `joinBundle(bundleId, token, projectName, mode)` → `{ bundle_id, name }` (mode resolved server-side in UI)
-- `deleteBundle(bundleId, mode)` → void (mode resolved server-side in UI)
-- `bundleStatus(bundleId, mode)` → `{ session_count, entry_count, last_entry_at }`
-- `listBundleSessions(bundleId)` → `SessionInfo[]`
+- `createBundle(name, mode?, teamId?)` → `{ bundle_id, name, join_token }`
+- `joinBundle(bundleId, token, projectName, mode?)` → `{ bundle_id, name }`
+- `deleteBundle(bundleId, mode?)` → void
+- `bundleStatus(bundleId, mode?, skipAuth?)` → `{ bundle_id, name, session_count, entry_count, last_entry_at }`
+- `listBundleSessions(bundleId, skipAuth?)` → `SessionInfo[]`
 - `deleteSession(sessionId)` → void (removes session row only, keeps entries)
 - `listLocalBundles()` → `LocalBundleInfo[]`
 
@@ -59,6 +59,7 @@ All exported from `@ctx-link/core`:
 - `pushEntry(input)` → `PushResult` — auto-creates/updates session. Also saves to active session's entry log if one exists.
 - `pullEntries(input)` → `EntryRow[]` — filters by since/limit/project, hides rewound
 - `renderEntriesForClaude(entries)` → string (markdown format for LLM context)
+- `removeSourceEntry(bundleId, entryId, sourceEntryId)` → void — removes a source entry from a consolidated entry
 
 ### Rewind (rewind.ts)
 - `rewindProject(input)` → `RewindResult` — strategies: since, last_n, entry_ids, after_ref
@@ -76,11 +77,17 @@ All exported from `@ctx-link/core`:
 - `loadGlobalConfig()` → `{ machine_id }` (auto-creates on first use)
 - `loadProjectConfig(cwd?)` → `ProjectConfig | null`
 - `getBundleToken(bundleId)` / `storeBundleToken(bundleId, token, name)`
+- `loadSessionLog()` / `logSession(entry)` — session history across projects
+- `listActiveSessions()` → active Claude Code sessions from `~/.ctx-link/active-sessions/`
+- `pushSessionEntry(sessionId, entry)` / `getSessionEntries(sessionId)` — per-session entry log
+- `getUnpushedSessionEntries(sessionId)` / `markSessionEntriesPushed(sessionId, entryIds)`
+- `deleteSessionEntry(sessionId, entryId)` — remove entry from session log
 
 ### Local Store (local-store.ts)
 - Mirrors cloud functions for `mode: "local"`: `localCreateBundle`, `localJoinBundle`, `localPushEntry`, `localPullEntries`, etc.
 - `listAllLocalBundleDetails()` → bundle + project list derived from entries
 - `localDeleteProjectFromBundle(bundleId, projectName)` → removes entries for a project
+- `localRemoveSourceEntry(bundleId, entryId, sourceEntryId)` → remove source from consolidated entry
 
 ## UI Architecture (packages/ui/)
 
@@ -115,25 +122,35 @@ Endpoints:
 - `POST /api/bundles/:id/restore` — restore entries
 - `GET /api/bundles/:id/rewinds` — rewind history
 - `POST /api/unlink-session` — remove session link (local or cloud)
+- `GET /api/sessions/:id/entries` — get entries for a session
 - `DELETE /api/sessions/:id` — delete active session + its context entries
-- `GET /api/sessions` — list active Claude Code sessions
+- `POST /api/sessions/:id/connect` — connect active session to a bundle
+- `POST /api/sessions/:id/push-to-bundle` — consolidate session entries and push to bundle
+- `DELETE /api/sessions/:id/entries/:entryId` — delete a single session entry
 
 ### Mutation Hooks (optimistic updates)
 All write operations use TanStack Query mutations with optimistic updates:
-- `useDeleteSession` — instantly removes edge from graph
-- `useDeleteBundle` — instantly removes bundle node
+- `useCreateBundle` — adds bundle to graph
 - `useJoinBundle` — instantly adds edge
+- `useDeleteBundle` — instantly removes bundle node
+- `useDeleteSession` — instantly removes edge from graph
+- `useConnectSession` — connects active session to bundle
 - `usePushEntry` — instantly prepends entry to timeline
-- `useRewind` — instantly removes entries from list
+- `usePushSessionToBundle` — consolidates session entries and pushes to bundle
+- `useRewind` / `useRestore` — instantly removes/restores entries from list
+- `useDeleteSessionEntry` — removes entry from session log
+- `useCreateTeam` / `useJoinTeam` — team management
 All roll back on error and refetch on settle.
 
 ### State Store (Zustand)
 ```typescript
 {
-  selectedBundleId, selectedBundleMode, panelTab,  // side panel
-  activeModal, deleteBundleTarget,                  // modals
-  selectedEntryIds,                                 // entry checkboxes (for rewind)
-  hoveredEdgeId,                                    // edge delete hover
+  panel,                  // { type: "bundle"|"session", id, mode?, tab }
+  activeModal,            // which dialog is open
+  deleteBundleTarget,     // bundle pending deletion confirmation
+  selectedEntryIds,       // entry checkboxes (for rewind)
+  hoveredEdgeId,          // edge delete hover
+  hideEmptySessions,      // graph filter toggle
 }
 ```
 
@@ -146,6 +163,8 @@ All roll back on error and refetch on settle.
   teams.json           { [teamId]: { team_id, name, joined_at } }
   sessions.json        Array of session log entries
   active-sessions/     One JSON per live Claude Code session
+  session-entries/     Per-session entry logs
+    <session_id>.json  Array of accumulated entries for that session
   local/               Local bundles
     <bundle_id>/
       meta.json        { id, name, created_at }
@@ -156,7 +175,10 @@ All roll back on error and refetch on settle.
 
 Tables: `teams`, `team_members`, `bundles`, `sessions`, `entries`, `rewind_log`
 
+Migrations: 0001_init (core tables), 0002_rewind (soft-delete + audit), 0003_teams (access control), 0004_source_entries (consolidation tracking)
+
 - Entries have `superseded_at` for soft-delete (rewind)
+- Entries have `source_entries` (jsonb) for tracking consolidated session entries
 - Sessions have `ON DELETE CASCADE` from bundles
 - Entries have `ON DELETE SET NULL` from sessions (entries survive session removal)
 - Teams use argon2 password hashing
@@ -166,7 +188,7 @@ Tables: `teams`, `team_members`, `bundles`, `sessions`, `entries`, `rewind_log`
 
 ```bash
 bun install                    # install all workspace deps
-bun run typecheck              # typecheck all 4 packages
+bun run typecheck              # typecheck all 5 packages
 bun run dev:ui-api             # start API proxy (port 5174)
 bun run dev:ui                 # start Vite dev server (port 5173)
 bun run dev:mcp                # start MCP server (watch mode)
@@ -183,3 +205,4 @@ bun run cli -- <args>          # run CLI
 - **Mode is server-resolved** — UI API endpoints operating on existing bundles do NOT require `mode`. The server checks `isLocalBundle(bundleId)` to determine local vs cloud. Only `POST /api/bundles` (create) takes `mode` since the bundle doesn't exist yet.
 - **Local and cloud behave identically** — same user-facing behavior for connect, disconnect, delete, push. Only the storage backend differs.
 - **Every push saves to the active session** — `pushEntry` and `localPushEntry` both auto-save to `~/.ctx-link/session-entries/{session_id}.json` if an active session exists (via `.cxtl-active-session` marker). This means clicking a session in the UI shows all context accumulated during that session.
+- **Interactive CLI** — CLI commands prompt for options when flags aren't provided (mode, team, bundle, strategy, etc.) via `@inquirer/prompts`. Flags still work for scripting. `connect` and `join` auto-detect mode via `isLocalBundle()`.

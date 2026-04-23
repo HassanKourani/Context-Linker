@@ -135,8 +135,29 @@ Remove a session's connection to a bundle. Body:
 
 Removes the bundle from the active session's bundles array. Same behavior for local and cloud — only the link is removed, session and entries are preserved.
 
+### GET /api/sessions/:id/entries
+Get accumulated entries for a specific active session.
+
 ### DELETE /api/sessions/:id
 Delete an active session and its accumulated context entries.
 
-### GET /api/sessions
-List active Claude Code sessions (from `~/.ctx-link/active-sessions/`).
+### POST /api/sessions/:id/connect
+Connect an active session to a bundle. Body:
+```json
+{
+  "bundle_id": "string",
+  "mode": "local | cloud"
+}
+```
+
+### POST /api/sessions/:id/push-to-bundle
+Consolidate a session's unpushed entries and push them to a bundle as one entry. Body:
+```json
+{
+  "bundle_id": "string",
+  "summary": "string"
+}
+```
+
+### DELETE /api/sessions/:id/entries/:entryId
+Delete a single entry from a session's accumulated entry log.

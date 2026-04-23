@@ -29,6 +29,9 @@ import {
   loadActiveSession,
   deleteProjectEntriesFromBundle,
   localDeleteProjectFromBundle,
+  localRewindProject,
+  localRestoreRewound,
+  localListRewinds,
 } from "@ctx-link/core";
 
 const server = Bun.serve({
@@ -313,21 +316,9 @@ const server = Bun.serve({
           const { project_name, strategy, reason, dry_run, force } = await req.json();
           const mode = resolveBundleMode(bundleId);
 
-          if (mode === "local") {
-            return Response.json(
-              { applied: false, dry_run: false, affected_count: 0, affected_entries: [], message: "Rewind is not yet supported for local bundles." },
-              { headers: corsHeaders }
-            );
-          }
-
-          const result = await rewindProject({
-            bundle_id: bundleId,
-            project_name,
-            strategy,
-            reason,
-            dry_run,
-            force,
-          });
+          const result = mode === "local"
+            ? localRewindProject({ bundle_id: bundleId, project_name, strategy, reason, dry_run, force })
+            : await rewindProject({ bundle_id: bundleId, project_name, strategy, reason, dry_run, force });
           return Response.json(result, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
@@ -347,19 +338,9 @@ const server = Bun.serve({
           const { project_name, entry_ids, rewind_log_id } = await req.json();
           const mode = resolveBundleMode(bundleId);
 
-          if (mode === "local") {
-            return Response.json(
-              { restored_count: 0, restored_ids: [] },
-              { headers: corsHeaders }
-            );
-          }
-
-          const result = await restoreRewound({
-            bundle_id: bundleId,
-            project_name,
-            entry_ids,
-            rewind_log_id,
-          });
+          const result = mode === "local"
+            ? localRestoreRewound({ bundle_id: bundleId, project_name, entry_ids, rewind_log_id })
+            : await restoreRewound({ bundle_id: bundleId, project_name, entry_ids, rewind_log_id });
           return Response.json(result, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
@@ -378,7 +359,10 @@ const server = Bun.serve({
           const bundleId = match[1];
           const project_name = url.searchParams.get("project_name") || undefined;
           const limit = parseInt(url.searchParams.get("limit") || "20");
-          const rewinds = await listRewinds(bundleId, project_name, limit);
+          const mode = resolveBundleMode(bundleId);
+          const rewinds = mode === "local"
+            ? localListRewinds(bundleId, project_name, limit)
+            : await listRewinds(bundleId, project_name, limit);
           return Response.json(rewinds, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(

@@ -68,26 +68,23 @@ export const useUIStore = create<UIState>((set, get) => ({
     try { return localStorage.getItem("ctx-link-hide-empty-sessions") === "true"; } catch { return false; }
   })(),
 
-  // Computed getters for backward compat
-  get selectedBundleId() {
-    const p = get().panel;
-    return p?.kind === "bundle" ? p.bundleId : null;
-  },
-  get filterProject() {
-    const p = get().panel;
-    return p?.kind === "bundle" ? p.filterProject : null;
-  },
+  selectedBundleId: null,
+  filterProject: null,
 
   openBundlePanel: (bundleId, filterProject) =>
     set({
       panel: { kind: "bundle", bundleId, filterProject: filterProject ?? null },
       panelTab: "entries",
+      selectedBundleId: bundleId,
+      filterProject: filterProject ?? null,
     }),
 
   openSessionPanel: (sessionId, projectName) =>
     set({
       panel: { kind: "session", sessionId, projectName },
       panelTab: "entries",
+      selectedBundleId: null,
+      filterProject: null,
     }),
 
   // Legacy alias
@@ -95,17 +92,19 @@ export const useUIStore = create<UIState>((set, get) => ({
     set({
       panel: { kind: "bundle", bundleId, filterProject: filterProject ?? null },
       panelTab: "entries",
+      selectedBundleId: bundleId,
+      filterProject: filterProject ?? null,
     }),
 
   closePanel: () =>
-    set({ panel: null, selectedEntryIds: new Set() }),
+    set({ panel: null, selectedEntryIds: new Set(), selectedBundleId: null, filterProject: null }),
 
   setPanelTab: (tab) => set({ panelTab: tab }),
 
   setFilterProject: (project) =>
     set((state) => {
       if (state.panel?.kind !== "bundle") return {};
-      return { panel: { ...state.panel, filterProject: project } };
+      return { panel: { ...state.panel, filterProject: project }, filterProject: project };
     }),
 
   openModal: (modal) => set({ activeModal: modal }),

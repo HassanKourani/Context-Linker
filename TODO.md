@@ -103,7 +103,7 @@
 
 - [ ] End-to-end encryption: AES-GCM before writing to Supabase
 - [x] ~~Cloud mode~~ — implemented (mode: "cloud" with Supabase)
-- [ ] Web UI: bundle timelines, manual push approval, rewind controls
+- [x] ~~Web UI~~ — implemented (React Flow graph + entry panels + rewind + session management)
 - [ ] Smarter rollup: batch commits within N minutes into one entry
 - [x] ~~Per-user permissions~~ — replaced by team-based access control
 - [ ] Git notes sync so summaries are mirrored into the repo itself
@@ -124,117 +124,73 @@
 
 ### Phase U0: Decide scope before starting
 
-- [ ] Pick the variant:
-  - **Option A:** Read-only local dashboard (half day). Browse bundles, view timelines, filter by project. No writes.
-  - **Option B:** Full interactive dashboard (1-2 days). Adds rewind UI, restore, manual push approval, diff previews.
-  - **Option C:** TUI instead of web (half day). Terminal-based using Ink.
-- [ ] Decide: standalone deployed tool, or purely local-first (just `bun run dev:ui`)?
-- [ ] Decide: read from Supabase directly with anon key + RLS, or go through a thin local API that proxies through core?
+- [x] Went with Option B: Full interactive dashboard + local API proxy
+- [x] Decided: local-first (`bun run dev:ui`), data through API proxy (server.ts)
+- [x] Decided: API proxy through core, no direct Supabase from browser
 
 ### Phase U1: Scaffold the package
 
-- [ ] Create `packages/ui/` directory in the monorepo
-- [ ] Run `bun create vite` inside (pick React + TypeScript template)
-- [ ] Add `packages/ui/package.json` name as `@ctx-link/ui`, set `type: "module"`, add workspace dep on `@ctx-link/core`
-- [ ] Add to root `package.json` scripts: `"dev:ui": "bun run --cwd packages/ui dev"`
-- [ ] Install Tailwind + shadcn/ui
-- [ ] Set up `tsconfig.json` extending the root
-- [ ] Add `.env.local` with `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (not `service_role`, this is client-side)
-- [ ] Verify `bun run dev:ui` serves a blank React page at localhost:5173
+- [x] Created `packages/ui/` with Vite + React + TypeScript
+- [x] Added `@ctx-link/ui` to monorepo workspaces
+- [x] Installed Tailwind v4 + shadcn/ui (base-ui variant) + sonner
+- [x] Set up tsconfig with `@/` alias
+- [x] API proxy (server.ts, port 5174) with Vite proxy config
 
-### Phase U2: Supabase access layer (read-only)
+### Phase U2: Data access layer
 
-- [ ] Add Supabase anon key to the config schema in `packages/core/src/config.ts` (currently only stores `service_role`)
-- [ ] Update `ctx-link init` to optionally accept `--supabase-anon-key` for UI use
-- [ ] Add RLS policies to Supabase so the anon key can only read bundles the user has joined
-- [ ] Create `packages/ui/src/lib/supabase.ts` with the browser Supabase client
-- [ ] Test basic query: list bundles for a known `machine_id`
+- [x] Built API proxy (server.ts) that imports @ctx-link/core
+- [x] Browser never talks to Supabase — all data goes through proxy
+- [x] No RLS needed — server uses service role key
 
 ### Phase U3: Data hooks
 
-- [ ] Install TanStack Query (`@tanstack/react-query`) for data fetching
-- [ ] Create `packages/ui/src/hooks/useBundles.ts` that lists bundles
-- [ ] Create `packages/ui/src/hooks/useBundleStatus.ts` wrapping `bundle_status` query
-- [ ] Create `packages/ui/src/hooks/useEntries.ts` for paginated entries per bundle
-- [ ] Create `packages/ui/src/hooks/useSessions.ts` for sessions in a bundle
-- [ ] Create `packages/ui/src/hooks/useRewindHistory.ts`
+- [x] TanStack Query v5 with 30s auto-refresh, 10s staleTime
+- [x] useGraphData, useEntries, useSessionEntries, useRewinds, useTeams
+- [x] Full mutation hooks with optimistic updates for all write operations
 
-### Phase U4: Core views (read-only MVP)
+### Phase U4: Core views
 
-**Bundle list page (`/`)**
-- [ ] Render a sidebar or grid of bundles this machine has joined
-- [ ] Show per-bundle: name, entry count, last activity, linked sessions (project names as chips)
-- [ ] Empty state: "No bundles yet. Run `ctx-link create <name>` in a repo to start."
-- [ ] Click bundle → navigate to detail view
-
-**Bundle detail page (`/bundles/:id`)**
-- [ ] Header: bundle name, ID, session chips
-- [ ] Timeline view of entries (newest first)
-- [ ] Each entry card shows:
-  - [ ] Project name badge (color-coded per project)
-  - [ ] Timestamp (relative + absolute on hover)
-  - [ ] Event type icon (commit, PR, manual, session_end)
-  - [ ] Trigger ref (commit SHA as monospace)
-  - [ ] Summary text
-  - [ ] Files touched (expandable list)
-  - [ ] Decisions (structured render with `affects` chips)
-- [ ] Toggle: show superseded entries (grayed out)
-- [ ] Filter controls: by project, by event type, by date range
-- [ ] Pagination or infinite scroll
-
-**Session view (subsection of bundle detail)**
-- [ ] List all sessions (per-project-per-machine) with last active time
-- [ ] Show which machine is you (highlight current `machine_id`)
+- [x] React Flow node graph with team groups, project nodes, bundle nodes
+- [x] Entry panel (side sheet) with entries + rewind history tabs
+- [x] Session panel with accumulated entries + push-to-bundle
+- [x] dagre auto-layout (LR), node positions persist to localStorage
 
 ### Phase U5: Visual polish
 
-- [ ] Color-code projects consistently (hash `project_name` → HSL color)
-- [ ] Add a project-lane timeline view: one column per project, entries flow down
-- [ ] Dark mode support (Tailwind + shadcn handles this mostly for free)
-- [ ] Empty states for every view
+- [x] Catppuccin Mocha dark theme
+- [x] Color-coded team groups (HSL hash)
+- [x] Relative time with date-fns
+- [x] Event type badges (colored chips)
+- [x] Entry cards with expand/collapse
 - [ ] Loading skeletons (not spinners)
-- [ ] Relative time with `date-fns` or similar, refresh every minute
-- [ ] Monospace for IDs, SHAs, tokens
-- [ ] Truncate long summaries with "show more" expand
+- [ ] Add a project-lane timeline view
 
-### Phase U6: Interactive features (Option B upgrade)
+### Phase U6: Interactive features
 
-**Rewind UI**
-- [ ] "Rewind" button on each entry → opens a modal
-- [ ] Modal shows: strategy picker, reason input, dry-run preview
-- [ ] Dry-run preview shows affected entries with visual strikethrough
-- [ ] "Apply rewind" button with confirmation
-- [ ] Success toast with link to restore
-
-**Restore UI**
-- [ ] Rewind history page (`/bundles/:id/rewinds`)
-- [ ] List past rewinds with affected entry count, reason, timestamp
-- [ ] "Restore" button per rewind log entry
-
-**Manual push UI**
-- [ ] "Push manual entry" button on bundle detail page
-- [ ] Textarea for message, project selector, `event_type` picker
-
-**Bundle management**
-- [ ] Create new bundle from UI
-- [ ] Join existing bundle (paste ID + token)
-- [ ] Delete bundle (with confirmation)
+- [x] Create/delete bundles from UI
+- [x] Join bundle (paste ID)
+- [x] Manual push entry dialog
+- [x] Push session entries to bundle (consolidation)
+- [x] Rewind dialog with strategy + reason + dry-run
+- [x] Restore from rewind history tab
+- [x] Delete session entries
+- [x] Connect/disconnect sessions to bundles
 
 ### Phase U7: Advanced views
 
-- [ ] Cross-bundle activity feed: "everything across all my bundles in the last 24h"
-- [ ] Per-project view: "show me everything project X has contributed across all its bundles"
-- [ ] Diff viewer: render diffs with syntax highlighting
-- [ ] Search: full-text search across summaries and decisions
-- [ ] Export: download a bundle's timeline as markdown
-- [ ] Stats: entries per project per week, most-rewound projects
+- [ ] Cross-bundle activity feed
+- [ ] Per-project view
+- [ ] Diff viewer with syntax highlighting
+- [ ] Search across summaries and decisions
+- [ ] Export bundle timeline as markdown
+- [ ] Stats: entries per project per week
 
 ### Phase U8: Local-only deployment
 
-- [ ] Document the dev flow in the README: `bun run dev:ui` → opens localhost:5173
+- [x] Documented dev flow in README
 - [ ] Add a production build: `bun run build:ui` → serves from `packages/ui/dist`
-- [ ] Optional: add a `ctx-link ui` CLI command that builds then starts a tiny serve instance
-- [ ] Optional: bundle the UI into an Electron/Tauri shell for a real desktop app
+- [ ] Optional: `cxtl ui` CLI command that builds then starts a serve instance
+- [ ] Optional: Electron/Tauri desktop app
 
 ### Phase U9: Deploy as a hosted web app (far-future)
 
@@ -266,3 +222,14 @@
 - [x] Fixed CLI `git diff HEAD~1` failure on single-commit repos
 - [x] Fixed CLI `parseAsync` missing error handler
 - [x] CLI push auto-extracts commit message when `--diff` used without `--summary`
+- [x] Session entry accumulation model (replaced auto-push)
+- [x] Session tracking (session-start, session-log, session-entries)
+- [x] Consolidated push (--consolidate with source entry tracking)
+- [x] Interactive CLI via @inquirer/prompts (mode, team, bundle, strategy prompts)
+- [x] Auto-detect mode via isLocalBundle() for join/connect
+- [x] Rewind dry-run → "Apply?" confirm flow in interactive mode
+- [x] Restore shows recent rewinds for selection
+- [x] delete-bundle with interactive selection + confirmation
+- [x] Built full React Flow UI dashboard (node graph, entry panels, session management)
+- [x] Migration 0004: source_entries column for consolidation tracking
+- [x] UI: hide empty sessions toggle, draggable nodes, position persistence

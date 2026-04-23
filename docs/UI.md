@@ -2,7 +2,7 @@
 
 ## Overview
 
-n8n-style node graph dashboard at `packages/ui/`. Shows all teams, bundles, projects, and sessions as interconnected nodes. Supports creating/deleting bundles, drag-to-connect projects to bundles, entry timeline viewing, manual push, rewind/restore, and team management.
+n8n-style node graph dashboard at `packages/ui/`. Shows all teams, bundles, projects, and sessions as interconnected nodes. Supports creating/deleting bundles, drag-to-connect projects to bundles, entry timeline viewing, manual push, session management, push-to-bundle consolidation, rewind/restore, and team management.
 
 ## Running
 
@@ -42,11 +42,12 @@ packages/ui/
     App.tsx              React Flow canvas + modals + panels
     types.ts             All TypeScript interfaces
     stores/
-      uiStore.ts         Zustand store (panels, modals, selections, hover)
+      uiStore.ts         Zustand store (panels, modals, selections, hover, filters)
     lib/
       api.ts             HTTP client (fetch wrappers for all endpoints)
       buildGraph.ts      GraphData → React Flow nodes/edges
       layout.ts          dagre wrapper
+      fitGroups.ts       Auto-resize TeamGroupNode to fit children
       colors.ts          team name → HSL hash
       time.ts            relative time formatting (date-fns)
       edgeHover.ts       debounced edge hover state management
@@ -54,26 +55,32 @@ packages/ui/
     hooks/
       useGraphData.ts    Query: GET /api/graph
       useEntries.ts      Query: GET /api/bundles/:id/entries
+      useSessionEntries.ts  Query: GET /api/sessions/:id/entries
       useRewinds.ts      Query: GET /api/bundles/:id/rewinds
       useTeams.ts        Query: GET /api/teams
       mutations/
         useCreateBundle.ts
-        useDeleteBundle.ts     (optimistic: removes bundle node)
-        useJoinBundle.ts       (optimistic: adds edge)
-        useDeleteSession.ts    (optimistic: removes edge)
-        usePushEntry.ts        (optimistic: prepends entry)
-        useRewind.ts           (optimistic: removes entries)
+        useDeleteBundle.ts       (optimistic: removes bundle node)
+        useJoinBundle.ts         (optimistic: adds edge)
+        useDeleteSession.ts      (optimistic: removes edge)
+        useConnectSession.ts     (connects active session to bundle)
+        usePushEntry.ts          (optimistic: prepends entry)
+        usePushSessionToBundle.ts  (consolidates + pushes session entries)
+        useDeleteSessionEntry.ts   (removes entry from session log)
+        useRewind.ts             (optimistic: removes entries)
         useRestore.ts
         useCreateTeam.ts
         useJoinTeam.ts
     components/
-      TopBar.tsx              Title, +Bundle button, Teams button, status
-      EntryPanel.tsx          Side sheet: entries + rewinds tabs
+      TopBar.tsx              Title, +Bundle button, Teams button, Hide Empty Sessions toggle
+      EntryPanel.tsx          Side sheet: bundle entries + rewind history tabs
+      SessionPanel.tsx        Side sheet: session entries with push-to-bundle
       EntryCard.tsx           Single entry with expand/collapse
       EventTypeBadge.tsx      Color-coded event type chip
       CreateBundleDialog.tsx  Modal: name + mode + team
       DeleteBundleDialog.tsx  Confirmation modal
       PushEntryForm.tsx       Modal: project + summary
+      PushSessionToBundleDialog.tsx  Modal: select bundle + summary for consolidation
       RewindDialog.tsx        Modal: reason + dry-run + apply
       RewindHistoryTab.tsx    Rewind list with restore buttons
       TeamManagementDialog.tsx  Modal: list/create/join tabs
@@ -139,6 +146,12 @@ onSettled: () => {
 },
 ```
 
+### Side Panels
+
+Two panel types, managed by Zustand:
+- **Bundle panel**: shows entries + rewind history tabs for a selected bundle
+- **Session panel**: shows accumulated session entries with delete + push-to-bundle actions
+
 ## Graph Layout
 
 dagre computes positions per team group (rankdir: LR):
@@ -148,6 +161,8 @@ dagre computes positions per team group (rankdir: LR):
 - Node sep: 60px, rank sep: 120px
 
 Groups are stacked vertically with 60px gaps. The "Local" group appears after all team groups.
+
+Node positions persist to localStorage across page refreshes.
 
 ## Theme
 

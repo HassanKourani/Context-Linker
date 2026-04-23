@@ -26,8 +26,8 @@ Claude sees what Project A did
 ## Package Dependency Graph
 
 ```
-packages/cli ────────────────→ @ctx-link/core
-packages/mcp-server ─────────→ @ctx-link/core
+packages/cli ────────────────→ @ctx-link/core + @inquirer/prompts
+packages/mcp-server ─────────→ @ctx-link/core + @modelcontextprotocol/sdk
 packages/ui/server.ts ───────→ @ctx-link/core
 packages/ui/src/ (browser) ──→ (no core import — types only, defined locally)
 ```
@@ -69,6 +69,7 @@ entries (the context handoff notes)
   ├── summary (Claude-generated)
   ├── files_touched (text[])
   ├── decisions (jsonb)
+  ├── source_entries (jsonb, consolidated session entries)
   ├── superseded_at (soft-delete for rewind)
   └── superseded_reason
 
@@ -129,8 +130,8 @@ Core functions → Supabase / local filesystem
 
 ### State Management
 
-- **TanStack Query**: server state (graph data, entries, rewinds, teams). 30s auto-refresh.
-- **Zustand**: UI state (selected bundle, active modal, entry selection, hovered edge).
+- **TanStack Query**: server state (graph data, entries, session entries, rewinds, teams). 30s auto-refresh.
+- **Zustand**: UI state (panel selection, active modal, entry selection, hovered edge, hide-empty toggle).
 - **Optimistic updates**: mutations update cache immediately, roll back on error.
 
 ## Security Model

@@ -2,17 +2,8 @@
 import { Command } from "commander";
 import { existsSync, readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
-import { createInterface } from "node:readline";
+import { select, input, password, confirm } from "@inquirer/prompts";
 
-function prompt(question: string): Promise<string> {
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim());
-    });
-  });
-}
 import {
   loadProjectConfig,
   loadGlobalConfig,
@@ -58,8 +49,8 @@ program
     "  cloud — entries stored in Supabase, requires team membership\n\n" +
     "Typical flow:\n" +
     "  1. cxtl create-team          (cloud only, once)\n" +
-    "  2. cxtl create <name> --mode local|cloud\n" +
-    "  3. In other project: cxtl join <bundle_id> --mode local|cloud\n" +
+    "  2. cxtl create <name>        (prompts for mode + team)\n" +
+    "  3. In other project: cxtl join <bundle_id>\n" +
     "  4. cxtl push --message '...' (or auto on git commit)\n" +
     "  5. cxtl pull                 (from the other project)"
   )
@@ -78,11 +69,11 @@ program
     "  Password: ****"
   )
   .action(async () => {
-    const name = await prompt("Team name: ");
+    const name = await input({ message: "Team name:" });
     if (!name) { console.error("Team name is required."); process.exit(1); }
-    const password = await prompt("Password: ");
-    if (!password) { console.error("Password is required."); process.exit(1); }
-    const r = await createTeam(name, password);
+    const pw = await password({ message: "Password:" });
+    if (!pw) { console.error("Password is required."); process.exit(1); }
+    const r = await createTeam(name, pw);
     console.log(`\nTeam created.`);
     console.log(`  Name: ${r.name}`);
     console.log(`  ID:   ${r.team_id}`);
@@ -102,11 +93,11 @@ program
     "  Password: ****"
   )
   .action(async () => {
-    const name = await prompt("Team name: ");
+    const name = await input({ message: "Team name:" });
     if (!name) { console.error("Team name is required."); process.exit(1); }
-    const password = await prompt("Password: ");
-    if (!password) { console.error("Password is required."); process.exit(1); }
-    const r = await joinTeam(name, password);
+    const pw = await password({ message: "Password:" });
+    if (!pw) { console.error("Password is required."); process.exit(1); }
+    const r = await joinTeam(name, pw);
     console.log(`\nJoined team ${r.name} (${r.team_id}).`);
   });
 
@@ -128,17 +119,34 @@ program
   });
 
 program
-  .command("team-bundles <team_id>")
+  .command("team-bundles")
   .description(
-    "List all bundles in a team. Shows bundle ID, name, and creation date.\n" +
-    "Use the bundle ID with 'cxtl join <bundle_id> --mode cloud'.\n\n" +
-    "Example:\n" +
+    "List all bundles in a team. If no team ID given, prompts you to pick one.\n\n" +
+    "Examples:\n" +
+    "  $ cxtl team-bundles\n" +
     "  $ cxtl team-bundles 260c55e9-..."
   )
-  .action(async (teamId: string) => {
+  .argument("[team_id]", "team ID (prompted if not given)")
+  .action(async (teamIdArg?: string) => {
+    let teamId = teamIdArg;
+    if (!teamId) {
+      const teams = listMyTeams();
+      if (teams.length === 0) {
+        console.error("Not a member of any teams. Run 'cxtl create-team' or 'cxtl join-team'.");
+        process.exit(1);
+      }
+      teamId = await select({
+        message: "Which team?",
+        choices: teams.map(t => ({
+          name: t.name,
+          value: t.team_id,
+          description: t.team_id,
+        })),
+      });
+    }
     const bundles = await listTeamBundles(teamId);
     if (bundles.length === 0) {
-      console.log("No bundles in this team. Create one with 'cxtl create <name> --mode cloud --team <id>'.");
+      console.log("No bundles in this team. Create one with 'cxtl create <name>'.");
       return;
     }
     for (const b of bundles) {
@@ -353,12 +361,13 @@ program
   .command("connect <bundle_id>")
   .description(
     "Connect the current Claude Code session to a bundle.\n" +
-    "A session can be connected to multiple bundles. Push/pull operates on all of them.\n\n" +
+    "A session can be connected to multiple bundles. Push/pull operates on all of them.\n" +
+    "Mode is auto-detected (local if bundle dir exists, else cloud).\n\n" +
     "Examples:\n" +
     "  $ cxtl connect abc-123\n" +
     "  $ cxtl connect abc-123 --mode cloud"
   )
-  .option("--mode <mode>", "local | cloud", "local")
+  .option("--mode <mode>", "local | cloud (auto-detected if not set)")
   .action(async (bundleId: string, opts) => {
     const sessionId = getActiveSessionId();
     if (!sessionId) {
@@ -370,7 +379,7 @@ program
       console.error(`Session ${sessionId} not found.`);
       process.exit(1);
     }
-    const mode = (opts.mode === "local" || opts.mode === "cloud") ? opts.mode : "local";
+    const mode = opts.mode ?? (isLocalBundle(bundleId) ? "local" : "cloud");
 
     // Don't add duplicates
     if (session.bundles.some((b) => b.bundle_id === bundleId)) {
@@ -443,24 +452,52 @@ program
   .command("create <name>")
   .description(
     "Create a new bundle and link it to the current project.\n" +
-    "Replaces any existing bundle for this project.\n\n" +
-    "Local mode (same machine, no network):\n" +
-    "  $ cxtl create my-feature --mode local\n\n" +
-    "Cloud mode (cross-machine, requires team):\n" +
+    "Prompts for mode and team if not provided via flags.\n\n" +
+    "Interactive:\n" +
+    "  $ cxtl create my-feature\n\n" +
+    "With flags (for scripting):\n" +
+    "  $ cxtl create my-feature --mode local\n" +
     "  $ cxtl create my-feature --mode cloud --team <team_id>"
   )
-  .requiredOption("--mode <mode>", "'local' (file-based, same machine) or 'cloud' (Supabase, cross-machine)")
-  .option("--team <team_id>", "team ID — required for cloud mode. Get it from 'cxtl my-teams'")
+  .option("--mode <mode>", "'local' or 'cloud'")
+  .option("--team <team_id>", "team ID (required for cloud, prompted if not given)")
   .action(async (name: string, opts) => {
-    if (opts.mode !== "local" && opts.mode !== "cloud") {
+    let mode: "local" | "cloud" = opts.mode;
+
+    // Prompt for mode if not provided
+    if (!mode) {
+      mode = await select({
+        message: "Storage mode:",
+        choices: [
+          { name: "Local  — same machine, no network", value: "local" as const },
+          { name: "Cloud  — cross-machine, Supabase", value: "cloud" as const },
+        ],
+      });
+    }
+    if (mode !== "local" && mode !== "cloud") {
       console.error("--mode must be 'local' or 'cloud'.");
       process.exit(1);
     }
-    if (opts.mode === "cloud" && !opts.team) {
-      console.error("Cloud bundles require --team <team_id>. Run 'cxtl my-teams' to see your teams.");
-      process.exit(1);
+
+    // Prompt for team if cloud and not provided
+    let teamId: string | undefined = opts.team;
+    if (mode === "cloud" && !teamId) {
+      const teams = listMyTeams();
+      if (teams.length === 0) {
+        console.error("No teams found. Create one first with 'cxtl create-team'.");
+        process.exit(1);
+      }
+      teamId = await select({
+        message: "Which team?",
+        choices: teams.map(t => ({
+          name: t.name,
+          value: t.team_id,
+          description: t.team_id,
+        })),
+      });
     }
-    const r = await createBundle(name, opts.mode, opts.team);
+
+    const r = await createBundle(name, mode, teamId);
     const cfg = loadProjectConfig() ?? {
       mode: "off" as const,
       bundle: null,
@@ -468,37 +505,41 @@ program
       auto_push_on: ["commit"],
       push_debounce_seconds: 600,
     };
-    cfg.mode = opts.mode;
+    cfg.mode = mode;
     cfg.bundle = r.bundle_id;
     saveProjectConfig(cfg);
 
-    console.log(`Bundle created (mode: ${opts.mode}).`);
+    console.log(`\nBundle created (mode: ${mode}).`);
     console.log(`  ID:    ${r.bundle_id}`);
     console.log(`  Name:  ${r.name}`);
     console.log("");
     console.log("In another project, join with:");
-    console.log(`  cxtl join ${r.bundle_id} --mode ${opts.mode}`);
+    console.log(`  cxtl join ${r.bundle_id}`);
   });
 
 program
   .command("join <bundle_id> [token]")
   .description(
     "Join an existing bundle from the current project.\n" +
-    "Replaces any existing bundle for this project.\n" +
+    "Mode is auto-detected (local if bundle dir exists, else cloud).\n" +
     "Cloud mode: no token needed (team membership is the auth).\n" +
     "Local mode: pass the token from 'cxtl create' output.\n\n" +
     "Examples:\n" +
-    "  $ cxtl join abc-123 --mode cloud\n" +
+    "  $ cxtl join abc-123\n" +
     "  $ cxtl join abc-123 local_abc-123 --mode local"
   )
-  .requiredOption("--mode <mode>", "'local' or 'cloud'")
+  .option("--mode <mode>", "'local' or 'cloud' (auto-detected if not set)")
   .action(async (bundleId: string, token: string | undefined, opts) => {
-    if (opts.mode !== "local" && opts.mode !== "cloud") {
+    let mode: "local" | "cloud" = opts.mode;
+    if (!mode) {
+      mode = isLocalBundle(bundleId) ? "local" : "cloud";
+    }
+    if (mode !== "local" && mode !== "cloud") {
       console.error("--mode must be 'local' or 'cloud'.");
       process.exit(1);
     }
     const projectName = detectProjectName();
-    const r = await joinBundle(bundleId, token ?? "", projectName, opts.mode);
+    const r = await joinBundle(bundleId, token ?? "", projectName, mode);
     const cfg = loadProjectConfig() ?? {
       mode: "off" as const,
       bundle: null,
@@ -506,10 +547,10 @@ program
       auto_push_on: ["commit"],
       push_debounce_seconds: 600,
     };
-    cfg.mode = opts.mode;
+    cfg.mode = mode;
     cfg.bundle = r.bundle_id;
     saveProjectConfig(cfg);
-    console.log(`Joined bundle ${r.name} (${r.bundle_id}) as project '${projectName}' (mode: ${opts.mode}).`);
+    console.log(`Joined bundle ${r.name} (${r.bundle_id}) as project '${projectName}' (mode: ${mode}).`);
   });
 
 program
@@ -708,18 +749,16 @@ program
   .command("rewind")
   .description(
     "Soft-delete entries from ONE project in a bundle. Other projects untouched.\n" +
+    "Prompts for bundle, project, and strategy if not given via flags.\n" +
     "Dry-run by default — add --apply to execute. Reversible via 'cxtl restore'.\n\n" +
-    "Strategies (pick exactly one):\n" +
-    "  --last-n <n>        Rewind the last N entries from this project\n" +
-    "  --since <iso>       Rewind entries at or after this timestamp\n" +
-    "  --entry-ids <a,b,c> Rewind specific entry IDs\n" +
-    "  --after-ref <sha>   Rewind everything after this trigger_ref (pivot kept)\n\n" +
-    "Examples:\n" +
+    "Interactive:\n" +
+    "  $ cxtl rewind\n\n" +
+    "With flags:\n" +
     "  $ cxtl rewind --bundle abc --project my-api --last-n 3\n" +
     "  $ cxtl rewind --bundle abc --project my-api --last-n 3 --apply --reason 'bad abstraction'"
   )
-  .requiredOption("--bundle <id>", "bundle ID")
-  .requiredOption("--project <name>", "project name (only this project's entries are affected)")
+  .option("--bundle <id>", "bundle ID (prompted if not given)")
+  .option("--project <name>", "project name (prompted if not given)")
   .option("--since <iso>", "rewind entries at or after this timestamp")
   .option("--last-n <n>", "rewind the last N entries from this project")
   .option("--entry-ids <ids>", "comma-separated entry IDs to rewind")
@@ -729,32 +768,94 @@ program
   .option("--force", "override the 50-entry safety cap", false)
   .option("--max <n>", "max affected entries without --force", "50")
   .action(async (opts) => {
-    const provided = [opts.since, opts.lastN, opts.entryIds, opts.afterRef].filter(Boolean);
-    if (provided.length !== 1) {
-      console.error("Specify exactly one of: --since, --last-n, --entry-ids, --after-ref");
-      process.exit(1);
+    // Resolve bundle
+    let bundleId: string = opts.bundle;
+    if (!bundleId) {
+      bundleId = await promptForBundle("Which bundle to rewind from?");
     }
 
+    // Resolve project
+    let projectName: string = opts.project;
+    if (!projectName) {
+      const sessionId = getActiveSessionId();
+      const session = sessionId ? loadActiveSession(sessionId) : null;
+      const defaultProject = session?.project_name;
+      projectName = await input({
+        message: "Project name to rewind:",
+        default: defaultProject,
+      });
+    }
+
+    // Resolve strategy
+    const provided = [opts.since, opts.lastN, opts.entryIds, opts.afterRef].filter(Boolean);
     let strategy: RewindStrategy;
-    if (opts.since) strategy = { kind: "since", since: opts.since };
-    else if (opts.lastN) strategy = { kind: "last_n", count: Number(opts.lastN) };
-    else if (opts.entryIds)
-      strategy = { kind: "entry_ids", ids: opts.entryIds.split(",").map((s: string) => s.trim()) };
-    else strategy = { kind: "after_ref", trigger_ref: opts.afterRef };
+
+    if (provided.length === 0) {
+      // Interactive strategy selection
+      const strategyKind = await select({
+        message: "Rewind strategy:",
+        choices: [
+          { name: "Last N entries", value: "last_n" },
+          { name: "Since a timestamp", value: "since" },
+          { name: "Specific entry IDs", value: "entry_ids" },
+          { name: "After a trigger ref (SHA)", value: "after_ref" },
+        ],
+      });
+      switch (strategyKind) {
+        case "last_n": {
+          const count = await input({ message: "How many entries?", default: "3" });
+          strategy = { kind: "last_n", count: Number(count) };
+          break;
+        }
+        case "since": {
+          const since = await input({ message: "Since (ISO timestamp):" });
+          strategy = { kind: "since", since };
+          break;
+        }
+        case "entry_ids": {
+          const ids = await input({ message: "Entry IDs (comma-separated):" });
+          strategy = { kind: "entry_ids", ids: ids.split(",").map(s => s.trim()) };
+          break;
+        }
+        case "after_ref": {
+          const ref = await input({ message: "Trigger ref (commit SHA):" });
+          strategy = { kind: "after_ref", trigger_ref: ref };
+          break;
+        }
+        default:
+          process.exit(1);
+      }
+    } else if (provided.length !== 1) {
+      console.error("Specify exactly one of: --since, --last-n, --entry-ids, --after-ref");
+      process.exit(1);
+    } else {
+      if (opts.since) strategy = { kind: "since", since: opts.since };
+      else if (opts.lastN) strategy = { kind: "last_n", count: Number(opts.lastN) };
+      else if (opts.entryIds)
+        strategy = { kind: "entry_ids", ids: opts.entryIds.split(",").map((s: string) => s.trim()) };
+      else strategy = { kind: "after_ref", trigger_ref: opts.afterRef };
+    }
+
+    // Prompt for reason if not given
+    let reason = opts.reason;
+    if (!reason && !opts.apply) {
+      reason = await input({ message: "Reason (optional):", default: "" });
+      if (!reason) reason = undefined;
+    }
 
     const dryRun = !opts.apply;
     const r = await rewindProject({
-      bundle_id: opts.bundle,
-      project_name: opts.project,
+      bundle_id: bundleId,
+      project_name: projectName,
       strategy,
-      reason: opts.reason,
+      reason,
       dry_run: dryRun,
       max_affected: Number(opts.max),
       force: opts.force,
     });
 
     console.log(
-      `${dryRun ? "[DRY RUN] Would rewind" : "Rewound"} ${r.affected_count} entries from ${opts.project}`
+      `\n${dryRun ? "[DRY RUN] Would rewind" : "Rewound"} ${r.affected_count} entries from ${projectName}`
     );
     if (r.message) console.log(r.message);
     for (const e of r.affected_entries) {
@@ -763,48 +864,127 @@ program
       );
       console.log(`    ${e.summary_preview}`);
     }
+
+    // If dry-run and there are entries, ask to apply
     if (dryRun && r.affected_count > 0) {
-      console.log("\nRe-run with --apply to perform the rewind.");
-    }
-    if (r.rewind_log_id) {
+      const shouldApply = await confirm({ message: "Apply the rewind?", default: false });
+      if (shouldApply) {
+        const applied = await rewindProject({
+          bundle_id: bundleId,
+          project_name: projectName,
+          strategy,
+          reason,
+          dry_run: false,
+          max_affected: Number(opts.max),
+          force: opts.force,
+        });
+        console.log(`\nRewound ${applied.affected_count} entries.`);
+        if (applied.rewind_log_id) {
+          console.log(`Audit log: ${applied.rewind_log_id}`);
+          console.log(`Undo with: cxtl restore --bundle ${bundleId} --project ${projectName} --from-log ${applied.rewind_log_id}`);
+        }
+      }
+    } else if (r.rewind_log_id) {
       console.log(`\nAudit log: ${r.rewind_log_id}`);
-      console.log(`Undo with: cxtl restore --bundle ${opts.bundle} --project ${opts.project} --from-log ${r.rewind_log_id}`);
+      console.log(`Undo with: cxtl restore --bundle ${bundleId} --project ${projectName} --from-log ${r.rewind_log_id}`);
     }
   });
 
 program
   .command("restore")
   .description(
-    "Undo a rewind — bring back soft-deleted entries.\n\n" +
-    "Examples:\n" +
+    "Undo a rewind — bring back soft-deleted entries.\n" +
+    "Prompts for bundle, project, and method if not given via flags.\n\n" +
+    "Interactive:\n" +
+    "  $ cxtl restore\n\n" +
+    "With flags:\n" +
     "  $ cxtl restore --bundle abc --project my-api --from-log <log_id>\n" +
     "  $ cxtl restore --bundle abc --project my-api --entry-ids id1,id2"
   )
-  .requiredOption("--bundle <id>", "bundle ID")
-  .requiredOption("--project <name>", "project name")
+  .option("--bundle <id>", "bundle ID (prompted if not given)")
+  .option("--project <name>", "project name (prompted if not given)")
   .option("--entry-ids <ids>", "comma-separated entry IDs to restore")
   .option("--from-log <id>", "restore all entries from a specific rewind log")
   .action(async (opts) => {
+    // Resolve bundle
+    let bundleId: string = opts.bundle;
+    if (!bundleId) {
+      bundleId = await promptForBundle("Which bundle to restore in?");
+    }
+
+    // Resolve project
+    let projectName: string = opts.project;
+    if (!projectName) {
+      const sessionId = getActiveSessionId();
+      const session = sessionId ? loadActiveSession(sessionId) : null;
+      const defaultProject = session?.project_name;
+      projectName = await input({
+        message: "Project name to restore:",
+        default: defaultProject,
+      });
+    }
+
+    // Resolve method
+    let entryIds: string[] | undefined = opts.entryIds
+      ? opts.entryIds.split(",").map((s: string) => s.trim())
+      : undefined;
+    let rewindLogId: string | undefined = opts.fromLog;
+
+    if (!entryIds && !rewindLogId) {
+      const method = await select({
+        message: "Restore method:",
+        choices: [
+          { name: "From a rewind log (undo a whole rewind)", value: "from_log" },
+          { name: "Specific entry IDs", value: "entry_ids" },
+        ],
+      });
+      if (method === "from_log") {
+        // Show recent rewinds for this bundle/project
+        const rewinds = await listRewinds(bundleId, projectName, 10);
+        if (rewinds.length === 0) {
+          console.error("No rewinds found for this bundle/project.");
+          process.exit(1);
+        }
+        rewindLogId = await select({
+          message: "Which rewind to undo?",
+          choices: rewinds.map(r => ({
+            name: `${r.performed_at}  ${r.strategy_kind}  ${r.affected_count} entries${r.reason ? ` — ${r.reason}` : ""}`,
+            value: r.id,
+          })),
+        });
+      } else {
+        const ids = await input({ message: "Entry IDs (comma-separated):" });
+        entryIds = ids.split(",").map(s => s.trim());
+      }
+    }
+
     const r = await restoreRewound({
-      bundle_id: opts.bundle,
-      project_name: opts.project,
-      entry_ids: opts.entryIds ? opts.entryIds.split(",").map((s: string) => s.trim()) : undefined,
-      rewind_log_id: opts.fromLog,
+      bundle_id: bundleId,
+      project_name: projectName,
+      entry_ids: entryIds,
+      rewind_log_id: rewindLogId,
     });
     console.log(`Restored ${r.restored_count} entries.`);
     for (const id of r.restored_ids) console.log(`  - ${id}`);
   });
 
 program
-  .command("rewind-history <bundle_id>")
+  .command("rewind-history")
   .description(
-    "List past rewinds for a bundle. Use the log_id to restore.\n\n" +
-    "Example:\n" +
+    "List past rewinds for a bundle. Use the log_id to restore.\n" +
+    "Prompts for bundle if not given.\n\n" +
+    "Examples:\n" +
+    "  $ cxtl rewind-history\n" +
     "  $ cxtl rewind-history abc-123 --project my-api"
   )
+  .argument("[bundle_id]", "bundle ID (prompted if not given)")
   .option("--project <name>", "filter by project name")
   .option("--limit <n>", "max results", "20")
-  .action(async (bundleId: string, opts) => {
+  .action(async (bundleIdArg: string | undefined, opts) => {
+    let bundleId = bundleIdArg;
+    if (!bundleId) {
+      bundleId = await promptForBundle("Which bundle?");
+    }
     const rows = await listRewinds(bundleId, opts.project, Number(opts.limit));
     if (rows.length === 0) {
       console.log("No rewinds recorded.");
@@ -841,14 +1021,34 @@ program
   });
 
 program
-  .command("delete-bundle <bundle_id>")
+  .command("delete-bundle")
   .description(
     "Permanently delete a bundle and ALL its entries. Irreversible.\n" +
+    "Prompts for bundle selection and confirmation.\n" +
     "Use 'cxtl leave' if you just want to disconnect without destroying data."
   )
-  .action(async (bundleId: string) => {
+  .argument("[bundle_id]", "bundle ID (prompted if not given)")
+  .action(async (bundleIdArg?: string) => {
+    let bundleId = bundleIdArg;
+    if (!bundleId) {
+      bundleId = await promptForBundle("Which bundle to delete?");
+    }
+
+    // Get bundle name for confirmation
+    const knownBundles = listLocalBundles();
+    const bundleName = knownBundles.find(b => b.bundle_id === bundleId)?.name ?? bundleId;
+
+    const ok = await confirm({
+      message: `Permanently delete "${bundleName}" (${bundleId}) and ALL its entries?`,
+      default: false,
+    });
+    if (!ok) {
+      console.log("Cancelled.");
+      return;
+    }
+
     const cfg = loadProjectConfig();
-    const mode = (cfg?.mode === "local" || cfg?.mode === "cloud") ? cfg.mode : "cloud";
+    const mode = isLocalBundle(bundleId) ? "local" : ((cfg?.mode === "local" || cfg?.mode === "cloud") ? cfg.mode : "cloud");
     await deleteBundle(bundleId, mode);
     if (cfg && cfg.bundle === bundleId) {
       cfg.bundle = null;
@@ -869,6 +1069,59 @@ function detectProjectName(): string {
     } catch {}
   }
   return process.cwd().split("/").pop() ?? "unknown";
+}
+
+/** Prompt user to pick a bundle from their connected session bundles or all known bundles. */
+async function promptForBundle(message: string): Promise<string> {
+  // First try: connected session bundles
+  const sessionId = getActiveSessionId();
+  const session = sessionId ? loadActiveSession(sessionId) : null;
+  const knownBundles = listLocalBundles();
+  const bundleNameMap = new Map(knownBundles.map(b => [b.bundle_id, b.name]));
+
+  if (session && session.bundles.length > 0) {
+    const choices = session.bundles.map(b => ({
+      name: `${bundleNameMap.get(b.bundle_id) ?? b.bundle_id.slice(0, 12) + "..."}  [${b.mode}]`,
+      value: b.bundle_id,
+      description: b.bundle_id,
+    }));
+
+    // Also offer "other" if there are more known bundles
+    const sessionBundleIds = new Set(session.bundles.map(b => b.bundle_id));
+    const otherBundles = knownBundles.filter(b => !sessionBundleIds.has(b.bundle_id));
+    if (otherBundles.length > 0) {
+      choices.push({ name: "── Other bundles ──", value: "__other__", description: "" });
+    }
+
+    const picked = await select({ message, choices });
+
+    if (picked === "__other__") {
+      return select({
+        message,
+        choices: otherBundles.map(b => ({
+          name: `${b.name}  (${b.bundle_id.slice(0, 12)}...)`,
+          value: b.bundle_id,
+          description: b.bundle_id,
+        })),
+      });
+    }
+    return picked;
+  }
+
+  // Fallback: all known bundles
+  if (knownBundles.length > 0) {
+    return select({
+      message,
+      choices: knownBundles.map(b => ({
+        name: `${b.name}  (${b.bundle_id.slice(0, 12)}...)`,
+        value: b.bundle_id,
+        description: b.bundle_id,
+      })),
+    });
+  }
+
+  // Nothing to pick from — ask for manual input
+  return input({ message: `${message} (enter bundle ID):` });
 }
 
 program.parseAsync().catch((err) => {
