@@ -31,6 +31,7 @@ import { PushEntryDialog } from "./components/PushEntryForm";
 import { RewindDialog } from "./components/RewindDialog";
 import { TeamManagementDialog } from "./components/TeamManagementDialog";
 import { PushSessionToBundleDialog } from "./components/PushSessionToBundleDialog";
+import { PushToCloudDialog } from "./components/PushToCloudDialog";
 import { DeletableEdge } from "./components/edges/DeletableEdge";
 
 const nodeTypes: NodeTypes = {
@@ -220,6 +221,7 @@ export function App() {
       <RewindDialog />
       <TeamManagementDialog />
       <PushSessionToBundleDialog />
+      <PushToCloudDialog />
     </div>
   );
 }

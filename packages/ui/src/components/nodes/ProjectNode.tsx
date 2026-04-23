@@ -1,5 +1,5 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { X } from "lucide-react";
+import { Cloud, X } from "lucide-react";
 import { relativeTime } from "@/lib/time";
 import { useUIStore } from "@/stores/uiStore";
 import { useDeleteActiveSession } from "@/hooks/mutations/useDeleteActiveSession";
@@ -15,6 +15,7 @@ interface SessionData {
   entryCount: number;
   branchSeq: number;
   branchTotal: number;
+  cloudSessionId?: string | null;
 }
 
 export function ProjectNode({ data }: NodeProps) {
@@ -25,6 +26,8 @@ export function ProjectNode({ data }: NodeProps) {
 
   const openBundlePanel = useUIStore((s) => s.openBundlePanel);
   const openSessionPanel = useUIStore((s) => s.openSessionPanel);
+  const openModal = useUIStore((s) => s.openModal);
+  const setPushToCloudTarget = useUIStore((s) => s.setPushToCloudTarget);
   const deleteMutation = useDeleteActiveSession();
 
   const handleSessionClick = (s: SessionData) => {
@@ -60,6 +63,21 @@ export function ProjectNode({ data }: NodeProps) {
               You
             </span>
           )}
+          {s.cloudSessionId ? (
+            <span title="Synced to cloud"><Cloud className="w-3 h-3 text-[#89b4fa]" /></span>
+          ) : s.isYou ? (
+            <button
+              className="px-1 py-0.5 rounded text-[9px] font-medium bg-[#89b4fa]/15 text-[#89b4fa] hover:bg-[#89b4fa]/25 transition-colors"
+              onClick={(e) => {
+                e.stopPropagation();
+                setPushToCloudTarget(s.id);
+                openModal("push-to-cloud");
+              }}
+              title="Push session to cloud"
+            >
+              ↑ Cloud
+            </button>
+          ) : null}
           <span className="ml-auto text-muted-foreground/60 text-[10px] whitespace-nowrap">
             {s.entryCount > 0 ? `${s.entryCount} entr${s.entryCount === 1 ? "y" : "ies"}` : relativeTime(s.lastActiveAt)}
           </span>

@@ -35,7 +35,7 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
   // Collect all unique projects across bundles
   const projectSessions = new Map<
     string,
-    Array<{ sessionId: string; machineId: string; lastActiveAt: string | null; bundleId: string; branch: string | null; entryCount: number }>
+    Array<{ sessionId: string; machineId: string; lastActiveAt: string | null; bundleId: string; branch: string | null; entryCount: number; cloudSessionId?: string | null }>
   >();
 
   // Add active sessions (each Claude Code session becomes ONE row under its project)
@@ -53,6 +53,7 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
           bundleId: "",
           branch: as.branch,
           entryCount: as.entry_count ?? 0,
+          cloudSessionId: as.cloud_session_id ?? null,
         });
       }
     }
@@ -72,6 +73,7 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
           bundleId: "",
           branch: cs.branch,
           entryCount: 0,
+          cloudSessionId: cs.id,
         });
       }
     }
@@ -168,6 +170,7 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
             entryCount: s.entryCount,
             branchSeq: sameBranchBefore + 1,
             branchTotal: sessions.filter((o) => o.branch === s.branch).length,
+            cloudSessionId: s.cloudSessionId ?? null,
           };
         }),
       },
