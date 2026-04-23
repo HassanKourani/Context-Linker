@@ -10,6 +10,7 @@ type ModalType =
   | "delete-bundle"
   | "team-management"
   | "push-entry"
+  | "push-session"
   | "rewind"
   | null;
 

@@ -91,6 +91,20 @@ export function connectSessionToBundle(sessionId: string, body: { bundle_id: str
   return apiPost<{ ok: true }>(`/api/sessions/${sessionId}/connect`, body);
 }
 
+export function pushSessionToBundle(
+  sessionId: string,
+  body: { bundle_id: string; entry_ids?: string[] },
+) {
+  return apiPost<{ ok: true; pushed: number; skipped: number; total: number }>(
+    `/api/sessions/${sessionId}/push-to-bundle`,
+    body,
+  );
+}
+
+export function deleteSessionEntryApi(sessionId: string, entryId: string) {
+  return apiDelete<{ ok: true }>(`/api/sessions/${sessionId}/entries/${entryId}`);
+}
+
 export function unlinkSession(body: {
   session_id: string;
   bundle_id: string;

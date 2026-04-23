@@ -1,11 +1,12 @@
 import { useMemo } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, Undo2, X } from "lucide-react";
+import { ArrowUpRight, RefreshCw, Trash2, Undo2, X } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { useEntries } from "@/hooks/useEntries";
 import { useSessionEntries } from "@/hooks/useSessionEntries";
 import { useGraphData } from "@/hooks/useGraphData";
+import { useDeleteSessionEntry } from "@/hooks/mutations/useDeleteSessionEntry";
 import { EntryCard } from "./EntryCard";
 import { RewindHistoryTab } from "./RewindHistoryTab";
 
@@ -13,7 +14,9 @@ export function EntryPanel() {
   const panel = useUIStore((s) => s.panel);
   const closePanel = useUIStore((s) => s.closePanel);
   const selectedEntryIds = useUIStore((s) => s.selectedEntryIds);
+  const clearEntrySelection = useUIStore((s) => s.clearEntrySelection);
   const openModal = useUIStore((s) => s.openModal);
+  const setDeleteTarget = useUIStore((s) => s.setDeleteTarget);
   const panelTab = useUIStore((s) => s.panelTab);
   const setPanelTab = useUIStore((s) => s.setPanelTab);
   const setFilterProject = useUIStore((s) => s.setFilterProject);
@@ -31,6 +34,15 @@ export function EntryPanel() {
 
   const isLoading = isBundle ? bundleLoading : sessionLoading;
   const refetch = isBundle ? refetchBundle : refetchSession;
+  const deleteSessionEntryMutation = useDeleteSessionEntry();
+
+  const handleDeleteSelected = () => {
+    if (!sessionId || selectedEntryIds.size === 0) return;
+    for (const entryId of selectedEntryIds) {
+      deleteSessionEntryMutation.mutate({ sessionId, entryId });
+    }
+    clearEntrySelection();
+  };
 
   // Filter bundle entries by project if filter is active
   const entries = useMemo(() => {
@@ -61,7 +73,22 @@ export function EntryPanel() {
     <Sheet open={open} onOpenChange={(o) => !o && closePanel()}>
       <SheetContent side="right" className="w-[420px] sm:max-w-[420px] flex flex-col">
         <SheetHeader>
-          <SheetTitle>{panelTitle}</SheetTitle>
+          <div className="flex items-center gap-2 pr-8">
+            <SheetTitle>{panelTitle}</SheetTitle>
+            {isBundle && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                onClick={() => {
+                  setDeleteTarget({ id: bundleId!, name: panelTitle });
+                  openModal("delete-bundle");
+                }}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </Button>
+            )}
+          </div>
           <SheetDescription>{panelSubtitle}</SheetDescription>
         </SheetHeader>
 
@@ -120,6 +147,30 @@ export function EntryPanel() {
                 onClick={() => openModal("push-entry")}
               >
                 Push
+              </Button>
+            )}
+            {isSession && selectedEntryIds.size > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs text-destructive"
+                onClick={handleDeleteSelected}
+              >
+                <Trash2 className="w-3 h-3 mr-1" />
+                Delete ({selectedEntryIds.size})
+              </Button>
+            )}
+            {isSession && entries.length > 0 && (
+              <Button
+                variant="default"
+                size="sm"
+                className="text-xs"
+                onClick={() => openModal("push-session")}
+              >
+                <ArrowUpRight className="w-3 h-3 mr-1" />
+                {selectedEntryIds.size > 0
+                  ? `Push ${selectedEntryIds.size} to Bundle`
+                  : "Push to Bundle"}
               </Button>
             )}
             <Button

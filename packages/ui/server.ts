@@ -21,9 +21,14 @@ import {
   joinTeam,
   getSessionEntries,
   pushSessionEntry,
+  deleteSessionEntry,
+  markSessionEntriesPushed,
   connectSessionToBundle,
   disconnectSessionFromBundle,
   deleteActiveSession,
+  loadActiveSession,
+  deleteProjectEntriesFromBundle,
+  localDeleteProjectFromBundle,
 } from "@ctx-link/core";
 
 const server = Bun.serve({
@@ -423,24 +428,53 @@ const server = Bun.serve({
       }
     }
 
-    // ── POST /api/sessions/:id/connect ──────────────────────────────────────
+    // ── POST /api/sessions/:id/push-to-bundle ─────────────────────────────
     {
-      const match = url.pathname.match(/^\/api\/sessions\/([^/]+)\/connect$/);
+      const match = url.pathname.match(/^\/api\/sessions\/([^/]+)\/push-to-bundle$/);
       if (match && req.method === "POST") {
         try {
           const sessionId = match[1];
-          const { bundle_id } = await req.json();
+          const { bundle_id, entry_ids } = await req.json();
           const mode = resolveBundleMode(bundle_id);
 
-          // Update the active session's bundles array
-          const session = connectSessionToBundle(sessionId, bundle_id, mode);
+          // Ensure session is connected to this bundle
+          try {
+            connectSessionToBundle(sessionId, bundle_id, mode);
+          } catch {
+            // Already connected — that's fine
+          }
 
-          // Copy session entries into the bundle
-          const sessionEntries = getSessionEntries(sessionId);
-          for (const entry of sessionEntries) {
+          // Get session entries — either specific ones or all
+          const allSessionEntries = getSessionEntries(sessionId);
+          const entriesToPush = entry_ids
+            ? allSessionEntries.filter((e) => entry_ids.includes(e.id))
+            : allSessionEntries;
+
+          // Pull existing bundle entries to check for duplicates (by summary + created_at)
+          const existingEntries = await pullEntries({
+            bundle_id,
+            limit: 500,
+            mode,
+            skipAuth: true,
+          });
+          const existingSet = new Set(
+            existingEntries.map((e) => `${e.summary}::${e.created_at}`)
+          );
+
+          // Push only entries that don't already exist in the bundle
+          let pushed = 0;
+          let skipped = 0;
+          const pushedIds: string[] = [];
+          for (const entry of entriesToPush) {
+            const key = `${entry.summary}::${entry.created_at}`;
+            if (existingSet.has(key)) {
+              skipped++;
+              pushedIds.push(entry.id); // Mark as pushed even if skipped (already there)
+              continue;
+            }
             await pushEntry({
               bundle_id,
-              project_name: entry.project_name || session.project_name,
+              project_name: entry.project_name,
               event_type: entry.event_type as any,
               trigger_ref: entry.trigger_ref,
               summary: entry.summary,
@@ -450,9 +484,56 @@ const server = Bun.serve({
               mode,
               skipAuth: true,
             });
+            pushed++;
+            pushedIds.push(entry.id);
           }
 
+          // Mark pushed entries
+          if (pushedIds.length > 0) {
+            markSessionEntriesPushed(sessionId, pushedIds);
+          }
+
+          return Response.json(
+            { ok: true, pushed, skipped, total: entriesToPush.length },
+            { headers: corsHeaders }
+          );
+        } catch (err: any) {
+          return Response.json(
+            { error: err.message ?? String(err) },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+      }
+    }
+
+    // ── POST /api/sessions/:id/connect ──────────────────────────────────────
+    {
+      const match = url.pathname.match(/^\/api\/sessions\/([^/]+)\/connect$/);
+      if (match && req.method === "POST") {
+        try {
+          const sessionId = match[1];
+          const { bundle_id } = await req.json();
+          const mode = resolveBundleMode(bundle_id);
+          const session = connectSessionToBundle(sessionId, bundle_id, mode);
           return Response.json({ ok: true, session }, { headers: corsHeaders });
+        } catch (err: any) {
+          return Response.json(
+            { error: err.message ?? String(err) },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+      }
+    }
+
+    // ── DELETE /api/sessions/:id/entries/:entryId ───────────────────────────
+    {
+      const match = url.pathname.match(/^\/api\/sessions\/([^/]+)\/entries\/([^/]+)$/);
+      if (match && req.method === "DELETE") {
+        try {
+          const sessionId = match[1];
+          const entryId = match[2];
+          deleteSessionEntry(sessionId, entryId);
+          return Response.json({ ok: true }, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
             { error: err.message ?? String(err) },
@@ -468,7 +549,28 @@ const server = Bun.serve({
       if (match && req.method === "DELETE") {
         try {
           const sessionId = match[1];
+
+          // Load session to find connected bundles and project name
+          const session = loadActiveSession(sessionId);
+          if (session) {
+            // Delete this project's entries from each connected bundle
+            for (const b of session.bundles) {
+              const mode = resolveBundleMode(b.bundle_id);
+              try {
+                if (mode === "local") {
+                  localDeleteProjectFromBundle(b.bundle_id, session.project_name);
+                } else {
+                  await deleteProjectEntriesFromBundle(b.bundle_id, session.project_name);
+                }
+              } catch {
+                // Non-fatal — bundle may already be deleted
+              }
+            }
+          }
+
+          // Delete the active session + its session-entries file
           deleteActiveSession(sessionId);
+
           return Response.json({ ok: true }, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(

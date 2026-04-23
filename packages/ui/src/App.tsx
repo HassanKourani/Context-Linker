@@ -29,6 +29,7 @@ import { EntryPanel } from "./components/EntryPanel";
 import { PushEntryDialog } from "./components/PushEntryForm";
 import { RewindDialog } from "./components/RewindDialog";
 import { TeamManagementDialog } from "./components/TeamManagementDialog";
+import { PushSessionToBundleDialog } from "./components/PushSessionToBundleDialog";
 import { DeletableEdge } from "./components/edges/DeletableEdge";
 
 const nodeTypes: NodeTypes = {
@@ -131,12 +132,11 @@ export function App() {
       if (sourceNode.type !== "project" || targetNode.type !== "bundle") return;
 
       const bundleId = (targetNode.data as any).bundleId;
-      const mode = (targetNode.data as any).mode || "cloud";
       const sessionId = connection.sourceHandle;
 
       if (!bundleId || !sessionId) return;
 
-      connectMutation.mutate({ sessionId, bundle_id: bundleId, mode });
+      connectMutation.mutate({ sessionId, bundle_id: bundleId });
     },
     [nodes, connectMutation]
   );
@@ -203,6 +203,7 @@ export function App() {
       <PushEntryDialog />
       <RewindDialog />
       <TeamManagementDialog />
+      <PushSessionToBundleDialog />
     </div>
   );
 }
