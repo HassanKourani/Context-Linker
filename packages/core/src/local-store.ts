@@ -310,6 +310,15 @@ export function localRemoveEntryFromBundle(bundleId: string, entryId: string): v
   writeEntryRefs(bundleId, filtered);
 }
 
+/**
+ * Remove all entry refs for a given session from a local bundle.
+ */
+export function localRemoveSessionRefsFromBundle(bundleId: string, sessionId: string): void {
+  const refs = readEntryRefs(bundleId);
+  const filtered = refs.filter(r => r.session_id !== sessionId);
+  writeEntryRefs(bundleId, filtered);
+}
+
 export interface LocalBundleDetail {
   bundle_id: string;
   bundle_name: string;

@@ -550,10 +550,34 @@ const server = Bun.serve({
         const { session_id, bundle_id } = await req.json();
         const mode = resolveBundleMode(bundle_id);
 
-        // Remove all entry refs for this session's entries from the bundle
-        const sessionEntries = getSessionEntries(session_id);
-        if (sessionEntries.length > 0) {
-          const entryIds = sessionEntries.map((e) => e.id);
+        // Collect entry IDs to remove from the bundle.
+        // session_id could be a local active session ID or a cloud session ID.
+        let entryIds: string[] = [];
+
+        // 1. Try local session entries
+        const localEntries = getSessionEntries(session_id);
+        if (localEntries.length > 0) {
+          entryIds = localEntries.map((e) => e.id);
+        }
+
+        // 2. If no local entries, check if an active session has this as cloud_session_id
+        if (entryIds.length === 0) {
+          const allSessions = listActiveSessions();
+          const match = allSessions.find((s) => s.cloud_session_id === session_id);
+          if (match) {
+            const entries = getSessionEntries(match.session_id);
+            entryIds = entries.map((e) => e.id);
+          }
+        }
+
+        // 3. For local bundles, also remove refs by session_id directly from entry_refs.json
+        if (mode === "local") {
+          const { localRemoveSessionRefsFromBundle } = await import("@ctx-link/core");
+          localRemoveSessionRefsFromBundle(bundle_id, session_id);
+        }
+
+        // Remove individual entry refs
+        if (entryIds.length > 0) {
           if (mode === "local") {
             for (const entryId of entryIds) {
               localRemoveEntryFromBundle(bundle_id, entryId);
