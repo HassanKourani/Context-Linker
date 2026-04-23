@@ -527,7 +527,7 @@ const server = Bun.serve({
 
           const result = await copySessionToCloud(sessionId, team_id);
 
-          // If a bundle_id was provided, add the cloud entries to it
+          // If a bundle_id was provided, connect the cloud session and add entries
           if (bundle_id) {
             const bundleTeamId = await getBundleTeamId(bundle_id);
             if (bundleTeamId !== team_id) {
@@ -536,6 +536,8 @@ const server = Bun.serve({
                 { status: 400, headers: corsHeaders }
               );
             }
+            // Connect the new cloud session to the bundle
+            connectCloudSessionToBundle(result.cloud_session_id, bundle_id, "cloud");
             if (result.cloud_entry_ids.length > 0) {
               await addEntriesToBundle(bundle_id, result.cloud_entry_ids);
             }
