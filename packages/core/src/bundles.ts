@@ -2,7 +2,6 @@ import argon2 from "argon2";
 import { customAlphabet } from "nanoid";
 import { getSupabase } from "./supabase.js";
 import {
-  getBundleToken,
   loadGlobalConfig,
   loadTokenStore,
   saveTokenStore,
@@ -94,7 +93,6 @@ export async function joinBundle(
   const { assertBundleTeamAccess } = await import("./teams.js");
   await assertBundleTeamAccess(bundleId);
 
-  const cfg = loadGlobalConfig();
   const sb = getSupabase();
 
   const { data: bundle, error } = await sb
@@ -104,13 +102,6 @@ export async function joinBundle(
     .single();
 
   if (error || !bundle) throw new Error("Bundle not found.");
-
-  const { error: sErr } = await sb.from("sessions").insert({
-    bundle_id: bundle.id,
-    project_name: projectName,
-    machine_id: cfg.machine_id,
-  });
-  if (sErr) throw new Error(`joinBundle session insert failed: ${sErr.message}`);
 
   storeBundleToken(bundle.id, `team_${bundle.team_id}`, bundle.name);
 
@@ -140,33 +131,33 @@ export async function bundleStatus(bundleId: string, mode: "local" | "cloud" = "
   if (!skipAuth) await assertTokenValid(bundleId);
   const sb = getSupabase();
 
-  const [{ data: bundle }, { count: sCount }, { data: entries }, { count: eCount }] =
+  const [{ data: bundle }, { count: eCount }, { data: latestRef }] =
     await Promise.all([
       sb.from("bundles").select("id, name").eq("id", bundleId).single(),
       sb
-        .from("sessions")
+        .from("bundle_entry_refs")
         .select("*", { count: "exact", head: true })
         .eq("bundle_id", bundleId),
       sb
-        .from("entries")
-        .select("created_at")
+        .from("bundle_entry_refs")
+        .select("entry_id, cloud_session_entries(created_at)")
         .eq("bundle_id", bundleId)
-        .order("created_at", { ascending: false })
+        .order("added_at", { ascending: false })
         .limit(1),
-      sb
-        .from("entries")
-        .select("*", { count: "exact", head: true })
-        .eq("bundle_id", bundleId),
     ]);
 
   if (!bundle) throw new Error("Bundle not found.");
 
+  const lastEntryAt = latestRef?.[0]
+    ? (latestRef[0] as any).cloud_session_entries?.created_at ?? null
+    : null;
+
   return {
     bundle_id: bundle.id,
     name: bundle.name,
-    session_count: sCount ?? 0,
+    session_count: 0,
     entry_count: eCount ?? 0,
-    last_entry_at: entries?.[0]?.created_at ?? null,
+    last_entry_at: lastEntryAt,
   };
 }
 
@@ -202,44 +193,3 @@ export function listLocalBundles(): LocalBundleInfo[] {
   }));
 }
 
-export interface SessionInfo {
-  session_id: string;
-  project_name: string;
-  machine_id: string;
-  last_active_at: string | null;
-}
-
-export async function listBundleSessions(
-  bundleId: string,
-  skipAuth = false
-): Promise<SessionInfo[]> {
-  if (!skipAuth) await assertTokenValid(bundleId);
-  const sb = getSupabase();
-
-  const { data, error } = await sb
-    .from("sessions")
-    .select("id, project_name, machine_id, last_active_at")
-    .eq("bundle_id", bundleId)
-    .order("last_active_at", { ascending: false, nullsFirst: false });
-
-  if (error) throw new Error(`listBundleSessions failed: ${error.message}`);
-
-  return (data ?? []).map((s: any) => ({
-    session_id: s.id,
-    project_name: s.project_name,
-    machine_id: s.machine_id,
-    last_active_at: s.last_active_at,
-  }));
-}
-
-export async function deleteSession(sessionId: string): Promise<void> {
-  const sb = getSupabase();
-
-  // Only delete the session row (the connection).
-  // Entries are kept — they're historical context, not tied to the link.
-  const { error } = await sb
-    .from("sessions")
-    .delete()
-    .eq("id", sessionId);
-  if (error) throw new Error(`deleteSession failed: ${error.message}`);
-}
