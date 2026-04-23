@@ -69,18 +69,18 @@ Join an existing team. Body: `{ name: string, password: string }`
 ### POST /api/bundles
 Create a bundle. Body: `{ name: string, mode: "local" | "cloud", team_id?: string }`
 
-### DELETE /api/bundles/:id?mode=local|cloud
-Delete a bundle permanently.
+### DELETE /api/bundles/:id
+Delete a bundle permanently. Mode is resolved server-side.
 
 ### POST /api/bundles/:id/join
-Link a project to a bundle. Body: `{ project_name: string, mode: "local" | "cloud" }`
+Link a project to a bundle. Body: `{ project_name: string }`
 
-For local mode, also pushes a placeholder entry to establish the project in the bundle.
+Mode is resolved server-side. Also pushes a placeholder entry to establish the project in the bundle.
 
 ## Entries
 
-### GET /api/bundles/:id/entries?mode=&limit=&since=&exclude_project=
-Pull entries from a bundle.
+### GET /api/bundles/:id/entries?limit=&since=&exclude_project=
+Pull entries from a bundle. Mode is resolved server-side.
 
 ### POST /api/bundles/:id/entries
 Push a manual entry. Body:
@@ -90,8 +90,7 @@ Push a manual entry. Body:
   "event_type": "commit | pr_open | manual | session_end",
   "summary": "string",
   "files_touched": ["string"],
-  "decisions": [{ "decision": "string", "affects": ["string"] }],
-  "mode": "local | cloud"
+  "decisions": [{ "decision": "string", "affects": ["string"] }]
 }
 ```
 
@@ -126,18 +125,15 @@ List rewind history.
 ## Sessions
 
 ### POST /api/unlink-session
-Remove a session link. Body:
+Remove a session's connection to a bundle. Body:
 ```json
 {
   "session_id": "string",
-  "bundle_id": "string",
-  "project_name": "string",
-  "mode": "local | cloud"
+  "bundle_id": "string"
 }
 ```
 
-For local mode: removes all entries for that project from the bundle.
-For cloud mode: deletes the session row (entries are preserved with null session_id).
+Removes the bundle from the active session's bundles array. Same behavior for local and cloud — only the link is removed, session and entries are preserved.
 
 ### GET /api/sessions
 List active Claude Code sessions (from `~/.ctx-link/active-sessions/`).

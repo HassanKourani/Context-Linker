@@ -48,8 +48,8 @@ All exported from `@ctx-link/core`:
 
 ### Bundles (bundles.ts)
 - `createBundle(name, mode, teamId?)` → `{ bundle_id, name, join_token }`
-- `joinBundle(bundleId, token, projectName, mode)` → `{ bundle_id, name }`
-- `deleteBundle(bundleId, mode)` → void
+- `joinBundle(bundleId, token, projectName, mode)` → `{ bundle_id, name }` (mode resolved server-side in UI)
+- `deleteBundle(bundleId, mode)` → void (mode resolved server-side in UI)
 - `bundleStatus(bundleId, mode)` → `{ session_count, entry_count, last_entry_at }`
 - `listBundleSessions(bundleId)` → `SessionInfo[]`
 - `deleteSession(sessionId)` → void (removes session row only, keeps entries)
@@ -179,3 +179,5 @@ bun run cli -- <args>          # run CLI
 - **Local bundle "sessions"** — local bundles derive project lists from entries, not sessions. Joining a local bundle pushes a placeholder entry.
 - **`@/` alias** — resolves to `packages/ui/src/` (tsconfig paths + vite alias).
 - **Optimistic updates** — mutations snapshot cache in `onMutate`, roll back in `onError`, refetch in `onSettled`.
+- **Mode is server-resolved** — UI API endpoints operating on existing bundles do NOT require `mode`. The server checks `isLocalBundle(bundleId)` to determine local vs cloud. Only `POST /api/bundles` (create) takes `mode` since the bundle doesn't exist yet.
+- **Local and cloud behave identically** — same user-facing behavior for connect, disconnect, delete, push. Only the storage backend differs.
