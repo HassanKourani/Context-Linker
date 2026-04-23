@@ -10,6 +10,7 @@ import {
   createBundle,
   deleteBundle,
   joinBundle,
+  deleteSession,
   getBundleToken,
   pushEntry,
   pullEntries,
@@ -298,6 +299,23 @@ const server = Bun.serve({
           const limit = parseInt(url.searchParams.get("limit") || "20");
           const rewinds = await listRewinds(bundleId, project_name, limit);
           return Response.json(rewinds, { headers: corsHeaders });
+        } catch (err: any) {
+          return Response.json(
+            { error: err.message ?? String(err) },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+      }
+    }
+
+    // ── DELETE /api/sessions/:id ────────────────────────────────────────────
+    {
+      const match = url.pathname.match(/^\/api\/sessions\/([^/]+)$/);
+      if (match && req.method === "DELETE") {
+        try {
+          const sessionId = match[1];
+          await deleteSession(sessionId);
+          return Response.json({ ok: true }, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
             { error: err.message ?? String(err) },

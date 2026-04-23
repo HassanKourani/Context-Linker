@@ -76,6 +76,14 @@ export function joinBundle(bundleId: string, body: { project_name: string; mode:
 }
 
 // ---------------------------------------------------------------------------
+// Sessions
+// ---------------------------------------------------------------------------
+
+export function deleteSession(sessionId: string) {
+  return apiDelete<{ ok: true }>(`/api/sessions/${sessionId}`);
+}
+
+// ---------------------------------------------------------------------------
 // Entries
 // ---------------------------------------------------------------------------
 

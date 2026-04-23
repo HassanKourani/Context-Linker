@@ -230,3 +230,21 @@ export async function listBundleSessions(
     last_active_at: s.last_active_at,
   }));
 }
+
+export async function deleteSession(sessionId: string): Promise<void> {
+  const sb = getSupabase();
+
+  // Delete all entries belonging to this session first
+  const { error: entryErr } = await sb
+    .from("entries")
+    .delete()
+    .eq("session_id", sessionId);
+  if (entryErr) throw new Error(`deleteSession entries failed: ${entryErr.message}`);
+
+  // Delete the session row
+  const { error: sessErr } = await sb
+    .from("sessions")
+    .delete()
+    .eq("id", sessionId);
+  if (sessErr) throw new Error(`deleteSession failed: ${sessErr.message}`);
+}

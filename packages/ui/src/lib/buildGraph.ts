@@ -194,8 +194,9 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
           source: `project-${groupId}-${projectName}`,
           sourceHandle: s.sessionId,
           target: `bundle-${s.bundleId}`,
-          type: "default",
+          type: "deletable",
           animated: true,
+          data: { sessionId: s.sessionId },
           style: { stroke: "#585b70", strokeWidth: 2 },
         });
       }

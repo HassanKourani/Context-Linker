@@ -5,6 +5,7 @@ import {
   Controls,
   MiniMap,
   type NodeTypes,
+  type EdgeTypes,
   type Connection,
   type Edge,
 } from "@xyflow/react";
@@ -21,11 +22,16 @@ import { EntryPanel } from "./components/EntryPanel";
 import { PushEntryDialog } from "./components/PushEntryForm";
 import { RewindDialog } from "./components/RewindDialog";
 import { TeamManagementDialog } from "./components/TeamManagementDialog";
+import { DeletableEdge } from "./components/edges/DeletableEdge";
 
 const nodeTypes: NodeTypes = {
   project: ProjectNode,
   bundle: BundleNode,
   teamGroup: TeamGroupNode,
+};
+
+const edgeTypes: EdgeTypes = {
+  deletable: DeletableEdge,
 };
 
 export function App() {
@@ -77,6 +83,7 @@ export function App() {
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           nodesConnectable={true}
           nodesDraggable={false}
           elementsSelectable={true}
