@@ -1,4 +1,3 @@
-import { useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -9,12 +8,12 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useUIStore } from "@/stores/uiStore";
-import { useTeams } from "@/hooks/useTeams";
+import { useGraphData } from "@/hooks/useGraphData";
 import { useCopyToCloud } from "@/hooks/mutations/usePushToCloud";
 
 /**
  * Shown when a user tries to connect a local session to a cloud bundle.
- * Copies the session to cloud and adds its entries to the bundle in one step.
+ * Auto-detects the bundle's team — no team picker needed.
  */
 export function PushToCloudPromptDialog() {
   const activeModal = useUIStore((s) => s.activeModal);
@@ -22,27 +21,32 @@ export function PushToCloudPromptDialog() {
   const closeModal = useUIStore((s) => s.closeModal);
   const open = activeModal === "push-to-cloud-prompt" && !!pendingCloudConnect;
 
-  const [selectedTeamId, setSelectedTeamId] = useState("");
-  const { data: teams } = useTeams();
+  const { data: graphData } = useGraphData();
   const copyMutation = useCopyToCloud();
 
-  const handleCopyAndConnect = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!pendingCloudConnect || !selectedTeamId) return;
+  // Resolve the bundle's team from graph data
+  let bundleTeamId: string | null = null;
+  let bundleTeamName: string | null = null;
+  if (graphData && pendingCloudConnect) {
+    for (const team of graphData.teams) {
+      if (team.bundles.some((b) => b.bundle_id === pendingCloudConnect.bundleId)) {
+        bundleTeamId = team.team_id;
+        bundleTeamName = team.team_name;
+        break;
+      }
+    }
+  }
 
-    // Copy session to cloud AND add entries to the bundle in one API call
+  const handleCopyAndConnect = () => {
+    if (!pendingCloudConnect || !bundleTeamId) return;
+
     copyMutation.mutate(
       {
         sessionId: pendingCloudConnect.sessionId,
-        teamId: selectedTeamId,
+        teamId: bundleTeamId,
         bundleId: pendingCloudConnect.bundleId,
       },
-      {
-        onSuccess: () => {
-          closeModal();
-          setSelectedTeamId("");
-        },
-      },
+      { onSuccess: () => closeModal() },
     );
   };
 
@@ -53,42 +57,18 @@ export function PushToCloudPromptDialog() {
           <DialogTitle>Copy Session to Cloud</DialogTitle>
           <DialogDescription>
             This session is local-only. To connect it to a cloud bundle, an independent
-            copy will be created in the cloud. The local session stays unchanged —
-            edits to either version won't affect the other.
+            copy will be created in <strong>{bundleTeamName ?? "the team"}</strong>.
+            The local session stays unchanged — edits to either version won't affect the other.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleCopyAndConnect} className="space-y-4">
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">Copy to team</label>
-            {(teams ?? []).length > 0 ? (
-              <select
-                className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground"
-                value={selectedTeamId}
-                onChange={(e) => setSelectedTeamId(e.target.value)}
-                required
-              >
-                <option value="">Select a team...</option>
-                {(teams ?? []).map((t) => (
-                  <option key={t.team_id} value={t.team_id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                No teams available. Create or join a team first.
-              </p>
-            )}
-          </div>
-          <DialogFooter className="gap-2">
-            <Button type="button" variant="ghost" onClick={closeModal}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={copyMutation.isPending || !selectedTeamId}>
-              {copyMutation.isPending ? "Copying..." : "Copy to Cloud & Connect"}
-            </Button>
-          </DialogFooter>
-        </form>
+        <DialogFooter className="gap-2">
+          <Button variant="ghost" onClick={closeModal}>
+            Cancel
+          </Button>
+          <Button onClick={handleCopyAndConnect} disabled={copyMutation.isPending || !bundleTeamId}>
+            {copyMutation.isPending ? "Copying..." : "Copy to Cloud & Connect"}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
