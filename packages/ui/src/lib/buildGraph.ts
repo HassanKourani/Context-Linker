@@ -83,7 +83,7 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
           lastActiveAt: cs.last_active_at,
           bundleId: "",
           branch: cs.branch,
-          entryCount: 0,
+          entryCount: cs.entry_count ?? 0,
           cloudSessionId: cs.id,
         });
       }

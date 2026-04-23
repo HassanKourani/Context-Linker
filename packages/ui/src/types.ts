@@ -19,6 +19,7 @@ export interface CloudSessionData {
   branch: string | null;
   started_at: string;
   last_active_at: string;
+  entry_count?: number;
 }
 
 export interface GraphData {

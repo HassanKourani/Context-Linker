@@ -83,11 +83,19 @@ const server = Bun.serve({
                 };
               })
             );
+            // Enrich cloud sessions with entry counts
+            const enrichedSessions = await Promise.all(
+              cloudSessions.map(async (cs) => {
+                const entries = await getCloudSessionEntries(cs.id);
+                return { ...cs, entry_count: entries.length };
+              })
+            );
+
             return {
               team_id: team.team_id,
               team_name: team.name,
               bundles: bundlesWithDetails,
-              cloud_sessions: cloudSessions,
+              cloud_sessions: enrichedSessions,
             };
           })
         );
