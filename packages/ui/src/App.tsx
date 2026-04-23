@@ -107,7 +107,7 @@ export function App() {
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           nodesConnectable={true}
-          nodesDraggable={false}
+          nodesDraggable={true}
           elementsSelectable={true}
           onConnect={onConnect}
           isValidConnection={isValidConnection}
