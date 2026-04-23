@@ -1,5 +1,5 @@
 import type { Node, Edge } from "@xyflow/react";
-import type { GraphData, BundleGraphData, ActiveSessionData } from "../types";
+import type { GraphData, BundleGraphData, ActiveSessionData, CloudSessionData } from "../types";
 import { computeLayout, type LayoutNode, type LayoutEdge } from "./layout";
 import { teamColor, LOCAL_GROUP_COLOR } from "./colors";
 
@@ -24,10 +24,11 @@ interface GroupInput {
   machineId: string;
   isLocal: boolean;
   activeSessions?: ActiveSessionData[];
+  cloudSessions?: CloudSessionData[];
 }
 
 function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
-  const { groupId, groupName, color, bundles, machineId, isLocal, activeSessions } = input;
+  const { groupId, groupName, color, bundles, machineId, isLocal, activeSessions, cloudSessions } = input;
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
@@ -36,23 +37,6 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
     string,
     Array<{ sessionId: string; machineId: string; lastActiveAt: string | null; bundleId: string; branch: string | null; entryCount: number }>
   >();
-
-  for (const bundle of bundles) {
-    if (!isLocal) {
-      for (const session of bundle.sessions) {
-        const key = session.project_name;
-        if (!projectSessions.has(key)) projectSessions.set(key, []);
-        projectSessions.get(key)!.push({
-          sessionId: session.session_id,
-          machineId: session.machine_id,
-          lastActiveAt: session.last_active_at,
-          bundleId: bundle.bundle_id,
-          branch: null,
-          entryCount: 0,
-        });
-      }
-    }
-  }
 
   // Add active sessions (each Claude Code session becomes ONE row under its project)
   // The session row has no bundleId — edges to bundles are created separately below
@@ -69,6 +53,25 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
           bundleId: "",
           branch: as.branch,
           entryCount: as.entry_count ?? 0,
+        });
+      }
+    }
+  }
+
+  // Add cloud sessions (from Supabase — sessions from other machines or past sessions)
+  if (cloudSessions) {
+    for (const cs of cloudSessions) {
+      const key = cs.project_name;
+      if (!projectSessions.has(key)) projectSessions.set(key, []);
+      const existing = projectSessions.get(key)!;
+      if (!existing.some((e) => e.sessionId === cs.id)) {
+        existing.push({
+          sessionId: cs.id,
+          machineId: cs.machine_id,
+          lastActiveAt: cs.last_active_at,
+          bundleId: "",
+          branch: cs.branch,
+          entryCount: 0,
         });
       }
     }
@@ -303,6 +306,7 @@ export function buildFlowGraph(
       machineId: data.machine_id,
       isLocal: false,
       activeSessions: teamActiveSessions,
+      cloudSessions: team.cloud_sessions,
     });
 
     const groupNode = nodes.find((n) => n.id === `team-${team.team_id}`);

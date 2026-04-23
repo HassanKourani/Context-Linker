@@ -36,25 +36,7 @@ export function useJoinBundle() {
                 : b
             ),
           },
-          teams: old.teams.map((t) => ({
-            ...t,
-            bundles: t.bundles.map((b) =>
-              b.bundle_id === bundleId
-                ? {
-                    ...b,
-                    sessions: [
-                      ...b.sessions,
-                      {
-                        session_id: `optimistic-${Date.now()}`,
-                        project_name,
-                        machine_id: old.machine_id,
-                        last_active_at: new Date().toISOString(),
-                      },
-                    ],
-                  }
-                : b
-            ),
-          })),
+          teams: old.teams.map((t) => ({ ...t })),
         };
       });
 

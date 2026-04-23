@@ -28,12 +28,9 @@ export function useDeleteSession() {
           // Also remove cloud sessions
           teams: old.teams.map((t) => ({
             ...t,
-            bundles: t.bundles.map((b) => ({
-              ...b,
-              sessions: b.sessions.filter(
-                (s) => s.session_id !== params.session_id
-              ),
-            })),
+            cloud_sessions: t.cloud_sessions?.filter(
+              (cs) => cs.id !== params.session_id
+            ),
           })),
           // Also remove local projects
           local: {

@@ -18,17 +18,26 @@ export function PushEntryDialog() {
   const { data: graphData } = useGraphData();
   const mutation = usePushEntry();
 
-  // Get available project names from the current bundle's sessions
+  // Get available project names from cloud sessions, active sessions, and local bundles
   const projectNames: string[] = [];
   if (graphData && selectedBundleId) {
+    // From cloud sessions in teams
     for (const team of graphData.teams) {
-      const bundle = team.bundles.find((b) => b.bundle_id === selectedBundleId);
-      if (bundle) {
-        for (const s of bundle.sessions) {
+      if (team.cloud_sessions) {
+        for (const cs of team.cloud_sessions) {
+          if (!projectNames.includes(cs.project_name)) projectNames.push(cs.project_name);
+        }
+      }
+    }
+    // From active sessions connected to this bundle
+    if (graphData.sessions) {
+      for (const s of graphData.sessions) {
+        if (s.bundles.some((b) => b.bundle_id === selectedBundleId)) {
           if (!projectNames.includes(s.project_name)) projectNames.push(s.project_name);
         }
       }
     }
+    // From local bundles
     const lb = graphData.local.bundles.find((b) => b.bundle_id === selectedBundleId);
     if (lb) {
       for (const p of lb.projects) {

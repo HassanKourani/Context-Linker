@@ -22,16 +22,10 @@ export function useDeleteActiveSession() {
           ...old,
           // Remove from active sessions
           sessions: old.sessions?.filter((s) => s.session_id !== sessionId),
-          // Remove from cloud team bundles' sessions + entries
+          // Remove from cloud team cloud_sessions
           teams: old.teams.map((t) => ({
             ...t,
-            bundles: t.bundles.map((b) => ({
-              ...b,
-              sessions: b.sessions.filter((s) => s.session_id !== sessionId),
-              entry_count: projectName
-                ? Math.max(0, b.entry_count - b.sessions.filter((s) => s.session_id === sessionId).length)
-                : b.entry_count,
-            })),
+            cloud_sessions: t.cloud_sessions?.filter((cs) => cs.id !== sessionId),
           })),
           // Remove from local bundles' projects
           local: {

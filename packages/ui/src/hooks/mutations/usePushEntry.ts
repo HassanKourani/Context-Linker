@@ -1,20 +1,30 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { pushEntry } from "@/lib/api";
 import { toast } from "sonner";
 import type { EntryRow } from "@/types";
 
+/**
+ * Push a manual entry to a session (and optionally to a bundle via push-to-bundle).
+ * NOTE: Direct push-to-bundle was removed when pushEntry was replaced by the
+ * reference model (addEntriesToBundle). This hook is kept for potential future use
+ * with session entry creation.
+ */
 export function usePushEntry() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({
+    mutationFn: async ({
       bundleId,
-      ...body
+      project_name,
+      event_type,
+      summary,
     }: {
       bundleId: string;
       project_name: string;
       event_type: string;
       summary: string;
-    }) => pushEntry(bundleId, body),
+    }) => {
+      // POST to session entries is the new path; direct bundle push is removed
+      throw new Error("Direct push to bundle is no longer supported. Use push-to-bundle from a session.");
+    },
 
     onMutate: async ({ bundleId, project_name, event_type, summary }) => {
       const key = ["entries", bundleId];
