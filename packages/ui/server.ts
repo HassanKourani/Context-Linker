@@ -177,6 +177,20 @@ const server = Bun.serve({
           const { project_name, mode } = await req.json();
           const token = getBundleToken(bundleId) || "";
           const result = await joinBundle(bundleId, token, project_name, mode);
+
+          // For local mode, push a "linked" entry so the project shows up
+          // (local bundles derive projects from entries, not sessions)
+          if (mode === "local") {
+            await pushEntry({
+              bundle_id: bundleId,
+              project_name,
+              event_type: "manual" as const,
+              summary: `Project "${project_name}" linked to bundle`,
+              raw_context: "",
+              mode: "local",
+            });
+          }
+
           return Response.json(result, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
