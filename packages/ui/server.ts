@@ -15,6 +15,7 @@ import {
   removeEntryFromBundle,
   localAddEntriesToBundle,
   localRemoveEntryFromBundle,
+  localRemoveSessionRefsFromBundle,
   createTeam,
   joinTeam,
   getSessionEntries,
@@ -550,46 +551,42 @@ const server = Bun.serve({
         const { session_id, bundle_id } = await req.json();
         const mode = resolveBundleMode(bundle_id);
 
-        // Collect entry IDs to remove from the bundle.
-        // session_id could be a local active session ID or a cloud session ID.
-        let entryIds: string[] = [];
-
-        // 1. Try local session entries
-        const localEntries = getSessionEntries(session_id);
-        if (localEntries.length > 0) {
-          entryIds = localEntries.map((e) => e.id);
-        }
-
-        // 2. If no local entries, check if an active session has this as cloud_session_id
-        if (entryIds.length === 0) {
+        // Resolve the local session ID (session_id might be a cloud session ID)
+        let localSessionId = session_id;
+        const directSession = loadActiveSession(session_id);
+        if (!directSession) {
+          // session_id might be a cloud session ID — find the matching active session
           const allSessions = listActiveSessions();
           const match = allSessions.find((s) => s.cloud_session_id === session_id);
-          if (match) {
-            const entries = getSessionEntries(match.session_id);
-            entryIds = entries.map((e) => e.id);
-          }
+          if (match) localSessionId = match.session_id;
         }
 
-        // 3. For local bundles, also remove refs by session_id directly from entry_refs.json
+        // Get all entry IDs from the local session file
+        const entries = getSessionEntries(localSessionId);
+        const entryIds = entries.map((e) => e.id);
+
+        // Remove entry refs from the bundle
         if (mode === "local") {
-          const { localRemoveSessionRefsFromBundle } = await import("@ctx-link/core");
-          localRemoveSessionRefsFromBundle(bundle_id, session_id);
-        }
-
-        // Remove individual entry refs
-        if (entryIds.length > 0) {
-          if (mode === "local") {
-            for (const entryId of entryIds) {
-              localRemoveEntryFromBundle(bundle_id, entryId);
-            }
-          } else {
-            for (const entryId of entryIds) {
-              try { await removeEntryFromBundle(bundle_id, entryId); } catch {}
-            }
+          // Remove by session_id match (covers all refs for this session)
+          localRemoveSessionRefsFromBundle(bundle_id, localSessionId);
+          // Also try with the original session_id in case it differs
+          if (localSessionId !== session_id) {
+            localRemoveSessionRefsFromBundle(bundle_id, session_id);
+          }
+        } else if (entryIds.length > 0) {
+          // Cloud: remove individual entry refs
+          for (const entryId of entryIds) {
+            try { await removeEntryFromBundle(bundle_id, entryId); } catch {}
           }
         }
 
-        disconnectSessionFromBundle(session_id, bundle_id);
+        // Disconnect the session from the bundle
+        disconnectSessionFromBundle(localSessionId, bundle_id);
+        // Also try with original session_id
+        if (localSessionId !== session_id) {
+          disconnectSessionFromBundle(session_id, bundle_id);
+        }
+
         return Response.json({ ok: true }, { headers: corsHeaders });
       } catch (err: any) {
         return Response.json(
