@@ -195,8 +195,9 @@ export function renderEntriesForClaude(entries: EntryRow[]): string {
     return "No recent cross-project context.";
   }
   const parts = entries.map((e) => {
+    const ts = new Date(e.created_at).toISOString();
     const lines = [
-      `[${e.created_at}] ${e.project_name} · ${e.event_type}${
+      `[${ts}] ${e.project_name} · ${e.event_type}${
         e.trigger_ref ? ` (${e.trigger_ref})` : ""
       }`,
       e.summary,
@@ -208,7 +209,7 @@ export function renderEntriesForClaude(entries: EntryRow[]): string {
       lines.push("Decisions:");
       for (const d of e.decisions) {
         lines.push(
-          `  - ${d.decision}${d.affects.length ? ` [affects: ${d.affects.join(", ")}]` : ""}`
+          `  - ${d.decision}${d.affects?.length ? ` [affects: ${d.affects.join(", ")}]` : ""}`
         );
       }
     }

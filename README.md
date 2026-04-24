@@ -15,7 +15,7 @@ Claude Code (Project A)
     ▼
 Session entry accumulated locally
     │
-    │ cxtl push --consolidate (or auto via hook)
+    │ ctxl push --consolidate (or auto via hook)
     ▼
 Consolidated entry stored in bundle
     │
@@ -24,7 +24,7 @@ Consolidated entry stored in bundle
     ▼
 Claude Code (Project B)
     │
-    │ cxtl pull (or ask Claude: "pull context")
+    │ ctxl pull (or ask Claude: "pull context")
     ▼
 Claude sees what Project A did
 ```
@@ -92,10 +92,10 @@ For FE + BE on the same machine. Entries stored in `~/.ctx-link/local/<bundle_id
 
 ```bash
 # In your frontend repo (interactive — prompts for mode):
-cxtl create my-feature
+ctxl create my-feature
 
 # In your backend repo:
-cxtl join <bundle_id>
+ctxl join <bundle_id>
 ```
 
 ### Mode: cloud
@@ -104,75 +104,75 @@ For cross-machine or team use. Entries stored in Supabase. Requires team members
 
 ```bash
 # Create a team (once, interactive prompts):
-cxtl create-team
+ctxl create-team
 
 # Teammate joins the team:
-cxtl join-team
+ctxl join-team
 
 # Create a bundle (interactive — prompts for mode + team):
-cxtl create my-feature
+ctxl create my-feature
 
 # Teammate joins the bundle (mode auto-detected):
-cxtl join <bundle_id>
+ctxl join <bundle_id>
 ```
 
 ---
 
 ## CLI reference
 
-The CLI binary is `cxtl`. All commands with multiple options are interactive — they prompt when flags aren't provided. Flags still work for scripting.
+The CLI binary is `ctxl`. All commands with multiple options are interactive — they prompt when flags aren't provided. Flags still work for scripting.
 
 ### Teams
 
 | Command | Description |
 |---------|-------------|
-| `cxtl create-team` | Create a new team. Prompts for name + password. |
-| `cxtl join-team` | Join an existing team. Prompts for name + password. |
-| `cxtl my-teams` | List teams you belong to. |
-| `cxtl team-bundles [team_id]` | List bundles in a team. Prompts for team if not given. |
+| `ctxl create-team` | Create a new team. Prompts for name + password. |
+| `ctxl join-team` | Join an existing team. Prompts for name + password. |
+| `ctxl my-teams` | List teams you belong to. |
+| `ctxl team-bundles [team_id]` | List bundles in a team. Prompts for team if not given. |
 
 ### Session tracking
 
 | Command | Description |
 |---------|-------------|
-| `cxtl info` | Show current project config (session, branch, bundles). |
-| `cxtl sessions [--limit N]` | List recent Claude Code sessions across all projects. |
-| `cxtl session-log --message <text>` | Log an entry to the current session (local, not pushed). |
-| `cxtl session-log --event commit --ref <sha> --diff` | Log a commit entry with diff context. |
-| `cxtl session-entries [--all]` | List accumulated session entries (un-pushed by default). |
+| `ctxl info` | Show current project config (session, branch, bundles). |
+| `ctxl sessions [--limit N]` | List recent Claude Code sessions across all projects. |
+| `ctxl session-log --message <text>` | Log an entry to the current session (local, not pushed). |
+| `ctxl session-log --event commit --ref <sha> --diff` | Log a commit entry with diff context. |
+| `ctxl session-entries [--all]` | List accumulated session entries (un-pushed by default). |
 
 ### Connect / Disconnect
 
 | Command | Description |
 |---------|-------------|
-| `cxtl connect <bundle_id>` | Connect session to a bundle. Mode auto-detected. |
-| `cxtl disconnect <bundle_id>` | Disconnect session from a bundle. |
+| `ctxl connect <bundle_id>` | Connect session to a bundle. Mode auto-detected. |
+| `ctxl disconnect <bundle_id>` | Disconnect session from a bundle. |
 
 ### Bundles
 
 | Command | Description |
 |---------|-------------|
-| `cxtl create <name>` | Create a bundle. Prompts for mode + team. |
-| `cxtl create <name> --mode local` | Create a local bundle (skip prompt). |
-| `cxtl create <name> --mode cloud --team <id>` | Create a cloud bundle (skip prompts). |
-| `cxtl join <bundle_id> [token]` | Join a bundle. Mode auto-detected. |
-| `cxtl my-bundles` | List all bundles this machine has joined. |
-| `cxtl status <bundle_id>` | Show session count, entry count, last activity. |
-| `cxtl leave` | Disconnect this project from its bundle. |
-| `cxtl delete-bundle [bundle_id]` | Delete a bundle. Prompts for selection + confirmation. |
+| `ctxl create <name>` | Create a bundle. Prompts for mode + team. |
+| `ctxl create <name> --mode local` | Create a local bundle (skip prompt). |
+| `ctxl create <name> --mode cloud --team <id>` | Create a cloud bundle (skip prompts). |
+| `ctxl join <bundle_id> [token]` | Join a bundle. Mode auto-detected. |
+| `ctxl my-bundles` | List all bundles this machine has joined. |
+| `ctxl status <bundle_id>` | Show session count, entry count, last activity. |
+| `ctxl leave` | Disconnect this project from its bundle. |
+| `ctxl delete-bundle [bundle_id]` | Delete a bundle. Prompts for selection + confirmation. |
 
 ### Push / Pull
 
 | Command | Description |
 |---------|-------------|
-| `cxtl push --message <text>` | Push a summary to all connected bundles. |
-| `cxtl push --diff` | Push using git diff; auto-extracts commit message as summary. |
-| `cxtl push --consolidate --message <text>` | Consolidate pending session entries into one push. |
-| `cxtl push --event <type> --ref <ref>` | Specify event type and reference (commit SHA, PR#). |
-| `cxtl pull` | Pull entries from all connected bundles (excludes own project). |
-| `cxtl pull <bundle_id>` | Pull from one specific bundle. |
-| `cxtl pull --include-self` | Include your own project's entries. |
-| `cxtl pull --since <iso> --limit <n>` | Filter by time and count. |
+| `ctxl push --message <text>` | Push a summary to all connected bundles. |
+| `ctxl push --diff` | Push using git diff; auto-extracts commit message as summary. |
+| `ctxl push --consolidate --message <text>` | Consolidate pending session entries into one push. |
+| `ctxl push --event <type> --ref <ref>` | Specify event type and reference (commit SHA, PR#). |
+| `ctxl pull` | Pull entries from all connected bundles (excludes own project). |
+| `ctxl pull <bundle_id>` | Pull from one specific bundle. |
+| `ctxl pull --include-self` | Include your own project's entries. |
+| `ctxl pull --since <iso> --limit <n>` | Filter by time and count. |
 
 **Event types:** `commit`, `pr_open`, `manual`, `session_end`
 
@@ -182,17 +182,17 @@ All commands are interactive when flags are omitted — they prompt for bundle, 
 
 | Command | Description |
 |---------|-------------|
-| `cxtl rewind` | Interactive rewind: prompts for bundle, project, strategy. Dry-run first, then asks to apply. |
-| `cxtl rewind --bundle <id> --project <name> --last-n <n>` | Dry-run preview with flags. |
-| `cxtl rewind ... --apply --reason "text"` | Apply directly with flags (skip prompts). |
-| `cxtl rewind ... --since <iso>` | Rewind entries since a timestamp. |
-| `cxtl rewind ... --entry-ids <a,b,c>` | Rewind specific entries. |
-| `cxtl rewind ... --after-ref <sha>` | Rewind everything after a commit (keeps the pivot). |
-| `cxtl rewind ... --force` | Override the 50-entry safety cap. |
-| `cxtl restore` | Interactive restore: prompts for bundle, project, method. |
-| `cxtl restore --bundle <id> --project <name> --from-log <log_id>` | Restore from a specific rewind. |
-| `cxtl restore --bundle <id> --project <name> --entry-ids <a,b,c>` | Restore specific entries. |
-| `cxtl rewind-history [bundle_id]` | List past rewinds. Prompts for bundle if not given. |
+| `ctxl rewind` | Interactive rewind: prompts for bundle, project, strategy. Dry-run first, then asks to apply. |
+| `ctxl rewind --bundle <id> --project <name> --last-n <n>` | Dry-run preview with flags. |
+| `ctxl rewind ... --apply --reason "text"` | Apply directly with flags (skip prompts). |
+| `ctxl rewind ... --since <iso>` | Rewind entries since a timestamp. |
+| `ctxl rewind ... --entry-ids <a,b,c>` | Rewind specific entries. |
+| `ctxl rewind ... --after-ref <sha>` | Rewind everything after a commit (keeps the pivot). |
+| `ctxl rewind ... --force` | Override the 50-entry safety cap. |
+| `ctxl restore` | Interactive restore: prompts for bundle, project, method. |
+| `ctxl restore --bundle <id> --project <name> --from-log <log_id>` | Restore from a specific rewind. |
+| `ctxl restore --bundle <id> --project <name> --entry-ids <a,b,c>` | Restore specific entries. |
+| `ctxl rewind-history [bundle_id]` | List past rewinds. Prompts for bundle if not given. |
 
 ---
 
@@ -236,7 +236,7 @@ ctx-link/
     core/          # Shared logic: config, Supabase, bundles, entries, teams,
     |              # rewind, local-store — no transport layer
     mcp-server/    # MCP protocol wrapper (stdio) with 16 tools
-    cli/           # cxtl CLI (commander + @inquirer/prompts) — interactive
+    cli/           # ctxl CLI (commander + @inquirer/prompts) — interactive
     ui/            # React web dashboard — node graph + management
     hooks/         # Git post-commit + Claude Code PostToolUse hook scripts
   supabase/
@@ -319,13 +319,13 @@ rewind_log       -- audit trail
 ## Troubleshooting
 
 ### "No bundles connected to this session"
-Run `cxtl connect <bundle_id>` to connect to a bundle, or `cxtl create <name>` to create one.
+Run `ctxl connect <bundle_id>` to connect to a bundle, or `ctxl create <name>` to create one.
 
 ### "You are not a member of this team"
-Run `cxtl join-team` and enter the team name + password.
+Run `ctxl join-team` and enter the team name + password.
 
 ### "No teams found"
-Run `cxtl create-team` to create a team first (required for cloud bundles).
+Run `ctxl create-team` to create a team first (required for cloud bundles).
 
 ### Claude Code doesn't see ctx-link MCP server
 - Run `/mcp` in Claude Code to check status.
@@ -335,7 +335,7 @@ Run `cxtl create-team` to create a team first (required for cloud bundles).
 ### Hooks aren't firing
 - Check `~/.claude/settings.json` has the PostToolUse hook entry.
 - Verify the hook script path is absolute and executable (`chmod +x`).
-- Hooks only fire when a `.cxtl-active-session` marker file exists in the project.
+- Hooks only fire when a `.ctxl-active-session` marker file exists in the project.
 
 ### Rewind affected too many entries
 The safety cap (50) refuses bulk rewinds without `--force`.

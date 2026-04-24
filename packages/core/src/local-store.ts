@@ -232,11 +232,12 @@ export function localBundleStatus(bundleId: string): BundleStatus {
   const refs = readEntryRefs(bundleId);
   const resolved = resolveEntryRefs(refs);
   const sorted = resolved.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const sessionIds = new Set(refs.map(r => r.session_id).filter(Boolean));
 
   return {
     bundle_id: meta.id,
     name: meta.name,
-    session_count: 0,
+    session_count: sessionIds.size,
     entry_count: resolved.length,
     last_entry_at: sorted[0]?.created_at ?? null,
   };

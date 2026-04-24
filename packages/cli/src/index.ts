@@ -715,8 +715,8 @@ program
     if (!bundleId) {
       bundleId = await promptForBundle("Which bundle?");
     }
-    const cfg = loadProjectConfig();
-    const s = await bundleStatus(bundleId, (cfg?.mode === "local" || cfg?.mode === "cloud") ? cfg.mode : "cloud");
+    const mode = isLocalBundle(bundleId) ? "local" : "cloud";
+    const s = await bundleStatus(bundleId, mode);
     console.log(JSON.stringify(s, null, 2));
   });
 
@@ -925,7 +925,7 @@ program
 
     // If a specific bundle_id is given, pull just from that
     if (bundleId) {
-      const mode = session?.bundles.find((b) => b.bundle_id === bundleId)?.mode ?? "local";
+      const mode = isLocalBundle(bundleId) ? "local" : "cloud";
       const rows = await pullEntries({
         bundle_id: bundleId,
         since: opts.since,
@@ -1263,7 +1263,7 @@ program
     }
 
     const cfg = loadProjectConfig();
-    const mode = isLocalBundle(bundleId) ? "local" : ((cfg?.mode === "local" || cfg?.mode === "cloud") ? cfg.mode : "cloud");
+    const mode = isLocalBundle(bundleId) ? "local" : "cloud";
     await deleteBundle(bundleId, mode);
     if (cfg && cfg.bundle === bundleId) {
       cfg.bundle = null;

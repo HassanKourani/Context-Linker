@@ -158,7 +158,7 @@ export async function bundleStatus(bundleId: string, mode: "local" | "cloud" = "
   if (!skipAuth) await assertTokenValid(bundleId);
   const sb = getSupabase();
 
-  const [{ data: bundle }, { count: eCount }, { data: latestRef }] =
+  const [{ data: bundle }, { count: eCount }, { data: latestRef }, { data: sessionRefs }] =
     await Promise.all([
       sb.from("bundles").select("id, name").eq("id", bundleId).single(),
       sb
@@ -171,6 +171,10 @@ export async function bundleStatus(bundleId: string, mode: "local" | "cloud" = "
         .eq("bundle_id", bundleId)
         .order("added_at", { ascending: false })
         .limit(1),
+      sb
+        .from("bundle_entry_refs")
+        .select("entry_id, cloud_session_entries(cloud_session_id)")
+        .eq("bundle_id", bundleId),
     ]);
 
   if (!bundle) throw new Error("Bundle not found.");
@@ -179,10 +183,15 @@ export async function bundleStatus(bundleId: string, mode: "local" | "cloud" = "
     ? (latestRef[0] as any).cloud_session_entries?.created_at ?? null
     : null;
 
+  // Count distinct sessions that have entries in this bundle
+  const sessionIds = new Set(
+    (sessionRefs ?? []).map((r: any) => r.cloud_session_entries?.cloud_session_id).filter(Boolean)
+  );
+
   return {
     bundle_id: bundle.id,
     name: bundle.name,
-    session_count: 0,
+    session_count: sessionIds.size,
     entry_count: eCount ?? 0,
     last_entry_at: lastEntryAt,
   };

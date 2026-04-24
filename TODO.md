@@ -189,7 +189,7 @@
 
 - [x] Documented dev flow in README
 - [ ] Add a production build: `bun run build:ui` → serves from `packages/ui/dist`
-- [ ] Optional: `cxtl ui` CLI command that builds then starts a serve instance
+- [ ] Optional: `ctxl ui` CLI command that builds then starts a serve instance
 - [ ] Optional: Electron/Tauri desktop app
 
 ### Phase U9: Deploy as a hosted web app (far-future)

@@ -11,6 +11,7 @@ import {
   deleteBundle,
   bundleStatus,
   listLocalBundles,
+  listAllLocalBundleDetails,
   pullEntries,
   renderEntriesForClaude,
   rewindProject,
@@ -19,22 +20,40 @@ import {
   getActiveSessionId,
   loadActiveSession,
   saveActiveSession,
+  setActiveSessionId,
+  loadGlobalConfig,
+  loadProjectConfig,
+  logSession,
+  deleteActiveSession,
+  renameActiveSession,
   pushSessionEntry,
   getSessionEntries,
   getUnpushedSessionEntries,
+  deleteSessionEntry,
   addEntriesToBundle,
   localAddEntriesToBundle,
   removeEntryFromBundle,
   localRemoveEntryFromBundle,
+  localRemoveSessionRefsFromBundle,
+  removeSessionEntriesFromBundle,
   copySessionToCloud,
   syncSessionToCloud,
   getCloudSessionEntries,
+  getCloudSessionBundleConnections,
   getBundleTeamId,
   connectSessionToBundle,
   connectCloudSessionToBundle,
+  disconnectSessionFromBundle,
+  disconnectCloudSessionFromBundle,
+  deleteCloudSession,
+  deleteCloudSessionEntry,
+  renameCloudSession,
+  listActiveSessions,
+  listTeamSessions,
+  createTeam,
+  joinTeam,
   listMyTeams,
   listTeamBundles,
-  listAllLocalBundleDetails,
   type ActiveSession,
   type RewindStrategy,
   isLocalBundle,
@@ -59,13 +78,23 @@ const tools = [
   {
     name: "bundle_create",
     description:
-      "Create a new shared context bundle. Returns a bundle_id and a join_token. Share the token with another machine/session to link them.",
+      "Create a new shared context bundle. Returns a bundle_id and a join_token. " +
+      "Use mode='cloud' with a team_id to create a cloud bundle. Default is local.",
     inputSchema: {
       type: "object",
       properties: {
         name: {
           type: "string",
           description: "Human-readable label, e.g. 'feature-notifications'",
+        },
+        mode: {
+          type: "string",
+          enum: ["local", "cloud"],
+          description: "Storage mode. Default: 'local'. Use 'cloud' with team_id for cross-machine sharing.",
+        },
+        team_id: {
+          type: "string",
+          description: "Required when mode='cloud'. The team to create the bundle under.",
         },
       },
       required: ["name"],
@@ -90,7 +119,7 @@ const tools = [
   },
   {
     name: "bundle_list",
-    description: "List bundles this machine has joined.",
+    description: "List all bundles: local bundles on this machine and cloud bundles from joined teams.",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -136,7 +165,7 @@ const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        bundle_id: { type: "string" },
+        bundle_id: { type: "string", description: "Specific bundle to pull from. Omit to pull from ALL connected bundles." },
         since: {
           type: "string",
           description: "ISO timestamp; only return entries newer than this.",
@@ -147,7 +176,6 @@ const tools = [
           description: "Skip entries from this project (usually your own).",
         },
       },
-      required: ["bundle_id"],
     },
   },
   {
@@ -226,7 +254,7 @@ const tools = [
       type: "object",
       properties: {
         bundle_id: { type: "string", description: "The bundle to connect to" },
-        mode: { type: "string", enum: ["local", "cloud"], description: "Storage mode for this bundle" },
+        mode: { type: "string", enum: ["local", "cloud"], description: "Storage mode. Auto-detected from bundle ID if omitted." },
       },
       required: ["bundle_id"],
     },
@@ -272,12 +300,12 @@ const tools = [
         },
         decisions: {
           type: "array",
+          description: "Optional. Only 'decision' is required per item; rationale and affects are optional.",
           items: {
             type: "object",
             properties: {
               decision: { type: "string" },
               rationale: { type: "string" },
-              affects: { type: "array", items: { type: "string" } },
             },
             required: ["decision"],
           },
@@ -298,13 +326,14 @@ const tools = [
   {
     name: "session_entries",
     description:
-      "List accumulated session entries. Use before context_push to see what needs consolidating.",
+      "List accumulated session entries. " +
+      "WARNING: Defaults to only_unpushed=true — set to false to see ALL entries including already-pushed ones.",
     inputSchema: {
       type: "object",
       properties: {
         only_unpushed: {
           type: "boolean",
-          description: "If true (default), only show entries not yet pushed to a bundle.",
+          description: "Default true — only entries not yet pushed. Set false to see ALL entries.",
         },
       },
     },
@@ -351,6 +380,140 @@ const tools = [
       },
     },
   },
+  {
+    name: "session_start",
+    description:
+      "Create or resume a session for the current project. " +
+      "If a session already exists for the given session_id, it resumes it. " +
+      "Otherwise creates a new active session record. " +
+      "This is automatically called by Claude Code hooks, but can be called manually if no session exists.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: {
+          type: "string",
+          description: "Session ID. If omitted, generates a random UUID.",
+        },
+      },
+    },
+  },
+  {
+    name: "team_create",
+    description:
+      "Create a new team. Teams are access-control containers for cloud sessions and bundles. " +
+      "Returns team_id and name. Share the team name + password with collaborators so they can join.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Team name (unique, used to join)" },
+        password: { type: "string", description: "Team password (hashed with argon2, needed to join)" },
+      },
+      required: ["name", "password"],
+    },
+  },
+  {
+    name: "team_join",
+    description:
+      "Join an existing team by name and password. Required before working with cloud bundles or pushing sessions to cloud.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Team name" },
+        password: { type: "string", description: "Team password" },
+      },
+      required: ["name", "password"],
+    },
+  },
+  {
+    name: "session_rename",
+    description:
+      "Rename the current session. Also renames all cloud copies. Pass null or empty string to clear the name.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "New session name (or empty to clear)" },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "session_delete",
+    description:
+      "Delete a session and all its cloud copies. This is irreversible — cascade-deletes cloud entries and bundle refs. " +
+      "If no session_id is provided, deletes the current session.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: { type: "string", description: "Session ID to delete. Omit to delete the current session." },
+      },
+    },
+  },
+  {
+    name: "session_delete_entry",
+    description:
+      "Delete a specific entry from the current session. Also deletes the cloud copy of the entry and cascades to bundle refs.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        entry_id: { type: "string", description: "Entry ID to delete" },
+      },
+      required: ["entry_id"],
+    },
+  },
+  {
+    name: "bundle_entries",
+    description:
+      "List all entries in a bundle — unfiltered, no cross-project exclusion. " +
+      "Use this to see the raw contents of a bundle. " +
+      "Unlike context_pull, this returns everything without filtering by project.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bundle_id: { type: "string" },
+        limit: { type: "number", description: "Max entries to return. Default 50." },
+      },
+      required: ["bundle_id"],
+    },
+  },
+  {
+    name: "session_list",
+    description:
+      "List all active sessions across all projects on this machine. " +
+      "Shows session ID, project name, branch, connected bundles, and entry count.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "bundle_pull_from_sessions",
+    description:
+      "Pull entries from ALL sessions connected to a bundle in one shot. " +
+      "For each connected session, adds all its entry refs to the bundle. " +
+      "Handles both local and cloud bundles, auto-syncing cloud copies as needed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bundle_id: { type: "string", description: "Bundle to pull entries into" },
+      },
+      required: ["bundle_id"],
+    },
+  },
+  {
+    name: "bundle_push_to_cloud",
+    description:
+      "Migrate a local bundle to the cloud under a team. " +
+      "Creates a new cloud bundle, pushes all connected sessions to cloud, migrates entry refs, " +
+      "then deletes the old local bundle. Returns the new cloud bundle_id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bundle_id: { type: "string", description: "Local bundle ID to migrate" },
+        team_id: { type: "string", description: "Team to create the cloud bundle under" },
+      },
+      required: ["bundle_id", "team_id"],
+    },
+  },
 ];
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
@@ -370,7 +533,7 @@ const ContextPushArgs = z.object({
   source_entry_ids: z.array(z.string()).optional(),
 });
 const ContextPullArgs = z.object({
-  bundle_id: z.string(),
+  bundle_id: z.string().optional(),
   since: z.string().optional(),
   limit: z.number().optional(),
   exclude_project: z.string().optional(),
@@ -449,8 +612,13 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   try {
     switch (name) {
       case "bundle_create": {
-        const a = BundleCreateArgs.parse(args);
-        const r = await createBundle(a.name, "local");
+        const a = z.object({
+          name: z.string(),
+          mode: z.enum(["local", "cloud"]).default("local"),
+          team_id: z.string().optional(),
+        }).parse(args);
+        if (a.mode === "cloud" && !a.team_id) return fail("team_id is required when mode is 'cloud'.");
+        const r = await createBundle(a.name, a.mode, a.team_id);
         return ok(r);
       }
 
@@ -461,7 +629,21 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
 
       case "bundle_list": {
-        return ok(listLocalBundles());
+        const local = listAllLocalBundleDetails();
+        const teams = listMyTeams();
+        const teamBundles = [];
+        for (const t of teams) {
+          const bundles = await listTeamBundles(t.team_id);
+          teamBundles.push({
+            team_id: t.team_id,
+            team_name: t.name,
+            bundles: bundles.map(b => ({ bundle_id: b.bundle_id, name: b.name, mode: "cloud" as const })),
+          });
+        }
+        return ok({
+          local_bundles: local.map(b => ({ ...b, mode: "local" as const })),
+          team_bundles: teamBundles,
+        });
       }
 
       case "bundle_status": {
@@ -551,7 +733,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           }
         }
 
-        return ok({ pushed: results, total_entries: entryIds.length });
+        return ok({ pushed: results, total_entries: entryIds.length, skip_reason: "skipped entries were already in the bundle" });
       }
 
       case "context_pull": {
@@ -629,14 +811,15 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "session_connect": {
         const a = z.object({
           bundle_id: z.string(),
-          mode: z.enum(["local", "cloud"]).default("local"),
+          mode: z.enum(["local", "cloud"]).optional(),
         }).parse(args);
+        const resolvedMode = a.mode ?? (isLocalBundle(a.bundle_id) ? "local" : "cloud");
         const session = getSession();
         if (!session) return fail("No active session. Open Claude Code in a project first.");
         if (session.bundles.some((b) => b.bundle_id === a.bundle_id)) {
           return ok({ already_connected: true, bundle_id: a.bundle_id });
         }
-        session.bundles.push({ bundle_id: a.bundle_id, mode: a.mode });
+        session.bundles.push({ bundle_id: a.bundle_id, mode: resolvedMode });
         saveActiveSession(session);
 
         // For local bundles, add session entries as refs
@@ -811,6 +994,316 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
         const r = await addEntriesToBundle(a.bundle_id, cloudIds);
         return ok({ bundle_id: a.bundle_id, added: r.added, skipped: r.skipped, total_entries: cloudIds.length });
+      }
+
+      case "session_start": {
+        const a = z.object({ session_id: z.string().optional() }).parse(args);
+        const sessionId = a.session_id ?? crypto.randomUUID();
+
+        // Check if session already exists (resume)
+        const existing = loadActiveSession(sessionId);
+        if (existing) {
+          // Update branch and re-set marker
+          try {
+            const { execSync } = await import("node:child_process");
+            existing.branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf8" }).trim();
+          } catch {}
+          saveActiveSession(existing);
+          setActiveSessionId(sessionId);
+          return ok({ resumed: true, session_id: sessionId, project_name: existing.project_name });
+        }
+
+        // Detect project name from package.json or directory name
+        const { existsSync, readFileSync } = await import("node:fs");
+        let projectName = process.cwd().split("/").pop() ?? "unknown";
+        const pkgPath = `${process.cwd()}/package.json`;
+        if (existsSync(pkgPath)) {
+          try {
+            const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+            if (pkg.name) projectName = pkg.name;
+          } catch {}
+        }
+
+        let branch: string | null = null;
+        try {
+          const { execSync } = await import("node:child_process");
+          branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf8" }).trim();
+        } catch {}
+
+        const globalCfg = loadGlobalConfig();
+        const projectCfg = loadProjectConfig();
+
+        // Log to session history
+        logSession({
+          project_name: projectName,
+          project_path: process.cwd(),
+          machine_id: globalCfg.machine_id,
+          started_at: new Date().toISOString(),
+          branch,
+          bundle: null,
+          mode: projectCfg?.mode ?? "local",
+        });
+
+        // Create active session record
+        saveActiveSession({
+          session_id: sessionId,
+          project_name: projectName,
+          project_path: process.cwd(),
+          bundles: [],
+          started_at: new Date().toISOString(),
+          branch,
+          cloud_session_id: null,
+          team_id: null,
+          cloud_copies: [],
+        });
+
+        setActiveSessionId(sessionId);
+        return ok({ created: true, session_id: sessionId, project_name: projectName, branch });
+      }
+
+      case "team_create": {
+        const a = z.object({ name: z.string(), password: z.string() }).parse(args);
+        const r = await createTeam(a.name, a.password);
+        return ok(r);
+      }
+
+      case "team_join": {
+        const a = z.object({ name: z.string(), password: z.string() }).parse(args);
+        const r = await joinTeam(a.name, a.password);
+        return ok(r);
+      }
+
+      case "session_rename": {
+        const a = z.object({ name: z.string() }).parse(args);
+        const session = getSession();
+        if (!session) return fail("No active session.");
+        const trimmed = a.name.trim() || null;
+        renameActiveSession(session.session_id, trimmed);
+        // Also rename all cloud copies
+        for (const c of (session.cloud_copies ?? [])) {
+          try { await renameCloudSession(c.cloud_session_id, trimmed); } catch {}
+        }
+        if (session.cloud_session_id) {
+          try { await renameCloudSession(session.cloud_session_id, trimmed); } catch {}
+        }
+        return ok({ renamed: true, name: trimmed });
+      }
+
+      case "session_delete": {
+        const a = z.object({ session_id: z.string().optional() }).parse(args);
+        const sessionId = a.session_id ?? getSession()?.session_id;
+        if (!sessionId) return fail("No active session and no session_id provided.");
+
+        const localSession = loadActiveSession(sessionId);
+        if (localSession) {
+          // Delete all cloud copies
+          for (const c of (localSession.cloud_copies ?? [])) {
+            try { await deleteCloudSession(c.cloud_session_id); } catch {}
+          }
+          if (localSession.cloud_session_id) {
+            try { await deleteCloudSession(localSession.cloud_session_id); } catch {}
+          }
+          deleteActiveSession(sessionId);
+        } else {
+          // sessionId is a cloud session — delete from Supabase, update local session
+          try { await deleteCloudSession(sessionId); } catch {}
+          const allSessions = listActiveSessions();
+          const linked = allSessions.find((s) =>
+            s.cloud_session_id === sessionId ||
+            (s.cloud_copies ?? []).some((c) => c.cloud_session_id === sessionId)
+          );
+          if (linked) {
+            linked.cloud_copies = (linked.cloud_copies ?? []).filter(
+              (c) => c.cloud_session_id !== sessionId
+            );
+            if (linked.cloud_session_id === sessionId) {
+              const next = linked.cloud_copies[0] ?? null;
+              linked.cloud_session_id = next?.cloud_session_id ?? null;
+              linked.team_id = next?.team_id ?? null;
+            }
+            saveActiveSession(linked);
+          }
+        }
+        return ok({ deleted: true, session_id: sessionId });
+      }
+
+      case "session_delete_entry": {
+        const a = z.object({ entry_id: z.string() }).parse(args);
+        const session = getSession();
+        if (!session) return fail("No active session.");
+        deleteSessionEntry(session.session_id, a.entry_id);
+        // Also delete cloud copy of the entry
+        if (session.cloud_copies?.length || session.cloud_session_id) {
+          try { await deleteCloudSessionEntry(a.entry_id); } catch {}
+        }
+        return ok({ deleted: true, entry_id: a.entry_id });
+      }
+
+      case "bundle_entries": {
+        const a = z.object({ bundle_id: z.string(), limit: z.number().default(50) }).parse(args);
+        const mode = isLocalBundle(a.bundle_id) ? "local" : "cloud";
+        const rows = await pullEntries({
+          bundle_id: a.bundle_id,
+          since: null,
+          limit: a.limit,
+          exclude_project: undefined,
+          mode,
+        });
+        return ok({ count: rows.length, entries: rows });
+      }
+
+      case "session_list": {
+        const sessions = listActiveSessions();
+        return ok({
+          count: sessions.length,
+          sessions: sessions.map(s => ({
+            session_id: s.session_id,
+            project_name: s.project_name,
+            project_path: s.project_path,
+            branch: s.branch,
+            name: s.name ?? null,
+            started_at: s.started_at,
+            bundles: s.bundles,
+            entry_count: getSessionEntries(s.session_id).length,
+            cloud_session_id: s.cloud_session_id,
+          })),
+        });
+      }
+
+      case "bundle_pull_from_sessions": {
+        const a = z.object({ bundle_id: z.string() }).parse(args);
+        const mode = isLocalBundle(a.bundle_id) ? "local" : "cloud";
+        let totalPushed = 0;
+        let totalSkipped = 0;
+
+        // Pull from active sessions connected to this bundle
+        const activeSessions = listActiveSessions();
+        const connectedActive = activeSessions.filter(
+          (s) => s.bundles.some((b) => b.bundle_id === a.bundle_id)
+        );
+
+        for (const session of connectedActive) {
+          const entries = getSessionEntries(session.session_id);
+          if (entries.length === 0) continue;
+          const entryIds = entries.map((e) => e.id);
+
+          if (mode === "local") {
+            const result = localAddEntriesToBundle(a.bundle_id, entryIds, session.session_id);
+            totalPushed += result.added;
+            totalSkipped += result.skipped;
+          } else {
+            const bundleTeamId = await getBundleTeamId(a.bundle_id);
+            if (!bundleTeamId) continue;
+
+            const copies = session.cloud_copies ?? [];
+            let copy = copies.find((c) => c.team_id === bundleTeamId)
+              ?? (session.cloud_session_id && session.team_id === bundleTeamId
+                ? { cloud_session_id: session.cloud_session_id, team_id: bundleTeamId }
+                : null);
+
+            if (!copy) {
+              const result = await copySessionToCloud(session.session_id, bundleTeamId);
+              if (!session.cloud_copies) session.cloud_copies = [];
+              session.cloud_copies.push({ cloud_session_id: result.cloud_session_id, team_id: bundleTeamId });
+              if (!session.cloud_session_id) {
+                session.cloud_session_id = result.cloud_session_id;
+                session.team_id = bundleTeamId;
+              }
+              saveActiveSession(session);
+              copy = { cloud_session_id: result.cloud_session_id, team_id: bundleTeamId };
+            } else {
+              await syncSessionToCloud(session.session_id, copy.cloud_session_id);
+            }
+
+            const cloudEntries = await getCloudSessionEntries(copy.cloud_session_id);
+            const cloudIds = cloudEntries.map((e) => e.id);
+            if (cloudIds.length > 0) {
+              const result = await addEntriesToBundle(a.bundle_id, cloudIds);
+              totalPushed += result.added;
+              totalSkipped += result.skipped;
+            }
+          }
+        }
+
+        // Also pull from cloud sessions connected to this bundle
+        if (mode === "cloud") {
+          const teams = listMyTeams();
+          for (const team of teams) {
+            const cloudSessions = await listTeamSessions(team.team_id);
+            for (const cs of cloudSessions) {
+              const bundles = getCloudSessionBundleConnections(cs.id);
+              if (!bundles.some((b) => b.bundle_id === a.bundle_id)) continue;
+              const cloudEntries = await getCloudSessionEntries(cs.id);
+              const cloudIds = cloudEntries.map((e) => e.id);
+              if (cloudIds.length > 0) {
+                const result = await addEntriesToBundle(a.bundle_id, cloudIds);
+                totalPushed += result.added;
+                totalSkipped += result.skipped;
+              }
+            }
+          }
+        }
+
+        return ok({ pushed: totalPushed, skipped: totalSkipped });
+      }
+
+      case "bundle_push_to_cloud": {
+        const a = z.object({ bundle_id: z.string(), team_id: z.string() }).parse(args);
+        if (!isLocalBundle(a.bundle_id)) return fail("Bundle is already in the cloud.");
+
+        // Get local bundle name
+        const status = await bundleStatus(a.bundle_id, "local");
+        // Create cloud bundle under the team
+        const newBundle = await createBundle(status.name, "cloud", a.team_id);
+        const newBundleId = newBundle.bundle_id;
+        let entriesMigrated = 0;
+
+        // Migrate entries from connected active sessions
+        const activeSessions = listActiveSessions();
+        const connectedActive = activeSessions.filter(
+          (s) => s.bundles.some((b) => b.bundle_id === a.bundle_id)
+        );
+
+        for (const session of connectedActive) {
+          const entries = getSessionEntries(session.session_id);
+          if (entries.length === 0) continue;
+
+          const copies = session.cloud_copies ?? [];
+          let copy = copies.find((c) => c.team_id === a.team_id)
+            ?? (session.cloud_session_id && session.team_id === a.team_id
+              ? { cloud_session_id: session.cloud_session_id, team_id: a.team_id }
+              : null);
+
+          if (!copy) {
+            const result = await copySessionToCloud(session.session_id, a.team_id);
+            if (!session.cloud_copies) session.cloud_copies = [];
+            session.cloud_copies.push({ cloud_session_id: result.cloud_session_id, team_id: a.team_id });
+            if (!session.cloud_session_id) {
+              session.cloud_session_id = result.cloud_session_id;
+              session.team_id = a.team_id;
+            }
+            saveActiveSession(session);
+            copy = { cloud_session_id: result.cloud_session_id, team_id: a.team_id };
+          } else {
+            await syncSessionToCloud(session.session_id, copy.cloud_session_id);
+          }
+
+          const cloudEntries = await getCloudSessionEntries(copy.cloud_session_id);
+          const cloudIds = cloudEntries.map((e) => e.id);
+          if (cloudIds.length > 0) {
+            const result = await addEntriesToBundle(newBundleId, cloudIds);
+            entriesMigrated += result.added;
+          }
+
+          // Swap connection: disconnect from old local bundle, connect to new cloud bundle
+          disconnectSessionFromBundle(session.session_id, a.bundle_id);
+          connectSessionToBundle(session.session_id, newBundleId, "cloud");
+        }
+
+        // Delete the old local bundle
+        await deleteBundle(a.bundle_id, "local");
+
+        return ok({ new_bundle_id: newBundleId, entries_migrated: entriesMigrated });
       }
 
       default:

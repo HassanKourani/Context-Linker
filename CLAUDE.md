@@ -14,7 +14,7 @@ Bun monorepo with 5 packages:
 packages/
   core/          Shared business logic (bundles, entries, teams, rewind, config, local-store)
   mcp-server/    MCP protocol wrapper (stdio) — Claude Code talks to this
-  cli/           CLI tool (`cxtl`) for manual operations
+  cli/           CLI tool (`ctxl`) for manual operations
   ui/            React web dashboard — node graph + interactive management
   hooks/         Git post-commit + Claude Code PostToolUse hook scripts (session-log on commit/PR)
 supabase/
@@ -100,6 +100,80 @@ All exported from `@ctx-link/core`:
 - `listAllLocalBundleDetails()` → bundle + project list derived from refs
 - Local bundles use `entry_refs.json` (references to session entries) instead of copying entries
 
+## MCP Tools (packages/mcp-server/)
+
+The MCP server exposes 28 tools that Claude Code calls via stdio. All tools auto-detect local vs cloud mode.
+
+### Bundle Tools
+- `bundle_create` — create a bundle (local or cloud). Pass `mode: "cloud"` + `team_id` for cloud bundles
+- `bundle_join` — join a bundle by ID + token
+- `bundle_list` — list all bundles: local on this machine + cloud from joined teams
+- `bundle_status` — entry count, last activity, linked sessions
+- `bundle_delete` — permanently delete a bundle (cascade-deletes refs)
+- `bundle_remove_entry` — remove a single entry ref from a bundle (entry stays in session)
+- `bundle_entries` — list all entries in a bundle unfiltered (no cross-project exclusion, unlike context_pull)
+- `bundle_pull_from_sessions` — pull entries from ALL sessions connected to a bundle in one shot
+- `bundle_push_to_cloud` — migrate a local bundle to cloud under a team (creates cloud bundle, migrates refs, deletes local)
+
+### Context Tools
+- `context_push` — push session entries to connected bundles as refs. Optional `summary` creates a new entry first. Optional `bundle_id` targets one bundle (default: all connected)
+- `context_pull` — pull entries from a bundle. Proactive use recommended at session start
+- `context_rewind` — soft-delete entries by project using strategy (since, last_n, entry_ids, after_ref). Supports `dry_run`
+- `context_restore` — undo a rewind, restore soft-deleted entries
+- `rewind_history` — list past rewinds for a bundle
+
+### Session Tools
+- `session_start` — create or resume a session for the current project. Auto-detects project name and branch. Generates UUID if no session_id provided
+- `session_info` — current session: project, branch, connected bundles, pending entries
+- `session_log` — log a context entry to the session (local only, not pushed to bundles). Proactive use recommended after meaningful interactions
+- `session_entries` — list accumulated entries (all or only unpushed)
+- `session_connect` — connect session to a bundle. Existing entries auto-added as refs
+- `session_disconnect` — disconnect session from a bundle
+- `session_push_to_cloud` — copy session to cloud under a team. Future entries auto-sync
+- `session_push_to_bundle` — push entries to a specific bundle. Omit `bundle_id` for discovery mode (lists available teams + bundles)
+- `session_rename` — rename current session (also renames cloud copies)
+- `session_delete` — delete a session and all cloud copies (cascade-deletes entries + bundle refs)
+- `session_delete_entry` — delete a specific entry from the session (cascades to cloud + bundle refs)
+- `session_list` — list all active sessions across all projects on this machine
+
+### Team Tools
+- `team_create` — create a team with name + password (argon2 hashed)
+- `team_join` — join a team by name + password
+
+## CLI Commands (packages/cli/)
+
+The CLI (`ctxl`) supports 26 commands. All commands prompt interactively when flags are omitted (via `@inquirer/prompts`).
+
+### Team Commands
+- `create-team` — create a team
+- `join-team` — join a team
+- `my-teams` — list teams you belong to
+- `team-bundles` — list bundles in a team
+
+### Session Commands
+- `info` — show current project config
+- `session-start` — start/resume a session for the current project
+- `sessions` — list active sessions
+- `session-log` — log a context entry
+- `session-entries` — list session entries
+- `push-to-cloud` — push session to cloud under a team
+- `connect` — connect session to a bundle
+- `disconnect` — disconnect session from a bundle
+
+### Bundle Commands
+- `create` — create a bundle (local or cloud)
+- `join` — join a bundle by ID + token
+- `my-bundles` — list bundles
+- `status` — show bundle status
+- `push` — push session entries to connected bundles
+- `push-to-bundle` — push entries to a specific bundle (discovery mode available)
+- `pull [bundle_id]` — pull entries from a bundle
+- `rewind` — soft-delete entries by strategy
+- `restore` — undo a rewind
+- `rewind-history` — list rewind history
+- `leave` — leave a bundle
+- `delete-bundle` — permanently delete a bundle
+
 ## UI Architecture (packages/ui/)
 
 ### Tech Stack
@@ -123,49 +197,74 @@ All data goes through a Bun HTTP server that imports `@ctx-link/core`. The brows
 
 Endpoints:
 - `GET /api/graph` — full graph data (teams + bundles + sessions + active sessions)
-- `GET/POST /api/teams` — list, create teams
+- `GET /api/teams` — list teams
+- `POST /api/teams` — create team
 - `POST /api/teams/join` — join team
-- `POST /api/bundles` — create bundle
-- `DELETE /api/bundles/:id` — delete bundle
+- `GET /api/teams/:id/sessions` — list cloud sessions for a team
+- `POST /api/bundles` — create bundle (local or cloud)
+- `DELETE /api/bundles/:id` — delete bundle (disconnects all sessions first)
 - `POST /api/bundles/:id/join` — link project to bundle
 - `GET /api/bundles/:id/entries` — fetch entries via refs
 - `DELETE /api/bundles/:id/entries/:entryId` — remove entry ref from bundle (entry stays in session)
 - `POST /api/bundles/:id/rewind` — rewind entries
 - `POST /api/bundles/:id/restore` — restore entries
 - `GET /api/bundles/:id/rewinds` — rewind history
-- `POST /api/unlink-session` — remove session link (local or cloud)
-- `GET /api/sessions/:id/entries` — get entries for a session
-- `DELETE /api/sessions/:id` — delete active session + cloud session
-- `POST /api/sessions/:id/connect` — connect active session to a bundle
+- `POST /api/bundles/:id/pull-from-sessions` — pull entries from ALL connected sessions into bundle
+- `POST /api/bundles/:id/push-to-cloud` — migrate local bundle to cloud under a team
+- `GET /api/sessions` — list active sessions
+- `GET /api/sessions/:id/entries` — get entries for a session (local or cloud)
+- `POST /api/sessions/:id/entries` — create/log an entry to a session
+- `DELETE /api/sessions/:id` — delete active session + all cloud copies
+- `POST /api/sessions/:id/connect` — connect session to a bundle
 - `POST /api/sessions/:id/push-to-bundle` — add session entry refs to bundle (no copying)
-- `POST /api/sessions/:id/push-to-cloud` — promote local session to cloud under a team
-- `DELETE /api/sessions/:id/entries/:entryId` — delete session entry (cascades to bundle refs)
-- `GET /api/teams/:id/sessions` — list cloud sessions for a team
+- `POST /api/sessions/:id/copy-to-cloud` — create independent cloud copy of session under a team
+- `POST /api/sessions/:id/sync-to-cloud` — sync new local entries to existing cloud copy
+- `PATCH /api/sessions/:id/rename` — rename a session (also renames cloud copies)
+- `DELETE /api/sessions/:id/entries/:entryId` — delete session entry (cascades to cloud + bundle refs)
+- `POST /api/unlink-session` — remove session link from bundle (removes entry refs, disconnects)
 
 ### Mutation Hooks (optimistic updates)
-All write operations use TanStack Query mutations with optimistic updates:
+All write operations use TanStack Query mutations with optimistic updates. All roll back on error and refetch on settle.
+
+**Bundle mutations:**
 - `useCreateBundle` — adds bundle to graph
-- `useJoinBundle` — instantly adds edge
 - `useDeleteBundle` — instantly removes bundle node
-- `useDeleteSession` — instantly removes edge from graph
-- `useConnectSession` — connects active session to bundle
-- `usePushSessionToBundle` — adds session entry refs to bundle
-- `usePushToCloud` — promotes session to cloud under a team
+- `useJoinBundle` — instantly adds edge
 - `useRemoveBundleEntryRef` — removes entry ref from bundle
-- `useRewind` / `useRestore` — instantly removes/restores entries from list
+- `usePullFromSessions` — pulls entries from all connected sessions into bundle
+- `usePushBundleToCloud` — migrates local bundle to cloud under a team
+
+**Session mutations:**
+- `useConnectSession` — connects active session to bundle
+- `useDeleteSession` — unlinks session from bundle (removes entry refs + disconnects)
+- `useDeleteActiveSession` — deletes session and all cloud copies
 - `useDeleteSessionEntry` — removes entry from session log
+- `usePushSessionToBundle` — adds session entry refs to bundle
+- `usePushToCloud` — creates independent cloud copy of session under a team
+- `useSyncToCloud` — syncs new local entries to existing cloud copy
+- `useRenameSession` — renames session (also renames cloud copies)
+
+**Rewind mutations:**
+- `useRewind` / `useRestore` — instantly removes/restores entries from list
+
+**Team mutations:**
 - `useCreateTeam` / `useJoinTeam` — team management
-All roll back on error and refetch on settle.
 
 ### State Store (Zustand)
 ```typescript
 {
-  panel,                  // { type: "bundle"|"session", id, mode?, tab }
-  activeModal,            // which dialog is open
-  deleteBundleTarget,     // bundle pending deletion confirmation
-  selectedEntryIds,       // entry checkboxes (for rewind)
-  hoveredEdgeId,          // edge delete hover
-  hideEmptySessions,      // graph filter toggle
+  panel,                  // { kind: "bundle", bundleId, filterProject } | { kind: "session", sessionId, projectName, sessionName? } | null
+  panelTab,              // "entries" | "rewinds"
+  activeModal,           // "create-bundle" | "delete-bundle" | "team-management" | "push-entry" | "push-session" | "push-to-cloud" | "push-to-cloud-prompt" | "connect-and-push" | "rewind" | "edge-action" | "push-bundle-to-cloud" | null
+  deleteBundleTarget,    // { id, name } — bundle pending deletion confirmation
+  selectedEntryIds,      // Set<string> — entry checkboxes (for rewind)
+  pushToCloudTarget,     // session ID pending push-to-cloud
+  pendingCloudConnect,   // { sessionId, bundleId } — connect after push-to-cloud completes
+  pendingConnectPush,    // { sessionId, bundleId } — connect-and-push flow (drag session → bundle)
+  hoveredEdgeId,         // edge hover state
+  pendingEdgeAction,     // { sessionId, bundleId, action: "push"|"unlink" } — edge action confirmation
+  pushBundleToCloudTarget, // { id, name } — local bundle pending cloud migration
+  hideEmptySessions,     // graph filter toggle (persisted to localStorage)
 }
 ```
 
