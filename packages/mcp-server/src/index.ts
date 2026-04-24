@@ -64,6 +64,7 @@ import {
   type Question,
 } from "@ctx-link/core";
 import { z } from "zod";
+import { startChannelListener, broadcastToBundle, type ChannelMessage } from "./channel.js";
 
 /** Get the active session for the current CWD. Returns null if no session. */
 function getSession(): ActiveSession | null {
@@ -1392,6 +1393,15 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           targetProject: a.target_project,
           context: a.context,
         });
+        // Broadcast to other sessions connected to this bundle
+        broadcastToBundle(a.bundle_id, {
+          type: "question_asked",
+          bundle_id: a.bundle_id,
+          question: q,
+          from_session_id: session.session_id,
+          from_project: session.project_name,
+          target_project: a.target_project,
+        }, session.session_id).catch(() => {}); // fire and forget
         return ok({
           question_id: q.id,
           status: q.status,
@@ -1408,6 +1418,17 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const session = getSession();
         if (!session) return fail("No active session.");
         const answer = answerQuestion(a.bundle_id, a.question_id, session.session_id, session.project_name, a.answer);
+        // Broadcast answer notification
+        const answeredQ = listBundleQuestions(a.bundle_id).find((q) => q.id === a.question_id);
+        if (answeredQ) {
+          broadcastToBundle(a.bundle_id, {
+            type: "question_answered",
+            bundle_id: a.bundle_id,
+            question: answeredQ,
+            from_session_id: session.session_id,
+            from_project: session.project_name,
+          }, session.session_id).catch(() => {});
+        }
         return ok({
           answer_id: answer.id,
           question_id: a.question_id,
@@ -1440,6 +1461,57 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
+
+// Start Q&A channel listener for cross-session notifications
+const session = getSession();
+let channelHandle: { port: number; close: () => void } | null = null;
+
+if (session) {
+  channelHandle = startChannelListener(session.session_id, async (msg) => {
+    const currentSession = getSession();
+    const projectName = currentSession?.project_name;
+
+    // Only process messages relevant to this session's project
+    if (msg.target_project && msg.target_project !== projectName) return;
+
+    try {
+      if (msg.type === "question_asked") {
+        await server.sendLoggingMessage({
+          level: "info",
+          logger: "ctx-link-qa",
+          data: {
+            action: "question_received",
+            bundle_id: msg.bundle_id,
+            question_id: msg.question.id,
+            question: msg.question.question,
+            from_project: msg.from_project,
+            target_project: msg.target_project ?? "any",
+            hint: `Use bundle_answer_question with question_id="${msg.question.id}" to respond.`,
+          },
+        });
+      } else if (msg.type === "question_answered") {
+        await server.sendLoggingMessage({
+          level: "info",
+          logger: "ctx-link-qa",
+          data: {
+            action: "answer_received",
+            bundle_id: msg.bundle_id,
+            question_id: msg.question.id,
+            question: msg.question.question,
+            latest_answer: msg.question.answers[msg.question.answers.length - 1]?.answer ?? "",
+            from_project: msg.from_project,
+          },
+        });
+      }
+    } catch {
+      // sendLoggingMessage may fail if client disconnects — non-fatal
+    }
+  });
+}
+
+// Clean shutdown
+process.on("SIGINT", () => { channelHandle?.close(); process.exit(0); });
+process.on("SIGTERM", () => { channelHandle?.close(); process.exit(0); });
 
 // Stderr only, stdio is the MCP wire.
 process.stderr.write("ctx-link MCP server ready\n");
