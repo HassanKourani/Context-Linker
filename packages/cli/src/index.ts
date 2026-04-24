@@ -42,6 +42,10 @@ import {
   connectCloudSessionToBundle,
   listAllLocalBundleDetails,
   isLocalBundle,
+  askQuestion,
+  answerQuestion,
+  resolveQuestion,
+  listBundleQuestions,
   type RewindStrategy,
 } from "@ctx-link/core";
 
@@ -1271,6 +1275,175 @@ program
       saveProjectConfig(cfg);
     }
     console.log(`Deleted bundle ${bundleId}.`);
+  });
+
+// ==================== QUESTIONS ====================
+
+// Helper: broadcast question/answer to active MCP sessions
+async function broadcastToChannels(bundleId: string, message: object) {
+  const sessions = listActiveSessions();
+  const targets = sessions.filter(
+    (s) => s.channel_port && s.bundles.some((b) => b.bundle_id === bundleId),
+  );
+  for (const s of targets) {
+    try {
+      await fetch(`http://127.0.0.1:${s.channel_port}/channel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(message),
+        signal: AbortSignal.timeout(2000),
+      });
+    } catch {}
+  }
+}
+
+program
+  .command("ask")
+  .description(
+    "Ask a question on a bundle. Other connected agents will be notified.\n\n" +
+    "Examples:\n" +
+    "  $ ctxl ask\n" +
+    "  $ ctxl ask --bundle <id> --question 'Why did you change X?'\n" +
+    "  $ ctxl ask --target backend"
+  )
+  .option("--bundle <id>", "Bundle ID")
+  .option("--question <text>", "The question to ask")
+  .option("--target <project>", "Direct the question to a specific project")
+  .option("--context <text>", "What prompted this question")
+  .action(async (opts) => {
+    const sessionId = getActiveSessionId();
+    const session = sessionId ? loadActiveSession(sessionId) : null;
+    const projectName = session?.project_name ?? detectProjectName();
+
+    let bundleId = opts.bundle;
+    if (!bundleId) {
+      bundleId = await promptForBundle("Which bundle to ask on?");
+    }
+
+    let questionText = opts.question;
+    if (!questionText) {
+      questionText = await input({ message: "Your question:" });
+    }
+
+    const q = askQuestion(bundleId, sessionId ?? "cli", projectName, questionText, {
+      targetProject: opts.target,
+      context: opts.context,
+    });
+
+    // Broadcast to active sessions
+    await broadcastToChannels(bundleId, {
+      type: "question_asked",
+      bundle_id: bundleId,
+      question: q,
+      from_session_id: sessionId ?? "cli",
+      from_project: projectName,
+      target_project: opts.target,
+    });
+
+    console.log(`Question posted (${q.id}).`);
+    if (opts.target) console.log(`Directed to: ${opts.target}`);
+  });
+
+program
+  .command("answer")
+  .description(
+    "Answer a question on a bundle.\n\n" +
+    "Examples:\n" +
+    "  $ ctxl answer\n" +
+    "  $ ctxl answer --bundle <id> --question-id <id> --answer 'Because...'"
+  )
+  .option("--bundle <id>", "Bundle ID")
+  .option("--question-id <id>", "Question ID to answer")
+  .option("--answer <text>", "Your answer")
+  .action(async (opts) => {
+    const sessionId = getActiveSessionId();
+    const session = sessionId ? loadActiveSession(sessionId) : null;
+    const projectName = session?.project_name ?? detectProjectName();
+
+    let bundleId = opts.bundle;
+    if (!bundleId) {
+      bundleId = await promptForBundle("Which bundle?");
+    }
+
+    let questionId = opts.questionId;
+    if (!questionId) {
+      const open = listBundleQuestions(bundleId, { status: "open" });
+      const answered = listBundleQuestions(bundleId, { status: "answered" });
+      const candidates = [...open, ...answered];
+      if (candidates.length === 0) {
+        console.log("No open or answered questions on this bundle.");
+        return;
+      }
+      const choice = await select({
+        message: "Which question to answer?",
+        choices: candidates.map((q) => ({
+          name: `[${q.status}] ${q.question.slice(0, 80)}`,
+          value: q.id,
+        })),
+      });
+      questionId = choice;
+    }
+
+    let answerText = opts.answer;
+    if (!answerText) {
+      answerText = await input({ message: "Your answer:" });
+    }
+
+    const a = answerQuestion(bundleId, questionId, sessionId ?? "cli", projectName, answerText);
+
+    // Broadcast
+    const answeredQ = listBundleQuestions(bundleId).find((q) => q.id === questionId);
+    if (answeredQ) {
+      await broadcastToChannels(bundleId, {
+        type: "question_answered",
+        bundle_id: bundleId,
+        question: answeredQ,
+        from_session_id: sessionId ?? "cli",
+        from_project: projectName,
+      });
+    }
+
+    console.log(`Answer posted (${a.id}).`);
+  });
+
+program
+  .command("questions")
+  .description(
+    "List questions on a bundle.\n\n" +
+    "Examples:\n" +
+    "  $ ctxl questions\n" +
+    "  $ ctxl questions --bundle <id> --status open"
+  )
+  .option("--bundle <id>", "Bundle ID")
+  .option("--status <status>", "Filter: open, answered, resolved")
+  .option("--target <project>", "Filter by target project")
+  .action(async (opts) => {
+    let bundleId = opts.bundle;
+    if (!bundleId) {
+      bundleId = await promptForBundle("Which bundle?");
+    }
+
+    const questions = listBundleQuestions(bundleId, {
+      status: opts.status,
+      targetProject: opts.target,
+    });
+
+    if (questions.length === 0) {
+      console.log("No questions.");
+      return;
+    }
+
+    for (const q of questions) {
+      console.log(`\n[${q.status.toUpperCase()}] ${q.question}`);
+      console.log(`  ID: ${q.id}`);
+      console.log(`  From: ${q.asked_by_project}  ${q.target_project ? `→ ${q.target_project}` : ""}`);
+      console.log(`  Asked: ${q.created_at}`);
+      if (q.answers.length > 0) {
+        for (const a of q.answers) {
+          console.log(`  └─ [${a.answered_by_project}] ${a.answer}`);
+        }
+      }
+    }
   });
 
 // ==================== HELPERS ====================

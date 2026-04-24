@@ -52,7 +52,56 @@ import {
   answerQuestion,
   resolveQuestion,
   countOpenQuestions,
+  getQuestion,
 } from "@ctx-link/core";
+
+// Broadcast Q&A events to active MCP sessions via their channel ports
+async function broadcastQuestion(bundleId: string, question: any, fromSessionId: string, fromProject: string) {
+  const sessions = listActiveSessions();
+  const targets = sessions.filter(
+    (s) => s.session_id !== fromSessionId && s.channel_port && s.bundles.some((b) => b.bundle_id === bundleId),
+  );
+  for (const s of targets) {
+    try {
+      await fetch(`http://127.0.0.1:${s.channel_port}/channel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "question_asked",
+          bundle_id: bundleId,
+          question,
+          from_session_id: fromSessionId,
+          from_project: fromProject,
+          target_project: question.target_project,
+        }),
+        signal: AbortSignal.timeout(2000),
+      });
+    } catch {}
+  }
+}
+
+async function broadcastAnswer(bundleId: string, question: any, fromSessionId: string, fromProject: string) {
+  const sessions = listActiveSessions();
+  const targets = sessions.filter(
+    (s) => s.session_id !== fromSessionId && s.channel_port && s.bundles.some((b) => b.bundle_id === bundleId),
+  );
+  for (const s of targets) {
+    try {
+      await fetch(`http://127.0.0.1:${s.channel_port}/channel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "question_answered",
+          bundle_id: bundleId,
+          question,
+          from_session_id: fromSessionId,
+          from_project: fromProject,
+        }),
+        signal: AbortSignal.timeout(2000),
+      });
+    } catch {}
+  }
+}
 
 const server = Bun.serve({
   hostname: "127.0.0.1",
@@ -1141,6 +1190,8 @@ const server = Bun.serve({
             targetProject: target_project,
             context,
           });
+          // Notify active MCP sessions about the new question
+          broadcastQuestion(bundleId, q, session_id, project_name).catch(() => {});
           return Response.json(q, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
@@ -1160,6 +1211,9 @@ const server = Bun.serve({
           const questionId = match[2];
           const { answer, session_id, project_name } = await req.json();
           const a = answerQuestion(bundleId, questionId, session_id, project_name, answer);
+          // Notify active MCP sessions about the answer
+          const answeredQ = listBundleQuestions(bundleId).find((q) => q.id === questionId);
+          if (answeredQ) broadcastAnswer(bundleId, answeredQ, session_id, project_name).catch(() => {});
           return Response.json(a, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
