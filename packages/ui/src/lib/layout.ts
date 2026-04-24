@@ -17,8 +17,8 @@ export interface LayoutResult {
   graphHeight: number;
 }
 
-const NODE_SEP = 60;
-const RANK_SEP = 120;
+const NODE_SEP = 40;
+const RANK_SEP = 100;
 
 export function computeLayout(
   nodes: LayoutNode[],
@@ -31,6 +31,7 @@ export function computeLayout(
     ranksep: RANK_SEP,
     marginx: 0,
     marginy: 0,
+    align: "UL",
   });
   g.setDefaultEdgeLabel(() => ({}));
 

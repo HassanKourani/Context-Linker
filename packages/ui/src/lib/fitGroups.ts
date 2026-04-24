@@ -1,7 +1,7 @@
 import type { Node } from "@xyflow/react";
 
-const PADDING = 60;
-const HEADER = 40;
+const PADDING = 40;
+const HEADER = 36;
 
 // Estimated node dimensions (must match buildGraph constants)
 const NODE_WIDTHS: Record<string, number> = { project: 220, bundle: 200 };

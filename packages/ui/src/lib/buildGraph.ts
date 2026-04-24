@@ -8,9 +8,9 @@ const PROJECT_NODE_HEADER = 36;
 const PROJECT_NODE_ROW = 32;
 const BUNDLE_NODE_WIDTH = 200;
 const BUNDLE_NODE_HEIGHT = 88;
-const GROUP_PADDING = 60;
-const GROUP_HEADER = 40;
-const GROUP_GAP = 60;
+const GROUP_PADDING = 40;
+const GROUP_HEADER = 36;
+const GROUP_GAP = 40;
 
 function projectNodeHeight(sessionCount: number): number {
   return PROJECT_NODE_HEADER + Math.max(sessionCount, 1) * PROJECT_NODE_ROW + 8;
@@ -129,14 +129,17 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
 
   // Ensure dagre always ranks projects left of bundles.
   // Without edges, dagre puts disconnected nodes in the same rank.
-  // Add phantom edges from every project to every bundle to enforce LR flow.
+  // Add one phantom edge per project to the first bundle to enforce LR ranking
+  // without creating a full bipartite graph that distorts the layout.
   const projectNodeIds = [...projectSessions.keys()].map((p) => `project-${groupId}-${p}`);
   const bundleNodeIds = bundles.map((b) => `bundle-${b.bundle_id}`);
   const realTargets = new Set(layoutEdges.map((e) => `${e.source}->${e.target}`));
-  for (const pid of projectNodeIds) {
-    for (const bid of bundleNodeIds) {
-      if (!realTargets.has(`${pid}->${bid}`)) {
-        layoutEdges.push({ source: pid, target: bid });
+  if (bundleNodeIds.length > 0) {
+    for (const pid of projectNodeIds) {
+      // Only add phantom edge if this project has no real edge to any bundle
+      const hasRealEdge = bundleNodeIds.some((bid) => realTargets.has(`${pid}->${bid}`));
+      if (!hasRealEdge) {
+        layoutEdges.push({ source: pid, target: bundleNodeIds[0] });
       }
     }
   }
@@ -325,15 +328,6 @@ export function buildFlowGraph(
 ): { nodes: Node[]; edges: Edge[] } {
   const allNodes: Node[] = [];
   const allEdges: Edge[] = [];
-  let yOffset = 0;
-
-  // Group active sessions by team or local
-  const bundleToTeam = new Map<string, string>();
-  for (const team of data.teams) {
-    for (const bundle of team.bundles) {
-      bundleToTeam.set(bundle.bundle_id, team.team_id);
-    }
-  }
 
   // Active sessions always stay in the local group — they represent
   // the current Claude Code session on this machine. Edges to cloud
@@ -352,7 +346,41 @@ export function buildFlowGraph(
     }
   }
 
-  // Team groups
+  // Build LOCAL group (left column)
+  const hasLocalContent = data.local.bundles.length > 0 || localActiveSessions.length > 0;
+  let localWidth = 0;
+  let localHeight = 0;
+
+  if (hasLocalContent) {
+    const { nodes, edges } = buildGroup({
+      groupId: "local",
+      groupName: "Local",
+      color: LOCAL_GROUP_COLOR,
+      bundles: data.local.bundles as any,
+      machineId: data.machine_id,
+      isLocal: true,
+      activeSessions: localActiveSessions,
+    });
+
+    const groupNode = nodes.find((n) => n.id === "local");
+    if (groupNode) {
+      groupNode.position = { x: 0, y: 0 };
+      localWidth = (groupNode.style as any)?.width ?? 200;
+      localHeight = (groupNode.style as any)?.height ?? 200;
+    }
+
+    allNodes.push(...nodes);
+    allEdges.push(...edges);
+  }
+
+  // Build team groups (right column, stacked vertically)
+  // Positioned to the right of LOCAL so cross-group edges flow left→right
+  const rightColumnX = hasLocalContent ? localWidth + GROUP_GAP : 0;
+
+  // First pass: build all team groups and measure total height
+  const teamResults: Array<{ nodes: Node[]; edges: Edge[]; height: number }> = [];
+  let totalTeamHeight = 0;
+
   for (const team of data.teams) {
     const visibleCloudSessions = team.cloud_sessions?.filter(
       (cs) => !hiddenCloudIds.has(cs.id)
@@ -369,39 +397,24 @@ export function buildFlowGraph(
     });
 
     const groupNode = nodes.find((n) => n.id === `team-${team.team_id}`);
-    if (groupNode) {
-      groupNode.position = { x: 0, y: yOffset };
-      const h = (groupNode.style as any)?.height ?? 200;
-      yOffset += h + GROUP_GAP;
-    }
-
-    allNodes.push(...nodes);
-    allEdges.push(...edges);
+    const h = (groupNode?.style as any)?.height ?? 200;
+    teamResults.push({ nodes, edges, height: h });
+    totalTeamHeight += h;
   }
+  if (teamResults.length > 1) totalTeamHeight += GROUP_GAP * (teamResults.length - 1);
 
-  // Local group — all non-team sessions + local bundles
-  const hasLocalContent = data.local.bundles.length > 0 || localActiveSessions.length > 0;
+  // Vertically center team groups relative to LOCAL
+  let teamYOffset = Math.max(0, (localHeight - totalTeamHeight) / 2);
 
-  if (hasLocalContent) {
-    const { nodes, edges } = buildGroup({
-      groupId: "local",
-      groupName: "Local",
-      color: LOCAL_GROUP_COLOR,
-      bundles: data.local.bundles as any,
-      machineId: data.machine_id,
-      isLocal: true,
-      activeSessions: localActiveSessions,
-    });
-
-    const groupNode = nodes.find((n) => n.id === "local");
+  for (const tr of teamResults) {
+    const groupNode = tr.nodes.find((n) => n.type === "teamGroup");
     if (groupNode) {
-      groupNode.position = { x: 0, y: yOffset };
-      const h = (groupNode.style as any)?.height ?? 200;
-      yOffset += h + GROUP_GAP;
+      groupNode.position = { x: rightColumnX, y: teamYOffset };
+      teamYOffset += tr.height + GROUP_GAP;
     }
 
-    allNodes.push(...nodes);
-    allEdges.push(...edges);
+    allNodes.push(...tr.nodes);
+    allEdges.push(...tr.edges);
   }
 
   return { nodes: allNodes, edges: allEdges };
