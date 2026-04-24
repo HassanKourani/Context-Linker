@@ -66,11 +66,25 @@ import {
 import { z } from "zod";
 import { startChannelListener, broadcastToBundle, type ChannelMessage } from "./channel.js";
 
-/** Get the active session for the current CWD. Returns null if no session. */
+/**
+ * Each MCP server instance is 1:1 with a Claude Code instance.
+ * We store the session ID in memory so multiple Claude instances
+ * in the same project don't share/overwrite each other's sessions.
+ *
+ * Set during session_start tool call, OR cached from the marker file
+ * on first getSession() call. Once cached, never re-reads the marker
+ * (so a second instance overwriting it doesn't affect us).
+ */
+let ownSessionId: string | null = null;
+
+/** Get the active session for this MCP server instance. */
 function getSession(): ActiveSession | null {
-  const sessionId = getActiveSessionId();
-  if (!sessionId) return null;
-  return loadActiveSession(sessionId);
+  if (!ownSessionId) {
+    // First call: read from marker file and cache
+    ownSessionId = getActiveSessionId();
+  }
+  if (!ownSessionId) return null;
+  return loadActiveSession(ownSessionId);
 }
 
 const server = new Server(
@@ -1073,6 +1087,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "session_start": {
         const a = z.object({ session_id: z.string().optional() }).parse(args);
         const sessionId = a.session_id ?? crypto.randomUUID();
+
+        // Bind this MCP server instance to this session ID
+        ownSessionId = sessionId;
 
         // Check if session already exists (resume)
         const existing = loadActiveSession(sessionId);
