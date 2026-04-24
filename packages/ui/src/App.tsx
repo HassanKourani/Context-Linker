@@ -33,6 +33,7 @@ import { PushSessionToBundleDialog } from "./components/PushSessionToBundleDialo
 import { ConnectSessionDialog } from "./components/ConnectSessionDialog";
 import { DeletableEdge } from "./components/edges/DeletableEdge";
 import { EdgeActionDialog } from "./components/EdgeActionDialog";
+import { PushBundleToCloudDialog } from "./components/PushBundleToCloudDialog";
 
 const nodeTypes: NodeTypes = {
   project: ProjectNode,
@@ -238,6 +239,7 @@ export function App() {
       <PushSessionToBundleDialog />
       <ConnectSessionDialog />
       <EdgeActionDialog />
+      <PushBundleToCloudDialog />
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { Cloud, MoreHorizontal, Trash2 } from "lucide-react";
+import { Cloud, CloudUpload, MoreHorizontal, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,6 +20,7 @@ export function BundleNode({ data }: NodeProps) {
 
   const openPanel = useUIStore((s) => s.openPanel);
   const setDeleteTarget = useUIStore((s) => s.setDeleteTarget);
+  const setPushBundleToCloudTarget = useUIStore((s) => s.setPushBundleToCloudTarget);
   const openModal = useUIStore((s) => s.openModal);
 
   const handleClick = (e: React.MouseEvent) => {
@@ -31,6 +32,12 @@ export function BundleNode({ data }: NodeProps) {
     e.stopPropagation();
     setDeleteTarget({ id: bundleId, name: bundleName });
     openModal("delete-bundle");
+  };
+
+  const handlePushToCloud = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setPushBundleToCloudTarget({ id: bundleId, name: bundleName });
+    openModal("push-bundle-to-cloud");
   };
 
   const isLocal = mode === "local";
@@ -55,11 +62,21 @@ export function BundleNode({ data }: NodeProps) {
         <DropdownMenu>
           <DropdownMenuTrigger
             onClick={(e) => e.stopPropagation()}
-            className="p-0.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+            onMouseDown={(e) => e.stopPropagation()}
+            className="nodrag nopan p-0.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
           >
             <MoreHorizontal className="w-4 h-4" />
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="bg-popover border-border">
+          <DropdownMenuContent align="end" className="bg-popover border-border min-w-[160px]">
+            {isLocal && (
+              <DropdownMenuItem
+                className="cursor-pointer"
+                onClick={handlePushToCloud}
+              >
+                <CloudUpload className="w-3.5 h-3.5 mr-2" />
+                Push to Cloud
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem
               className="text-destructive focus:text-destructive cursor-pointer"
               onClick={handleDelete}

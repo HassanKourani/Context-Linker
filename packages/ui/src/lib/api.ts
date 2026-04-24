@@ -75,6 +75,16 @@ export function joinBundle(bundleId: string, body: { project_name: string }) {
   return apiPost<JoinBundleResult>(`/api/bundles/${bundleId}/join`, body);
 }
 
+export function pushBundleToCloud(
+  bundleId: string,
+  body: { team_id: string },
+) {
+  return apiPost<{ ok: true; new_bundle_id: string; entries_migrated: number }>(
+    `/api/bundles/${bundleId}/push-to-cloud`,
+    body,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Sessions
 // ---------------------------------------------------------------------------

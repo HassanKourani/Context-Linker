@@ -16,6 +16,7 @@ type ModalType =
   | "connect-and-push"
   | "rewind"
   | "edge-action"
+  | "push-bundle-to-cloud"
   | null;
 
 type PanelView =
@@ -50,6 +51,9 @@ interface UIState {
   // Edge action confirmation
   pendingEdgeAction: { sessionId: string; bundleId: string; action: "push" | "unlink" } | null;
 
+  // Push bundle to cloud target
+  pushBundleToCloudTarget: { id: string; name: string } | null;
+
   // Graph filters
   hideEmptySessions: boolean;
 
@@ -68,6 +72,7 @@ interface UIState {
   clearEntrySelection: () => void;
   setHoveredEdge: (id: string | null) => void;
   setPendingEdgeAction: (action: { sessionId: string; bundleId: string; action: "push" | "unlink" } | null) => void;
+  setPushBundleToCloudTarget: (target: { id: string; name: string } | null) => void;
   toggleHideEmptySessions: () => void;
 
   // Legacy compat
@@ -87,6 +92,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   selectedEntryIds: new Set(),
   hoveredEdgeId: null,
   pendingEdgeAction: null,
+  pushBundleToCloudTarget: null,
   hideEmptySessions: (() => {
     try { return localStorage.getItem("ctx-link-hide-empty-sessions") === "true"; } catch { return false; }
   })(),
@@ -132,7 +138,7 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   openModal: (modal) => set({ activeModal: modal }),
 
-  closeModal: () => set({ activeModal: null, deleteBundleTarget: null, pushToCloudTarget: null, pendingCloudConnect: null, pendingConnectPush: null, pendingEdgeAction: null }),
+  closeModal: () => set({ activeModal: null, deleteBundleTarget: null, pushToCloudTarget: null, pendingCloudConnect: null, pendingConnectPush: null, pendingEdgeAction: null, pushBundleToCloudTarget: null }),
 
   setDeleteTarget: (target) => set({ deleteBundleTarget: target }),
 
@@ -153,6 +159,8 @@ export const useUIStore = create<UIState>((set, get) => ({
   setHoveredEdge: (id) => set({ hoveredEdgeId: id }),
 
   setPendingEdgeAction: (action) => set({ pendingEdgeAction: action }),
+
+  setPushBundleToCloudTarget: (target) => set({ pushBundleToCloudTarget: target }),
 
   toggleHideEmptySessions: () =>
     set((state) => {
