@@ -1,5 +1,5 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { Cloud, CloudUpload, MessageCircleQuestion, MoreHorizontal, Trash2 } from "lucide-react";
+import { Cloud, CloudUpload, MoreHorizontal, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,17 +10,15 @@ import { relativeTime } from "@/lib/time";
 import { useUIStore } from "@/stores/uiStore";
 
 export function BundleNode({ data }: NodeProps) {
-  const { bundleId, bundleName, entryCount, lastEntryAt, mode, questionCount } = data as {
+  const { bundleId, bundleName, entryCount, lastEntryAt, mode } = data as {
     bundleId: string;
     bundleName: string;
     entryCount: number;
     lastEntryAt: string | null;
     mode: "local" | "cloud";
-    questionCount?: number;
   };
 
   const openPanel = useUIStore((s) => s.openPanel);
-  const openQuestionsPanel = useUIStore((s) => s.openQuestionsPanel);
   const setDeleteTarget = useUIStore((s) => s.setDeleteTarget);
   const setPushBundleToCloudTarget = useUIStore((s) => s.setPushBundleToCloudTarget);
   const openModal = useUIStore((s) => s.openModal);
@@ -44,31 +42,21 @@ export function BundleNode({ data }: NodeProps) {
 
   const isLocal = mode === "local";
 
-  const handleQuestionClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    openQuestionsPanel(bundleId, bundleName);
-  };
-
   return (
     <div
-      className="relative bg-card border border-border rounded-lg min-w-[180px] shadow-lg cursor-pointer hover:border-primary/50 transition-colors"
+      className="bg-card border border-border rounded-lg min-w-[180px] shadow-lg cursor-pointer hover:border-primary/50 transition-colors"
       onClick={handleClick}
     >
-      {(questionCount ?? 0) > 0 && (
-        <button
-          onClick={handleQuestionClick}
-          onMouseDown={(e) => e.stopPropagation()}
-          className="nodrag nopan absolute -top-2.5 -right-2.5 flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-yellow text-crust text-[10px] font-bold shadow-md hover:scale-110 transition-transform z-10"
-          title={`${questionCount} open question${questionCount === 1 ? "" : "s"}`}
-        >
-          <MessageCircleQuestion className="w-3 h-3" />
-          {questionCount}
-        </button>
-      )}
       <Handle
         type="target"
         position={Position.Left}
         className="!w-2 !h-2 !bg-[#585b70] !border-border"
+      />
+      <Handle
+        type="source"
+        position={Position.Top}
+        id="questions"
+        className="!w-2 !h-2 !bg-yellow/60 !border-border"
       />
       <div className="px-3 py-2 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-1.5 min-w-0">

@@ -8,6 +8,8 @@ const PROJECT_NODE_HEADER = 36;
 const PROJECT_NODE_ROW = 32;
 const BUNDLE_NODE_WIDTH = 200;
 const BUNDLE_NODE_HEIGHT = 88;
+const QUESTIONS_NODE_SIZE = 40;
+const QUESTIONS_NODE_GAP = 12;
 const GROUP_PADDING = 40;
 const GROUP_HEADER = 36;
 const GROUP_GAP = 40;
@@ -25,10 +27,11 @@ interface GroupInput {
   isLocal: boolean;
   activeSessions?: ActiveSessionData[];
   cloudSessions?: CloudSessionData[];
+  hideEmptyQuestions?: boolean;
 }
 
 function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
-  const { groupId, groupName, color, bundles, machineId, isLocal, activeSessions, cloudSessions } = input;
+  const { groupId, groupName, color, bundles, machineId, isLocal, activeSessions, cloudSessions, hideEmptyQuestions } = input;
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
@@ -202,10 +205,13 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
     const nodeId = `bundle-${bundle.bundle_id}`;
     const pos = layout.positions.get(nodeId)!;
 
+    const bundleX = pos.x + GROUP_PADDING;
+    const bundleY = pos.y + GROUP_PADDING + GROUP_HEADER;
+
     nodes.push({
       id: nodeId,
       type: "bundle",
-      position: { x: pos.x + GROUP_PADDING, y: pos.y + GROUP_PADDING + GROUP_HEADER },
+      position: { x: bundleX, y: bundleY },
       parentId: groupId,
       expandParent: true,
       data: {
@@ -214,9 +220,38 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
         entryCount: bundle.entry_count,
         lastEntryAt: bundle.last_entry_at,
         mode: isLocal ? "local" : "cloud",
-        questionCount: (bundle as any).question_count ?? 0,
       },
     });
+
+    // Questions node (circle above bundle, connected from top)
+    if (isLocal && !(hideEmptyQuestions && ((bundle as any).question_count ?? 0) === 0)) {
+      const qNodeId = `questions-${bundle.bundle_id}`;
+      const qCount = (bundle as any).question_count ?? 0;
+      nodes.push({
+        id: qNodeId,
+        type: "questions",
+        position: {
+          x: bundleX + BUNDLE_NODE_WIDTH / 2 - QUESTIONS_NODE_SIZE / 2,
+          y: bundleY - QUESTIONS_NODE_SIZE - QUESTIONS_NODE_GAP,
+        },
+        parentId: groupId,
+        expandParent: true,
+        data: {
+          bundleId: bundle.bundle_id,
+          bundleName: bundle.bundle_name,
+          questionCount: qCount,
+        },
+      });
+      edges.push({
+        id: `qedge-${bundle.bundle_id}`,
+        source: nodeId,
+        sourceHandle: "questions",
+        target: qNodeId,
+        type: "straight",
+        style: { stroke: qCount > 0 ? "#df8e1d" : "#585b70", strokeWidth: 1.5, opacity: qCount > 0 ? 0.8 : 0.3 },
+        animated: false,
+      });
+    }
   }
 
   // Edges from Supabase/local sessions to bundles
@@ -328,7 +363,7 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
 
 export function buildFlowGraph(
   data: GraphData,
-  options?: { hideEmptySessions?: boolean }
+  options?: { hideEmptySessions?: boolean; hideEmptyQuestions?: boolean }
 ): { nodes: Node[]; edges: Edge[] } {
   const allNodes: Node[] = [];
   const allEdges: Edge[] = [];
@@ -364,6 +399,7 @@ export function buildFlowGraph(
       machineId: data.machine_id,
       isLocal: true,
       activeSessions: localActiveSessions,
+      hideEmptyQuestions: options?.hideEmptyQuestions,
     });
 
     const groupNode = nodes.find((n) => n.id === "local");

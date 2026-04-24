@@ -1,4 +1,4 @@
-import { Plus, Users, EyeOff, Eye, LayoutGrid } from "lucide-react";
+import { Plus, Users, EyeOff, Eye, LayoutGrid, MessageCircleQuestion } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useUIStore } from "@/stores/uiStore";
 
@@ -13,6 +13,8 @@ export function TopBar({ machineId, isLoading, dataUpdatedAt, onTidyUp }: TopBar
   const openModal = useUIStore((s) => s.openModal);
   const hideEmptySessions = useUIStore((s) => s.hideEmptySessions);
   const toggleHideEmptySessions = useUIStore((s) => s.toggleHideEmptySessions);
+  const hideEmptyQuestions = useUIStore((s) => s.hideEmptyQuestions);
+  const toggleHideEmptyQuestions = useUIStore((s) => s.toggleHideEmptyQuestions);
   const lastRefresh = dataUpdatedAt
     ? new Date(dataUpdatedAt).toLocaleTimeString()
     : "—";
@@ -64,6 +66,16 @@ export function TopBar({ machineId, isLoading, dataUpdatedAt, onTidyUp }: TopBar
         >
           {hideEmptySessions ? <EyeOff className="w-3.5 h-3.5 mr-1" /> : <Eye className="w-3.5 h-3.5 mr-1" />}
           Empty sessions
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className={`text-xs ${hideEmptyQuestions ? "text-foreground" : "text-muted-foreground"} hover:text-foreground`}
+          onClick={toggleHideEmptyQuestions}
+          title={hideEmptyQuestions ? "Show empty question nodes" : "Hide empty question nodes"}
+        >
+          <MessageCircleQuestion className={`w-3.5 h-3.5 mr-1 ${hideEmptyQuestions ? "opacity-50" : ""}`} />
+          Empty Q&A
         </Button>
         <div className="flex items-center gap-2 text-xs text-muted-foreground/60">
           <span

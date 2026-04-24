@@ -57,6 +57,7 @@ interface UIState {
 
   // Graph filters
   hideEmptySessions: boolean;
+  hideEmptyQuestions: boolean;
 
   // Actions
   openBundlePanel: (bundleId: string, filterProject?: string) => void;
@@ -76,6 +77,7 @@ interface UIState {
   setPendingEdgeAction: (action: { sessionId: string; bundleId: string; action: "push" | "unlink" } | null) => void;
   setPushBundleToCloudTarget: (target: { id: string; name: string } | null) => void;
   toggleHideEmptySessions: () => void;
+  toggleHideEmptyQuestions: () => void;
 
   // Legacy compat
   openPanel: (bundleId: string, filterProject?: string) => void;
@@ -97,6 +99,9 @@ export const useUIStore = create<UIState>((set, get) => ({
   pushBundleToCloudTarget: null,
   hideEmptySessions: (() => {
     try { return localStorage.getItem("ctx-link-hide-empty-sessions") === "true"; } catch { return false; }
+  })(),
+  hideEmptyQuestions: (() => {
+    try { return localStorage.getItem("ctx-link-hide-empty-questions") === "true"; } catch { return false; }
   })(),
 
   selectedBundleId: null,
@@ -177,5 +182,12 @@ export const useUIStore = create<UIState>((set, get) => ({
       const next = !state.hideEmptySessions;
       try { localStorage.setItem("ctx-link-hide-empty-sessions", String(next)); } catch {}
       return { hideEmptySessions: next };
+    }),
+
+  toggleHideEmptyQuestions: () =>
+    set((state) => {
+      const next = !state.hideEmptyQuestions;
+      try { localStorage.setItem("ctx-link-hide-empty-questions", String(next)); } catch {}
+      return { hideEmptyQuestions: next };
     }),
 }));
