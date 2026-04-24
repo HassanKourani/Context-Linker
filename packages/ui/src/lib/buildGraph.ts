@@ -214,6 +214,7 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
         entryCount: bundle.entry_count,
         lastEntryAt: bundle.last_entry_at,
         mode: isLocal ? "local" : "cloud",
+        questionCount: (bundle as any).question_count ?? 0,
       },
     });
   }

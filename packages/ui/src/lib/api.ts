@@ -235,3 +235,22 @@ export function syncSessionToCloud(sessionId: string) {
 export function fetchTeamSessions(teamId: string) {
   return apiGet<CloudSessionData[]>(`/api/teams/${teamId}/sessions`);
 }
+
+// ---------------------------------------------------------------------------
+// Questions
+// ---------------------------------------------------------------------------
+
+export function fetchQuestions(bundleId: string, params?: { status?: string }) {
+  const qs = new URLSearchParams();
+  if (params?.status) qs.set("status", params.status);
+  return apiGet<import("../types").QuestionData[]>(
+    `/api/bundles/${bundleId}/questions${qs.toString() ? `?${qs}` : ""}`,
+  );
+}
+
+export function resolveQuestionApi(bundleId: string, questionId: string) {
+  return apiPost<{ ok: true }>(
+    `/api/bundles/${bundleId}/questions/${questionId}/resolve`,
+    {},
+  );
+}

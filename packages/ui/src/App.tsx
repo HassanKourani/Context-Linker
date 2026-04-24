@@ -26,6 +26,7 @@ import { TopBar } from "./components/TopBar";
 import { CreateBundleDialog } from "./components/CreateBundleDialog";
 import { DeleteBundleDialog } from "./components/DeleteBundleDialog";
 import { EntryPanel } from "./components/EntryPanel";
+import { QuestionsPanel } from "./components/QuestionsPanel";
 import { PushEntryDialog } from "./components/PushEntryForm";
 import { RewindDialog } from "./components/RewindDialog";
 import { TeamManagementDialog } from "./components/TeamManagementDialog";
@@ -233,6 +234,7 @@ export function App() {
       <CreateBundleDialog />
       <DeleteBundleDialog />
       <EntryPanel />
+      <QuestionsPanel />
       <PushEntryDialog />
       <RewindDialog />
       <TeamManagementDialog />

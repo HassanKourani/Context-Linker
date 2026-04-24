@@ -22,6 +22,7 @@ type ModalType =
 type PanelView =
   | { kind: "bundle"; bundleId: string; filterProject: string | null }
   | { kind: "session"; sessionId: string; projectName: string; sessionName?: string | null }
+  | { kind: "questions"; bundleId: string; bundleName: string }
   | null;
 
 interface UIState {
@@ -60,6 +61,7 @@ interface UIState {
   // Actions
   openBundlePanel: (bundleId: string, filterProject?: string) => void;
   openSessionPanel: (sessionId: string, projectName: string, sessionName?: string | null) => void;
+  openQuestionsPanel: (bundleId: string, bundleName: string) => void;
   closePanel: () => void;
   setPanelTab: (tab: "entries" | "rewinds") => void;
   setFilterProject: (project: string | null) => void;
@@ -111,6 +113,14 @@ export const useUIStore = create<UIState>((set, get) => ({
   openSessionPanel: (sessionId, projectName, sessionName) =>
     set({
       panel: { kind: "session", sessionId, projectName, sessionName },
+      panelTab: "entries",
+      selectedBundleId: null,
+      filterProject: null,
+    }),
+
+  openQuestionsPanel: (bundleId, bundleName) =>
+    set({
+      panel: { kind: "questions", bundleId, bundleName },
       panelTab: "entries",
       selectedBundleId: null,
       filterProject: null,
