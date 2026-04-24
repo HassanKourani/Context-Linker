@@ -80,8 +80,9 @@ let ownSessionId: string | null = null;
 /** Get the active session for this MCP server instance. */
 function getSession(): ActiveSession | null {
   if (!ownSessionId) {
-    // First call: read from marker file and cache
-    ownSessionId = getActiveSessionId();
+    // Read from marker file — don't cache null (hook may not have fired yet)
+    const fromMarker = getActiveSessionId();
+    if (fromMarker) ownSessionId = fromMarker;
   }
   if (!ownSessionId) return null;
   return loadActiveSession(ownSessionId);
@@ -935,7 +936,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       case "session_info": {
         const session = getSession();
-        if (!session) return ok({ active: false });
+        if (!session) return ok({ active: false, hint: "Session may still be initializing. The SessionStart hook creates it — try again in a moment, or use session_rename to name it." });
         const pending = getUnpushedSessionEntries(session.session_id);
         return ok({
           active: true,
