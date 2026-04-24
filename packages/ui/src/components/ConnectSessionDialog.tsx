@@ -13,6 +13,7 @@ import { useUIStore } from "@/stores/uiStore";
 import { useGraphData } from "@/hooks/useGraphData";
 import { useSessionEntries } from "@/hooks/useSessionEntries";
 import { usePushSessionToBundle } from "@/hooks/mutations/usePushSessionToBundle";
+import { useConnectSession } from "@/hooks/mutations/useConnectSession";
 import { EventTypeBadge } from "./EventTypeBadge";
 import { relativeTime } from "@/lib/time";
 import { teamColor } from "@/lib/colors";
@@ -28,7 +29,8 @@ export function ConnectSessionDialog() {
 
   const { data: graphData } = useGraphData();
   const { data: entries, isLoading } = useSessionEntries(sessionId);
-  const mutation = usePushSessionToBundle();
+  const pushMutation = usePushSessionToBundle();
+  const connectMutation = useConnectSession();
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -75,20 +77,24 @@ export function ConnectSessionDialog() {
   };
 
   const handleSubmit = () => {
-    if (!sessionId || !bundleId || selected.size === 0) return;
-    mutation.mutate(
-      {
-        sessionId,
-        bundle_id: bundleId,
-        entry_ids: [...selected],
-      },
-      {
-        onSuccess: () => {
-          closeModal();
-          setSelected(new Set());
-        },
-      }
-    );
+    if (!sessionId || !bundleId) return;
+    const onSuccess = () => {
+      closeModal();
+      setSelected(new Set());
+    };
+
+    if (selected.size === 0) {
+      // Connect only — no entries to push
+      connectMutation.mutate(
+        { sessionId, bundle_id: bundleId },
+        { onSuccess }
+      );
+    } else {
+      pushMutation.mutate(
+        { sessionId, bundle_id: bundleId, entry_ids: [...selected] },
+        { onSuccess }
+      );
+    }
   };
 
   const handleClose = () => {
@@ -102,7 +108,7 @@ export function ConnectSessionDialog() {
         <DialogHeader>
           <DialogTitle>Connect to {bundleName}</DialogTitle>
           <DialogDescription>
-            Select entries to push. At least one entry is required to connect.
+            Select entries to push, or connect without entries to consume context.
           </DialogDescription>
         </DialogHeader>
 
@@ -114,7 +120,7 @@ export function ConnectSessionDialog() {
 
         {!isLoading && (!entries || entries.length === 0) && (
           <div className="py-8 text-center text-sm text-muted-foreground">
-            This session has no entries. Add context before connecting.
+            This session has no entries. You can still connect it to consume context from the bundle.
           </div>
         )}
 
@@ -177,11 +183,13 @@ export function ConnectSessionDialog() {
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={mutation.isPending || selected.size === 0}
+            disabled={pushMutation.isPending || connectMutation.isPending}
           >
-            {mutation.isPending
+            {pushMutation.isPending || connectMutation.isPending
               ? "Connecting..."
-              : `Connect & Push ${selected.size} ${selected.size === 1 ? "Entry" : "Entries"}`}
+              : selected.size === 0
+                ? "Connect"
+                : `Connect & Push ${selected.size} ${selected.size === 1 ? "Entry" : "Entries"}`}
           </Button>
         </DialogFooter>
       </DialogContent>
