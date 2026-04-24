@@ -21,11 +21,13 @@ import { hoverEdge, unhoverEdge } from "./lib/edgeHover";
 import { fitGroupsToChildren } from "./lib/fitGroups";
 import { ProjectNode } from "./components/nodes/ProjectNode";
 import { BundleNode } from "./components/nodes/BundleNode";
+import { QuestionsNode } from "./components/nodes/QuestionsNode";
 import { TeamGroupNode } from "./components/nodes/TeamGroupNode";
 import { TopBar } from "./components/TopBar";
 import { CreateBundleDialog } from "./components/CreateBundleDialog";
 import { DeleteBundleDialog } from "./components/DeleteBundleDialog";
 import { EntryPanel } from "./components/EntryPanel";
+import { QuestionsPanel } from "./components/QuestionsPanel";
 import { PushEntryDialog } from "./components/PushEntryForm";
 import { RewindDialog } from "./components/RewindDialog";
 import { TeamManagementDialog } from "./components/TeamManagementDialog";
@@ -39,6 +41,7 @@ const nodeTypes: NodeTypes = {
   project: ProjectNode,
   bundle: BundleNode,
   teamGroup: TeamGroupNode,
+  questions: QuestionsNode,
 };
 
 const edgeTypes: EdgeTypes = {
@@ -49,12 +52,13 @@ export function App() {
   const { data, isLoading, dataUpdatedAt } = useGraphData();
   const hoveredEdgeId = useUIStore((s) => s.hoveredEdgeId);
   const hideEmptySessions = useUIStore((s) => s.hideEmptySessions);
+  const hideEmptyQuestions = useUIStore((s) => s.hideEmptyQuestions);
   const rfInstance = useRef<ReactFlowInstance | null>(null);
 
   // Build graph from API data
   const built = useMemo(
-    () => (data ? buildFlowGraph(data, { hideEmptySessions }) : { nodes: [], edges: [] }),
-    [data, hideEmptySessions]
+    () => (data ? buildFlowGraph(data, { hideEmptySessions, hideEmptyQuestions }) : { nodes: [], edges: [] }),
+    [data, hideEmptySessions, hideEmptyQuestions]
   );
 
   // Controlled node/edge state — allows dragging to update positions
@@ -233,6 +237,7 @@ export function App() {
       <CreateBundleDialog />
       <DeleteBundleDialog />
       <EntryPanel />
+      <QuestionsPanel />
       <PushEntryDialog />
       <RewindDialog />
       <TeamManagementDialog />

@@ -165,6 +165,7 @@ export interface ActiveSession {
   cloud_session_id: string | null;  // DEPRECATED: first cloud copy (kept for compat)
   team_id: string | null;           // DEPRECATED: team of first cloud copy
   cloud_copies: Array<{ cloud_session_id: string; team_id: string }>;  // all cloud copies
+  channel_port?: number | null;  // HTTP port for cross-session Q&A notifications
 }
 
 function activeSessionsDir(): string {

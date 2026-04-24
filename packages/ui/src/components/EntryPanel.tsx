@@ -22,10 +22,9 @@ export function EntryPanel() {
   const panelTab = useUIStore((s) => s.panelTab);
   const setPanelTab = useUIStore((s) => s.setPanelTab);
   const setFilterProject = useUIStore((s) => s.setFilterProject);
-  const open = !!panel;
-
   const isBundle = panel?.kind === "bundle";
   const isSession = panel?.kind === "session";
+  const open = isBundle || isSession;
   const bundleId = isBundle ? panel.bundleId : null;
   const filterProject = isBundle ? panel.filterProject : null;
   const sessionId = isSession ? panel.sessionId : null;

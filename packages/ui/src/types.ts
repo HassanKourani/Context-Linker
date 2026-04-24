@@ -52,6 +52,7 @@ export interface LocalBundleGraphData {
   bundle_name: string;
   entry_count: number;
   last_entry_at: string | null;
+  question_count?: number;
   projects: Array<{
     project_name: string;
     last_entry_at: string | null;
@@ -125,4 +126,27 @@ export interface TeamInfo {
 export interface CreateTeamResult {
   team_id: string;
   name: string;
+}
+
+// Question types
+export interface QuestionAnswer {
+  id: string;
+  question_id: string;
+  answered_by_session_id: string;
+  answered_by_project: string;
+  answer: string;
+  created_at: string;
+}
+
+export interface QuestionData {
+  id: string;
+  bundle_id: string;
+  asked_by_session_id: string;
+  asked_by_project: string;
+  target_project: string | null;
+  question: string;
+  context: string | null;
+  status: "open" | "answered" | "resolved";
+  created_at: string;
+  answers: QuestionAnswer[];
 }

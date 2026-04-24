@@ -22,6 +22,7 @@ type ModalType =
 type PanelView =
   | { kind: "bundle"; bundleId: string; filterProject: string | null }
   | { kind: "session"; sessionId: string; projectName: string; sessionName?: string | null }
+  | { kind: "questions"; bundleId: string; bundleName: string }
   | null;
 
 interface UIState {
@@ -56,10 +57,12 @@ interface UIState {
 
   // Graph filters
   hideEmptySessions: boolean;
+  hideEmptyQuestions: boolean;
 
   // Actions
   openBundlePanel: (bundleId: string, filterProject?: string) => void;
   openSessionPanel: (sessionId: string, projectName: string, sessionName?: string | null) => void;
+  openQuestionsPanel: (bundleId: string, bundleName: string) => void;
   closePanel: () => void;
   setPanelTab: (tab: "entries" | "rewinds") => void;
   setFilterProject: (project: string | null) => void;
@@ -74,6 +77,7 @@ interface UIState {
   setPendingEdgeAction: (action: { sessionId: string; bundleId: string; action: "push" | "unlink" } | null) => void;
   setPushBundleToCloudTarget: (target: { id: string; name: string } | null) => void;
   toggleHideEmptySessions: () => void;
+  toggleHideEmptyQuestions: () => void;
 
   // Legacy compat
   openPanel: (bundleId: string, filterProject?: string) => void;
@@ -96,6 +100,9 @@ export const useUIStore = create<UIState>((set, get) => ({
   hideEmptySessions: (() => {
     try { return localStorage.getItem("ctx-link-hide-empty-sessions") === "true"; } catch { return false; }
   })(),
+  hideEmptyQuestions: (() => {
+    try { return localStorage.getItem("ctx-link-hide-empty-questions") === "true"; } catch { return false; }
+  })(),
 
   selectedBundleId: null,
   filterProject: null,
@@ -111,6 +118,14 @@ export const useUIStore = create<UIState>((set, get) => ({
   openSessionPanel: (sessionId, projectName, sessionName) =>
     set({
       panel: { kind: "session", sessionId, projectName, sessionName },
+      panelTab: "entries",
+      selectedBundleId: null,
+      filterProject: null,
+    }),
+
+  openQuestionsPanel: (bundleId, bundleName) =>
+    set({
+      panel: { kind: "questions", bundleId, bundleName },
       panelTab: "entries",
       selectedBundleId: null,
       filterProject: null,
@@ -167,5 +182,12 @@ export const useUIStore = create<UIState>((set, get) => ({
       const next = !state.hideEmptySessions;
       try { localStorage.setItem("ctx-link-hide-empty-sessions", String(next)); } catch {}
       return { hideEmptySessions: next };
+    }),
+
+  toggleHideEmptyQuestions: () =>
+    set((state) => {
+      const next = !state.hideEmptyQuestions;
+      try { localStorage.setItem("ctx-link-hide-empty-questions", String(next)); } catch {}
+      return { hideEmptyQuestions: next };
     }),
 }));

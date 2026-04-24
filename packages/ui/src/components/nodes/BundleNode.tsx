@@ -52,6 +52,13 @@ export function BundleNode({ data }: NodeProps) {
         position={Position.Left}
         className="!w-2 !h-2 !bg-[#585b70] !border-border"
       />
+      {/* Questions handle — disabled for now
+      <Handle
+        type="source"
+        position={Position.Top}
+        id="questions"
+        className="!w-2 !h-2 !bg-yellow/60 !border-border"
+      /> */}
       <div className="px-3 py-2 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-1.5 min-w-0">
           {!isLocal && <Cloud className="w-3 h-3 text-blue/60 shrink-0" />}

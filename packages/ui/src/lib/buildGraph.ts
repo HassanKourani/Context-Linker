@@ -8,6 +8,8 @@ const PROJECT_NODE_HEADER = 36;
 const PROJECT_NODE_ROW = 32;
 const BUNDLE_NODE_WIDTH = 200;
 const BUNDLE_NODE_HEIGHT = 88;
+const QUESTIONS_NODE_SIZE = 40;
+const QUESTIONS_NODE_GAP = 12;
 const GROUP_PADDING = 40;
 const GROUP_HEADER = 36;
 const GROUP_GAP = 40;
@@ -25,10 +27,11 @@ interface GroupInput {
   isLocal: boolean;
   activeSessions?: ActiveSessionData[];
   cloudSessions?: CloudSessionData[];
+  hideEmptyQuestions?: boolean;
 }
 
 function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
-  const { groupId, groupName, color, bundles, machineId, isLocal, activeSessions, cloudSessions } = input;
+  const { groupId, groupName, color, bundles, machineId, isLocal, activeSessions, cloudSessions, hideEmptyQuestions } = input;
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
@@ -202,10 +205,13 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
     const nodeId = `bundle-${bundle.bundle_id}`;
     const pos = layout.positions.get(nodeId)!;
 
+    const bundleX = pos.x + GROUP_PADDING;
+    const bundleY = pos.y + GROUP_PADDING + GROUP_HEADER;
+
     nodes.push({
       id: nodeId,
       type: "bundle",
-      position: { x: pos.x + GROUP_PADDING, y: pos.y + GROUP_PADDING + GROUP_HEADER },
+      position: { x: bundleX, y: bundleY },
       parentId: groupId,
       expandParent: true,
       data: {
@@ -216,6 +222,11 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
         mode: isLocal ? "local" : "cloud",
       },
     });
+
+    // Questions node — disabled for now, will be re-enabled later
+    // if (isLocal && !(hideEmptyQuestions && ((bundle as any).question_count ?? 0) === 0)) {
+    //   ... questions node + edge creation
+    // }
   }
 
   // Edges from Supabase/local sessions to bundles
@@ -327,7 +338,7 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
 
 export function buildFlowGraph(
   data: GraphData,
-  options?: { hideEmptySessions?: boolean }
+  options?: { hideEmptySessions?: boolean; hideEmptyQuestions?: boolean }
 ): { nodes: Node[]; edges: Edge[] } {
   const allNodes: Node[] = [];
   const allEdges: Edge[] = [];
@@ -363,6 +374,7 @@ export function buildFlowGraph(
       machineId: data.machine_id,
       isLocal: true,
       activeSessions: localActiveSessions,
+      hideEmptyQuestions: options?.hideEmptyQuestions,
     });
 
     const groupNode = nodes.find((n) => n.id === "local");
