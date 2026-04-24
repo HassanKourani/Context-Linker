@@ -27,6 +27,14 @@ import {
   removeEntryFromBundle,
   localRemoveEntryFromBundle,
   copySessionToCloud,
+  syncSessionToCloud,
+  getCloudSessionEntries,
+  getBundleTeamId,
+  connectSessionToBundle,
+  connectCloudSessionToBundle,
+  listMyTeams,
+  listTeamBundles,
+  listAllLocalBundleDetails,
   type ActiveSession,
   type RewindStrategy,
   isLocalBundle,
@@ -325,6 +333,22 @@ const tools = [
         team_id: { type: "string", description: "Team ID to push the session under" },
       },
       required: ["team_id"],
+    },
+  },
+  {
+    name: "session_push_to_bundle",
+    description:
+      "Push all session entries to a specific bundle (no need to connect first). " +
+      "If bundle_id is omitted, returns available teams and their bundles so you can present the options and let the user pick. " +
+      "Call without bundle_id first to discover, then call again with the chosen bundle_id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bundle_id: {
+          type: "string",
+          description: "Target bundle ID. Omit to list available teams and bundles.",
+        },
+      },
     },
   },
 ];
@@ -670,6 +694,81 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const a = RewindHistoryArgs.parse(args);
         const r = await listRewinds(a.bundle_id, a.project_name, a.limit ?? 20);
         return ok(r);
+      }
+
+      case "session_push_to_bundle": {
+        const a = z.object({ bundle_id: z.string().optional() }).parse(args);
+        const session = getSession();
+        if (!session) return fail("No active session.");
+
+        // Discovery mode: return available teams and bundles
+        if (!a.bundle_id) {
+          const teams = listMyTeams();
+          const localBundles = listAllLocalBundleDetails();
+          const teamResults = [];
+          for (const t of teams) {
+            const bundles = await listTeamBundles(t.team_id);
+            teamResults.push({
+              team_id: t.team_id,
+              name: t.name,
+              bundles: bundles.map(b => ({ bundle_id: b.bundle_id, name: b.name })),
+            });
+          }
+          return ok({
+            local_bundles: localBundles.map(b => ({ bundle_id: b.bundle_id, name: b.bundle_name })),
+            teams: teamResults,
+          });
+        }
+
+        // Push mode: push all session entries to the specified bundle
+        const entries = getSessionEntries(session.session_id);
+        if (entries.length === 0) return fail("No session entries to push.");
+        const entryIds = entries.map(e => e.id);
+
+        if (isLocalBundle(a.bundle_id)) {
+          connectSessionToBundle(session.session_id, a.bundle_id, "local");
+          const r = localAddEntriesToBundle(a.bundle_id, entryIds, session.session_id);
+          return ok({ bundle_id: a.bundle_id, added: r.added, skipped: r.skipped, total_entries: entryIds.length });
+        }
+
+        // Cloud bundle — auto-push session to cloud if needed, then map IDs
+        const bundleTeamId = await getBundleTeamId(a.bundle_id);
+        if (!bundleTeamId) return fail("Could not determine the bundle's team.");
+
+        const copies = session.cloud_copies ?? [];
+        let copy = copies.find((c) => c.team_id === bundleTeamId)
+          ?? (session.cloud_session_id && session.team_id === bundleTeamId
+            ? { cloud_session_id: session.cloud_session_id, team_id: bundleTeamId }
+            : null);
+
+        if (!copy) {
+          // Auto-push session to cloud under the bundle's team
+          const result = await copySessionToCloud(session.session_id, bundleTeamId);
+          if (!session.cloud_copies) session.cloud_copies = [];
+          session.cloud_copies.push({ cloud_session_id: result.cloud_session_id, team_id: bundleTeamId });
+          if (!session.cloud_session_id) {
+            session.cloud_session_id = result.cloud_session_id;
+            session.team_id = bundleTeamId;
+          }
+          saveActiveSession(session);
+          copy = { cloud_session_id: result.cloud_session_id, team_id: bundleTeamId };
+        } else {
+          // Sync any new local entries to existing cloud copy
+          await syncSessionToCloud(session.session_id, copy.cloud_session_id);
+        }
+
+        // Map local → cloud entry IDs (cloud gets new UUIDs on copy)
+        const cloudEntries = await getCloudSessionEntries(copy.cloud_session_id);
+        const cloudIds = cloudEntries.map((e) => e.id);
+
+        if (cloudIds.length === 0) return fail("No cloud entries to push.");
+
+        // Link the session to the bundle
+        connectSessionToBundle(session.session_id, a.bundle_id, "cloud");
+        connectCloudSessionToBundle(copy.cloud_session_id, a.bundle_id, "cloud");
+
+        const r = await addEntriesToBundle(a.bundle_id, cloudIds);
+        return ok({ bundle_id: a.bundle_id, added: r.added, skipped: r.skipped, total_entries: cloudIds.length });
       }
 
       default:

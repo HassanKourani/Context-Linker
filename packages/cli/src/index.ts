@@ -35,6 +35,12 @@ import {
   addEntriesToBundle,
   localAddEntriesToBundle,
   copySessionToCloud,
+  syncSessionToCloud,
+  getCloudSessionEntries,
+  getBundleTeamId,
+  connectSessionToBundle,
+  connectCloudSessionToBundle,
+  listAllLocalBundleDetails,
   isLocalBundle,
   type RewindStrategy,
 } from "@ctx-link/core";
@@ -765,6 +771,137 @@ program
         const r = await addEntriesToBundle(b.bundle_id, entryIds);
         console.log(`[${b.bundle_id}] added ${r.added}, skipped ${r.skipped} (already in bundle)`);
       }
+    }
+  });
+
+program
+  .command("push-to-bundle")
+  .description(
+    "Push all session entries to a bundle. Interactively pick from local or team bundles.\n\n" +
+    "Interactive:\n" +
+    "  $ ctxl push-to-bundle\n\n" +
+    "With flags (for scripting):\n" +
+    "  $ ctxl push-to-bundle --bundle <id>"
+  )
+  .option("--bundle <id>", "bundle ID (skip interactive selection)")
+  .action(async (opts) => {
+    const sessionId = getActiveSessionId();
+    if (!sessionId) {
+      console.error("No active session.");
+      process.exit(1);
+    }
+    const session = loadActiveSession(sessionId);
+    if (!session) {
+      console.error(`Session ${sessionId} not found.`);
+      process.exit(1);
+    }
+
+    const entries = getSessionEntries(session.session_id);
+    const entryIds = entries.map(e => e.id);
+    if (entryIds.length === 0) {
+      console.log("No session entries to push.");
+      return;
+    }
+
+    let bundleId: string = opts.bundle;
+
+    if (!bundleId) {
+      // Build choices: Local + each cloud team
+      const teams = listMyTeams();
+      const localBundles = listAllLocalBundleDetails();
+
+      const teamChoices: Array<{ name: string; value: string }> = [];
+      if (localBundles.length > 0) {
+        teamChoices.push({ name: `Local  (${localBundles.length} bundle${localBundles.length === 1 ? "" : "s"})`, value: "__local__" });
+      }
+      for (const t of teams) {
+        teamChoices.push({ name: t.name, value: t.team_id });
+      }
+
+      if (teamChoices.length === 0) {
+        console.error("No local bundles or teams found. Create a bundle first with 'ctxl create'.");
+        process.exit(1);
+      }
+
+      const teamChoice = await select({ message: "Which team?", choices: teamChoices });
+
+      if (teamChoice === "__local__") {
+        bundleId = await select({
+          message: "Which bundle?",
+          choices: localBundles.map(b => ({
+            name: b.bundle_name,
+            value: b.bundle_id,
+            description: b.bundle_id,
+          })),
+        });
+      } else {
+        const bundles = await listTeamBundles(teamChoice);
+        if (bundles.length === 0) {
+          console.error("No bundles in this team. Create one with 'ctxl create'.");
+          process.exit(1);
+        }
+        bundleId = await select({
+          message: "Which bundle?",
+          choices: bundles.map(b => ({
+            name: b.name,
+            value: b.bundle_id,
+            description: b.bundle_id,
+          })),
+        });
+      }
+    }
+
+    // Push entries
+    if (isLocalBundle(bundleId)) {
+      connectSessionToBundle(session.session_id, bundleId, "local");
+      const r = localAddEntriesToBundle(bundleId, entryIds, session.session_id);
+      console.log(`Pushed to ${bundleId}: added ${r.added}, skipped ${r.skipped} (already in bundle)`);
+      console.log(`Total entries: ${entryIds.length}`);
+    } else {
+      // Cloud bundle — auto-push session to cloud if needed, then map IDs
+      const bundleTeamId = await getBundleTeamId(bundleId);
+      if (!bundleTeamId) {
+        console.error("Could not determine the bundle's team.");
+        process.exit(1);
+      }
+
+      const copies = session.cloud_copies ?? [];
+      let copy = copies.find((c) => c.team_id === bundleTeamId)
+        ?? (session.cloud_session_id && session.team_id === bundleTeamId
+          ? { cloud_session_id: session.cloud_session_id, team_id: bundleTeamId }
+          : null);
+
+      if (!copy) {
+        console.log("Auto-pushing session to cloud...");
+        const result = await copySessionToCloud(session.session_id, bundleTeamId);
+        if (!session.cloud_copies) session.cloud_copies = [];
+        session.cloud_copies.push({ cloud_session_id: result.cloud_session_id, team_id: bundleTeamId });
+        if (!session.cloud_session_id) {
+          session.cloud_session_id = result.cloud_session_id;
+          session.team_id = bundleTeamId;
+        }
+        saveActiveSession(session);
+        copy = { cloud_session_id: result.cloud_session_id, team_id: bundleTeamId };
+        console.log(`  Cloud session: ${result.cloud_session_id} (${result.entries_copied} entries copied)`);
+      } else {
+        await syncSessionToCloud(session.session_id, copy.cloud_session_id);
+      }
+
+      const cloudEntries = await getCloudSessionEntries(copy.cloud_session_id);
+      const cloudIds = cloudEntries.map((e) => e.id);
+
+      if (cloudIds.length === 0) {
+        console.log("No cloud entries to push.");
+        return;
+      }
+
+      // Link session to bundle
+      connectSessionToBundle(session.session_id, bundleId, "cloud");
+      connectCloudSessionToBundle(copy.cloud_session_id, bundleId, "cloud");
+
+      const r = await addEntriesToBundle(bundleId, cloudIds);
+      console.log(`Pushed to ${bundleId}: added ${r.added}, skipped ${r.skipped} (already in bundle)`);
+      console.log(`Total entries: ${cloudIds.length}`);
     }
   });
 
