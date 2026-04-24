@@ -13,6 +13,7 @@ function safeEventType(type: string): string {
 
 export interface CloudSession {
   id: string;
+  name: string | null;
   team_id: string;
   project_name: string;
   project_path: string | null;
@@ -139,6 +140,18 @@ export async function deleteCloudSession(cloudSessionId: string): Promise<void> 
     .delete()
     .eq("id", cloudSessionId);
   if (error) throw new Error(`deleteCloudSession failed: ${error.message}`);
+}
+
+/**
+ * Rename a cloud session.
+ */
+export async function renameCloudSession(cloudSessionId: string, name: string | null): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("cloud_sessions")
+    .update({ name })
+    .eq("id", cloudSessionId);
+  if (error) throw new Error(`renameCloudSession failed: ${error.message}`);
 }
 
 /**

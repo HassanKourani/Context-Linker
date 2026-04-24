@@ -1,5 +1,6 @@
 export interface ActiveSessionData {
   session_id: string;
+  name?: string | null;
   project_name: string;
   project_path: string;
   bundles: Array<{ bundle_id: string; mode: "local" | "cloud" }>;
@@ -13,6 +14,7 @@ export interface ActiveSessionData {
 
 export interface CloudSessionData {
   id: string;
+  name?: string | null;
   team_id: string;
   project_name: string;
   project_path: string | null;

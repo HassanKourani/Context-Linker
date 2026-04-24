@@ -74,8 +74,10 @@ export function EntryPanel() {
     if (lb) panelTitle = lb.bundle_name;
     panelSubtitle = `${entries.length} entries${filterProject ? ` from ${filterProject}` : ""}`;
   } else if (isSession) {
-    panelTitle = panel.projectName;
-    panelSubtitle = `Session context — ${entries.length} entries`;
+    panelTitle = panel.sessionName || panel.projectName;
+    panelSubtitle = panel.sessionName
+      ? `${panel.projectName} — ${entries.length} entries`
+      : `Session context — ${entries.length} entries`;
   }
 
   return (

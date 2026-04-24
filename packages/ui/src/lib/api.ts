@@ -87,6 +87,19 @@ export function deleteSessionApi(sessionId: string) {
   return apiDelete<{ ok: true }>(`/api/sessions/${sessionId}`);
 }
 
+export async function renameSessionApi(sessionId: string, name: string | null) {
+  const res = await fetch(`/api/sessions/${sessionId}/rename`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error ?? `API error: ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: true; name: string | null }>;
+}
+
 export function connectSessionToBundle(sessionId: string, body: { bundle_id: string }) {
   return apiPost<{ ok: true }>(`/api/sessions/${sessionId}/connect`, body);
 }

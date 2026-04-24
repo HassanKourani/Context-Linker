@@ -35,7 +35,7 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
   // Collect all unique projects across bundles
   const projectSessions = new Map<
     string,
-    Array<{ sessionId: string; machineId: string; lastActiveAt: string | null; bundleId: string; branch: string | null; entryCount: number; cloudSessionId?: string | null }>
+    Array<{ sessionId: string; name: string | null; machineId: string; lastActiveAt: string | null; bundleId: string; branch: string | null; entryCount: number; cloudSessionId?: string | null }>
   >();
 
   // Add active sessions (each Claude Code session becomes ONE row under its project)
@@ -48,6 +48,7 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
       if (!existing.some((e) => e.sessionId === as.session_id)) {
         existing.push({
           sessionId: as.session_id,
+          name: as.name ?? null,
           machineId: machineId,
           lastActiveAt: as.started_at,
           bundleId: "",
@@ -82,6 +83,7 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
       if (!existing.some((e) => e.sessionId === cs.id)) {
         existing.push({
           sessionId: cs.id,
+          name: cs.name ?? null,
           machineId: cs.machine_id,
           lastActiveAt: cs.last_active_at,
           bundleId: "",
@@ -178,6 +180,7 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
           const sameBranchBefore = sessions.slice(0, i).filter((o) => o.branch === s.branch).length;
           return {
             id: s.sessionId,
+            name: s.name,
             machineId: s.machineId,
             lastActiveAt: s.lastActiveAt,
             isYou: s.machineId === machineId,

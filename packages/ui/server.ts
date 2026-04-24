@@ -45,6 +45,8 @@ import {
   getCloudSessionBundleConnections,
   syncSessionToCloud,
   saveActiveSession,
+  renameActiveSession,
+  renameCloudSession,
 } from "@ctx-link/core";
 
 const server = Bun.serve({
@@ -55,7 +57,7 @@ const server = Bun.serve({
 
     const corsHeaders = {
       "Access-Control-Allow-Origin": "http://localhost:5173",
-      "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
     };
 
@@ -795,6 +797,41 @@ const server = Bun.serve({
           // Entries are pushed separately via push-to-bundle.
           connectCloudSessionToBundle(sessionId, bundle_id, mode);
           return Response.json({ ok: true }, { headers: corsHeaders });
+        } catch (err: any) {
+          return Response.json(
+            { error: err.message ?? String(err) },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+      }
+    }
+
+    // ── PATCH /api/sessions/:id/rename ─────────────────────────────────────
+    {
+      const match = url.pathname.match(/^\/api\/sessions\/([^/]+)\/rename$/);
+      if (match && req.method === "PATCH") {
+        try {
+          const sessionId = match[1];
+          const { name } = await req.json();
+          const trimmed = typeof name === "string" && name.trim() ? name.trim() : null;
+
+          // Rename local active session
+          const localSession = loadActiveSession(sessionId);
+          if (localSession) {
+            renameActiveSession(sessionId, trimmed);
+            // Also rename all cloud copies
+            for (const c of (localSession.cloud_copies ?? [])) {
+              try { await renameCloudSession(c.cloud_session_id, trimmed); } catch {}
+            }
+            if (localSession.cloud_session_id) {
+              try { await renameCloudSession(localSession.cloud_session_id, trimmed); } catch {}
+            }
+          } else {
+            // sessionId is a cloud session — rename directly
+            await renameCloudSession(sessionId, trimmed);
+          }
+
+          return Response.json({ ok: true, name: trimmed }, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
             { error: err.message ?? String(err) },

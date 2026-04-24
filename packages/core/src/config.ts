@@ -156,6 +156,7 @@ export function loadSessionLog(): SessionLogEntry[] {
 
 export interface ActiveSession {
   session_id: string;
+  name?: string | null;
   project_name: string;
   project_path: string;
   bundles: Array<{ bundle_id: string; mode: "local" | "cloud" }>;
@@ -192,6 +193,13 @@ export function deleteActiveSession(sessionId: string): void {
   // Also remove the session entries file
   const entriesPath = join(globalConfigDir(), "session-entries", `${sessionId}.json`);
   if (existsSync(entriesPath)) rmSync(entriesPath);
+}
+
+export function renameActiveSession(sessionId: string, name: string | null): void {
+  const session = loadActiveSession(sessionId);
+  if (!session) throw new Error(`Active session ${sessionId} not found.`);
+  session.name = name;
+  saveActiveSession(session);
 }
 
 /** Read the active session_id from .ctx-link-active-session marker file in CWD */
