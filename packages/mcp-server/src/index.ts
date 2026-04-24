@@ -57,6 +57,11 @@ import {
   type ActiveSession,
   type RewindStrategy,
   isLocalBundle,
+  askQuestion,
+  answerQuestion,
+  resolveQuestion,
+  listBundleQuestions,
+  type Question,
 } from "@ctx-link/core";
 import { z } from "zod";
 
@@ -514,6 +519,57 @@ const tools = [
       required: ["bundle_id", "team_id"],
     },
   },
+  {
+    name: "bundle_ask_question",
+    description:
+      "LAST RESORT: Ask a question to other sessions connected to a bundle. " +
+      "Only use this AFTER you have: (1) read all bundle entries thoroughly, and " +
+      "(2) examined the relevant code to try to answer the question yourself. " +
+      "Most answers are in the entries or the codebase — only ask for things code can't explain, " +
+      "like intent, timeline, or whether something is intentional vs WIP. " +
+      "Currently only works for local bundles.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bundle_id: { type: "string" },
+        question: { type: "string", description: "The question to ask" },
+        target_project: { type: "string", description: "Optional: direct the question to a specific project" },
+        context: { type: "string", description: "Optional: what context prompted this question" },
+      },
+      required: ["bundle_id", "question"],
+    },
+  },
+  {
+    name: "bundle_answer_question",
+    description:
+      "Answer a question that was asked in a bundle. " +
+      "PROACTIVE USE: When you see an open question targeting your project (via context_pull or bundle_questions), answer it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bundle_id: { type: "string" },
+        question_id: { type: "string", description: "The ID of the question being answered" },
+        answer: { type: "string", description: "Your answer to the question" },
+      },
+      required: ["bundle_id", "question_id", "answer"],
+    },
+  },
+  {
+    name: "bundle_questions",
+    description:
+      "List questions in a bundle, optionally filtered by status or target project. " +
+      "Returns questions with their answers. " +
+      "PROACTIVE USE: Check for open questions when pulling context from a bundle.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bundle_id: { type: "string" },
+        status: { type: "string", enum: ["open", "answered", "resolved"], description: "Filter by status" },
+        target_project: { type: "string", description: "Filter to questions targeting this project" },
+      },
+      required: ["bundle_id"],
+    },
+  },
 ];
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
@@ -740,6 +796,21 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const a = ContextPullArgs.parse(args);
         const session = getSession();
 
+        // Helper: append open questions to rendered output
+        function appendQuestions(rendered: string, bundleIds: string[], projectName?: string): string {
+          const allQuestions: Question[] = [];
+          for (const bid of bundleIds) {
+            if (!isLocalBundle(bid)) continue;
+            const qs = listBundleQuestions(bid, { status: "open", targetProject: projectName });
+            allQuestions.push(...qs);
+          }
+          if (allQuestions.length === 0) return rendered;
+          const qLines = allQuestions.map((q) =>
+            `[Q from "${q.asked_by_project}"${q.target_project ? ` → "${q.target_project}"` : ""}] ${q.question}\n  ID: ${q.id} | Status: ${q.status} | Use bundle_answer_question to respond.`
+          );
+          return rendered + "\n\n--- Open Questions ---\n" + qLines.join("\n\n");
+        }
+
         // If bundle_id is provided, pull from that specific bundle
         if (a.bundle_id) {
           const mode = isLocalBundle(a.bundle_id) ? "local" : "cloud";
@@ -750,7 +821,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
             exclude_project: a.exclude_project,
             mode,
           });
-          const rendered = renderEntriesForClaude(rows);
+          let rendered = renderEntriesForClaude(rows);
+          rendered = appendQuestions(rendered, [a.bundle_id], session?.project_name);
           return ok({ count: rows.length, rendered, entries: rows });
         }
 
@@ -772,7 +844,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         // Sort by created_at descending and limit
         allRows.sort((x, y) => y.created_at.localeCompare(x.created_at));
         const limited = allRows.slice(0, a.limit ?? 20);
-        const rendered = renderEntriesForClaude(limited);
+        let rendered = renderEntriesForClaude(limited);
+        rendered = appendQuestions(rendered, session.bundles.map((b) => b.bundle_id), session.project_name);
         return ok({ count: limited.length, rendered, entries: limited });
       }
 
@@ -1304,6 +1377,55 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         await deleteBundle(a.bundle_id, "local");
 
         return ok({ new_bundle_id: newBundleId, entries_migrated: entriesMigrated });
+      }
+
+      case "bundle_ask_question": {
+        const a = z.object({
+          bundle_id: z.string(),
+          question: z.string(),
+          target_project: z.string().optional(),
+          context: z.string().optional(),
+        }).parse(args);
+        const session = getSession();
+        if (!session) return fail("No active session.");
+        const q = askQuestion(a.bundle_id, session.session_id, session.project_name, a.question, {
+          targetProject: a.target_project,
+          context: a.context,
+        });
+        return ok({
+          question_id: q.id,
+          status: q.status,
+          message: `Question posted to bundle. ${a.target_project ? `Directed to project "${a.target_project}".` : "Open to all projects."}`,
+        });
+      }
+
+      case "bundle_answer_question": {
+        const a = z.object({
+          bundle_id: z.string(),
+          question_id: z.string(),
+          answer: z.string(),
+        }).parse(args);
+        const session = getSession();
+        if (!session) return fail("No active session.");
+        const answer = answerQuestion(a.bundle_id, a.question_id, session.session_id, session.project_name, a.answer);
+        return ok({
+          answer_id: answer.id,
+          question_id: a.question_id,
+          message: "Answer posted. The question is now marked as 'answered'.",
+        });
+      }
+
+      case "bundle_questions": {
+        const a = z.object({
+          bundle_id: z.string(),
+          status: z.enum(["open", "answered", "resolved"]).optional(),
+          target_project: z.string().optional(),
+        }).parse(args);
+        const questions = listBundleQuestions(a.bundle_id, {
+          status: a.status,
+          targetProject: a.target_project,
+        });
+        return ok({ count: questions.length, questions });
       }
 
       default:
