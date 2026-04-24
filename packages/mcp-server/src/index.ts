@@ -737,8 +737,8 @@ function fail(err: unknown) {
   };
 }
 
-/** Tools that generate auto-log entries on success. Return null to skip. */
-const AUTO_LOG_TOOLS: Record<string, (a: Record<string, any>) => string | null> = {
+/** Auto-log ctx-link tool calls ONLY when running inside the ctx-link project (for debugging). */
+const CTX_LINK_AUTO_LOG: Record<string, (a: Record<string, any>) => string | null> = {
   bundle_create: (a) => `Created ${a.mode ?? "local"} bundle "${a.name}"`,
   bundle_join: (a) => `Joined bundle ${a.bundle_id}`,
   bundle_delete: (a) => `Deleted bundle ${a.bundle_id}`,
@@ -1571,15 +1571,15 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   }
   })();
 
-  // Auto-log successful state-changing tool calls
+  // Auto-log ctx-link tool calls only when running inside the ctx-link project (debugging)
   if (result && !('isError' in result)) {
-    const gen = AUTO_LOG_TOOLS[name];
-    if (gen) {
-      const summary = gen((args ?? {}) as Record<string, any>);
-      if (summary) {
-        try {
-          const session = getSession();
-          if (session) {
+    const session = getSession();
+    if (session?.project_name === "ctx-link") {
+      const gen = CTX_LINK_AUTO_LOG[name];
+      if (gen) {
+        const summary = gen((args ?? {}) as Record<string, any>);
+        if (summary) {
+          try {
             pushSessionEntry(session.session_id, {
               project_name: session.project_name,
               event_type: "auto",
@@ -1588,8 +1588,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
               files_touched: [],
               decisions: [],
             });
-          }
-        } catch {} // Auto-log failure must not break the tool call
+          } catch {}
+        }
       }
     }
   }
