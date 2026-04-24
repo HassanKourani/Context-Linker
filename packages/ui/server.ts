@@ -47,6 +47,11 @@ import {
   saveActiveSession,
   renameActiveSession,
   renameCloudSession,
+  listBundleQuestions,
+  askQuestion,
+  answerQuestion,
+  resolveQuestion,
+  countOpenQuestions,
 } from "@ctx-link/core";
 
 const server = Bun.serve({
@@ -115,7 +120,10 @@ const server = Bun.serve({
           })
         );
 
-        const localBundles = listAllLocalBundleDetails();
+        const localBundles = listAllLocalBundleDetails().map((b) => ({
+          ...b,
+          question_count: countOpenQuestions(b.bundle_id),
+        }));
         const sessions = listActiveSessions().map((s) => ({
           ...s,
           entry_count: getSessionEntries(s.session_id).length,
@@ -1100,6 +1108,83 @@ const server = Bun.serve({
           { error: err.message ?? String(err) },
           { status: 500, headers: corsHeaders }
         );
+      }
+    }
+
+    // ── GET /api/bundles/:id/questions ──────────────────────────────────
+    {
+      const match = url.pathname.match(/^\/api\/bundles\/([^/]+)\/questions$/);
+      if (match && req.method === "GET") {
+        try {
+          const bundleId = match[1];
+          const status = url.searchParams.get("status") as "open" | "answered" | "resolved" | undefined;
+          const targetProject = url.searchParams.get("target_project") || undefined;
+          const questions = listBundleQuestions(bundleId, { status: status || undefined, targetProject });
+          return Response.json(questions, { headers: corsHeaders });
+        } catch (err: any) {
+          return Response.json(
+            { error: err.message ?? String(err) },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+      }
+    }
+
+    // ── POST /api/bundles/:id/questions ─────────────────────────────────
+    {
+      const match = url.pathname.match(/^\/api\/bundles\/([^/]+)\/questions$/);
+      if (match && req.method === "POST") {
+        try {
+          const bundleId = match[1];
+          const { question, target_project, context, session_id, project_name } = await req.json();
+          const q = askQuestion(bundleId, session_id, project_name, question, {
+            targetProject: target_project,
+            context,
+          });
+          return Response.json(q, { headers: corsHeaders });
+        } catch (err: any) {
+          return Response.json(
+            { error: err.message ?? String(err) },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+      }
+    }
+
+    // ── POST /api/bundles/:id/questions/:qid/answer ─────────────────────
+    {
+      const match = url.pathname.match(/^\/api\/bundles\/([^/]+)\/questions\/([^/]+)\/answer$/);
+      if (match && req.method === "POST") {
+        try {
+          const bundleId = match[1];
+          const questionId = match[2];
+          const { answer, session_id, project_name } = await req.json();
+          const a = answerQuestion(bundleId, questionId, session_id, project_name, answer);
+          return Response.json(a, { headers: corsHeaders });
+        } catch (err: any) {
+          return Response.json(
+            { error: err.message ?? String(err) },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+      }
+    }
+
+    // ── POST /api/bundles/:id/questions/:qid/resolve ────────────────────
+    {
+      const match = url.pathname.match(/^\/api\/bundles\/([^/]+)\/questions\/([^/]+)\/resolve$/);
+      if (match && req.method === "POST") {
+        try {
+          const bundleId = match[1];
+          const questionId = match[2];
+          resolveQuestion(bundleId, questionId);
+          return Response.json({ ok: true }, { headers: corsHeaders });
+        } catch (err: any) {
+          return Response.json(
+            { error: err.message ?? String(err) },
+            { status: 500, headers: corsHeaders }
+          );
+        }
       }
     }
 
