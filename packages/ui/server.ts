@@ -169,10 +169,7 @@ const server = Bun.serve({
           })
         );
 
-        const localBundles = listAllLocalBundleDetails().map((b) => ({
-          ...b,
-          question_count: countOpenQuestions(b.bundle_id),
-        }));
+        const localBundles = listAllLocalBundleDetails();
         const sessions = listActiveSessions().map((s) => ({
           ...s,
           entry_count: getSessionEntries(s.session_id).length,

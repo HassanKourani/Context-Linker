@@ -223,35 +223,10 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
       },
     });
 
-    // Questions node (circle above bundle, connected from top)
-    if (isLocal && !(hideEmptyQuestions && ((bundle as any).question_count ?? 0) === 0)) {
-      const qNodeId = `questions-${bundle.bundle_id}`;
-      const qCount = (bundle as any).question_count ?? 0;
-      nodes.push({
-        id: qNodeId,
-        type: "questions",
-        position: {
-          x: bundleX + BUNDLE_NODE_WIDTH / 2 - QUESTIONS_NODE_SIZE / 2,
-          y: bundleY - QUESTIONS_NODE_SIZE - QUESTIONS_NODE_GAP,
-        },
-        parentId: groupId,
-        expandParent: true,
-        data: {
-          bundleId: bundle.bundle_id,
-          bundleName: bundle.bundle_name,
-          questionCount: qCount,
-        },
-      });
-      edges.push({
-        id: `qedge-${bundle.bundle_id}`,
-        source: nodeId,
-        sourceHandle: "questions",
-        target: qNodeId,
-        type: "straight",
-        style: { stroke: qCount > 0 ? "#df8e1d" : "#585b70", strokeWidth: 1.5, opacity: qCount > 0 ? 0.8 : 0.3 },
-        animated: false,
-      });
-    }
+    // Questions node — disabled for now, will be re-enabled later
+    // if (isLocal && !(hideEmptyQuestions && ((bundle as any).question_count ?? 0) === 0)) {
+    //   ... questions node + edge creation
+    // }
   }
 
   // Edges from Supabase/local sessions to bundles
