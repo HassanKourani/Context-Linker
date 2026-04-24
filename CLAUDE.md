@@ -102,7 +102,7 @@ All exported from `@ctx-link/core`:
 
 ## MCP Tools (packages/mcp-server/)
 
-The MCP server exposes 28 tools that Claude Code calls via stdio. All tools auto-detect local vs cloud mode.
+The MCP server exposes 31 tools that Claude Code calls via stdio. All tools auto-detect local vs cloud mode.
 
 ### Bundle Tools
 - `bundle_create` — create a bundle (local or cloud). Pass `mode: "cloud"` + `team_id` for cloud bundles
@@ -114,10 +114,13 @@ The MCP server exposes 28 tools that Claude Code calls via stdio. All tools auto
 - `bundle_entries` — list all entries in a bundle unfiltered (no cross-project exclusion, unlike context_pull)
 - `bundle_pull_from_sessions` — pull entries from ALL sessions connected to a bundle in one shot
 - `bundle_push_to_cloud` — migrate a local bundle to cloud under a team (creates cloud bundle, migrates refs, deletes local)
+- `bundle_ask_question` — LAST RESORT: ask a question on a bundle after exhausting entries + code. Local bundles only
+- `bundle_answer_question` — answer a question in a bundle. PROACTIVE USE on notifications
+- `bundle_questions` — list questions for a bundle, filtered by status/project
 
 ### Context Tools
 - `context_push` — push session entries to connected bundles as refs. Optional `summary` creates a new entry first. Optional `bundle_id` targets one bundle (default: all connected)
-- `context_pull` — pull entries from a bundle. Proactive use recommended at session start
+- `context_pull` — pull entries from a bundle. Proactive use recommended at session start. Also appends open questions for your project
 - `context_rewind` — soft-delete entries by project using strategy (since, last_n, entry_ids, after_ref). Supports `dry_run`
 - `context_restore` — undo a rewind, restore soft-deleted entries
 - `rewind_history` — list past rewinds for a bundle
@@ -222,6 +225,10 @@ Endpoints:
 - `PATCH /api/sessions/:id/rename` — rename a session (also renames cloud copies)
 - `DELETE /api/sessions/:id/entries/:entryId` — delete session entry (cascades to cloud + bundle refs)
 - `POST /api/unlink-session` — remove session link from bundle (removes entry refs, disconnects)
+- `GET /api/bundles/:id/questions` — list questions for a bundle (filter: `status`, `target_project`)
+- `POST /api/bundles/:id/questions` — create a question
+- `POST /api/bundles/:id/questions/:qid/answer` — answer a question
+- `POST /api/bundles/:id/questions/:qid/resolve` — mark question resolved
 
 ### Mutation Hooks (optimistic updates)
 All write operations use TanStack Query mutations with optimistic updates. All roll back on error and refetch on settle.
@@ -250,10 +257,13 @@ All write operations use TanStack Query mutations with optimistic updates. All r
 **Team mutations:**
 - `useCreateTeam` / `useJoinTeam` — team management
 
+**Q&A mutations:**
+- `useResolveQuestion` — marks a question as resolved
+
 ### State Store (Zustand)
 ```typescript
 {
-  panel,                  // { kind: "bundle", bundleId, filterProject } | { kind: "session", sessionId, projectName, sessionName? } | null
+  panel,                  // { kind: "bundle", ... } | { kind: "session", ... } | { kind: "questions", bundleId, bundleName } | null
   panelTab,              // "entries" | "rewinds"
   activeModal,           // "create-bundle" | "delete-bundle" | "team-management" | "push-entry" | "push-session" | "push-to-cloud" | "push-to-cloud-prompt" | "connect-and-push" | "rewind" | "edge-action" | "push-bundle-to-cloud" | null
   deleteBundleTarget,    // { id, name } — bundle pending deletion confirmation
@@ -323,3 +333,23 @@ bun run cli -- <args>          # run CLI
 - **Mode is server-resolved** — UI API endpoints operating on existing bundles do NOT require `mode`. The server checks `isLocalBundle(bundleId)` to determine local vs cloud. Only `POST /api/bundles` (create) takes `mode` since the bundle doesn't exist yet.
 - **Local and cloud behave identically** — same user-facing behavior for connect, disconnect, delete, push. Only the storage backend differs.
 - **Interactive CLI** — CLI commands prompt for options when flags aren't provided (mode, team, bundle, strategy, etc.) via `@inquirer/prompts`. Flags still work for scripting. `connect` and `join` auto-detect mode via `isLocalBundle()`.
+
+## Bundle Q&A (packages/core/src/questions.ts)
+
+Cross-session Q&A attached to local bundles. Questions are stored in `~/.ctx-link/local/<bundle_id>/questions.json`.
+
+### Question Priority Chain
+Questions are a **last resort**. Before asking, the agent MUST: (1) read all bundle entries, (2) examine the relevant code. Only ask for things code can't explain — intent, timeline, whether something is intentional vs WIP.
+
+### Data Model
+- `Question`: id, bundle_id, asked_by_session_id, asked_by_project, target_project, question, context, status (open/answered/resolved), answers[]
+- `Answer`: id, question_id, answered_by_session_id, answered_by_project, answer, created_at
+- All IDs are UUIDs (cloud-ready)
+
+### Cross-Session Channel (packages/mcp-server/src/channel.ts)
+Each MCP server opens an HTTP listener on a random port (saved to `channel_port` in active session file). When a question is asked or answered, it broadcasts to other sessions connected to the same bundle via HTTP POST. Receiving sessions push notifications to Claude Code via `server.sendLoggingMessage()`. Fallback: if channel delivery fails, questions surface on next `context_pull`.
+
+### UI
+- BundleNode shows amber question count badge (top-right) when open questions exist
+- Click badge opens QuestionsPanel (sheet slide-out with All/Open/Resolved tabs)
+- QuestionThread cards show threaded Q&A with status badges and loading states
