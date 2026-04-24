@@ -32,6 +32,7 @@ import { TeamManagementDialog } from "./components/TeamManagementDialog";
 import { PushSessionToBundleDialog } from "./components/PushSessionToBundleDialog";
 import { ConnectSessionDialog } from "./components/ConnectSessionDialog";
 import { DeletableEdge } from "./components/edges/DeletableEdge";
+import { EdgeActionDialog } from "./components/EdgeActionDialog";
 
 const nodeTypes: NodeTypes = {
   project: ProjectNode,
@@ -138,6 +139,18 @@ export function App() {
 
   const openModal = useUIStore((s) => s.openModal);
   const setPendingConnectPush = useUIStore((s) => s.setPendingConnectPush);
+  const setPendingEdgeAction = useUIStore((s) => s.setPendingEdgeAction);
+
+  const onEdgeClick = useCallback(
+    (_event: React.MouseEvent, edge: Edge) => {
+      const sessionId = (edge.data as any)?.sessionId as string | undefined;
+      const bundleId = (edge.data as any)?.bundleId as string | undefined;
+      if (!sessionId || !bundleId) return;
+      setPendingEdgeAction({ sessionId, bundleId, action: "push" });
+      openModal("edge-action");
+    },
+    [openModal, setPendingEdgeAction]
+  );
 
   const onConnect = useCallback(
     (connection: Connection) => {
@@ -195,6 +208,7 @@ export function App() {
           elementsSelectable={true}
           onConnect={onConnect}
           isValidConnection={isValidConnection}
+          onEdgeClick={onEdgeClick}
           onEdgeMouseEnter={onEdgeMouseEnter}
           onEdgeMouseLeave={onEdgeMouseLeave}
           onInit={(instance) => { rfInstance.current = instance; }}
@@ -223,6 +237,7 @@ export function App() {
       <TeamManagementDialog />
       <PushSessionToBundleDialog />
       <ConnectSessionDialog />
+      <EdgeActionDialog />
     </div>
   );
 }

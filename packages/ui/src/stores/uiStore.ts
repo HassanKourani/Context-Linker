@@ -15,6 +15,7 @@ type ModalType =
   | "push-to-cloud-prompt"
   | "connect-and-push"
   | "rewind"
+  | "edge-action"
   | null;
 
 type PanelView =
@@ -46,6 +47,9 @@ interface UIState {
   // Edge hover
   hoveredEdgeId: string | null;
 
+  // Edge action confirmation
+  pendingEdgeAction: { sessionId: string; bundleId: string; action: "push" | "unlink" } | null;
+
   // Graph filters
   hideEmptySessions: boolean;
 
@@ -63,6 +67,7 @@ interface UIState {
   toggleEntry: (entryId: string) => void;
   clearEntrySelection: () => void;
   setHoveredEdge: (id: string | null) => void;
+  setPendingEdgeAction: (action: { sessionId: string; bundleId: string; action: "push" | "unlink" } | null) => void;
   toggleHideEmptySessions: () => void;
 
   // Legacy compat
@@ -81,6 +86,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   pendingConnectPush: null,
   selectedEntryIds: new Set(),
   hoveredEdgeId: null,
+  pendingEdgeAction: null,
   hideEmptySessions: (() => {
     try { return localStorage.getItem("ctx-link-hide-empty-sessions") === "true"; } catch { return false; }
   })(),
@@ -126,7 +132,7 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   openModal: (modal) => set({ activeModal: modal }),
 
-  closeModal: () => set({ activeModal: null, deleteBundleTarget: null, pushToCloudTarget: null, pendingCloudConnect: null, pendingConnectPush: null }),
+  closeModal: () => set({ activeModal: null, deleteBundleTarget: null, pushToCloudTarget: null, pendingCloudConnect: null, pendingConnectPush: null, pendingEdgeAction: null }),
 
   setDeleteTarget: (target) => set({ deleteBundleTarget: target }),
 
@@ -145,6 +151,8 @@ export const useUIStore = create<UIState>((set, get) => ({
   clearEntrySelection: () => set({ selectedEntryIds: new Set() }),
 
   setHoveredEdge: (id) => set({ hoveredEdgeId: id }),
+
+  setPendingEdgeAction: (action) => set({ pendingEdgeAction: action }),
 
   toggleHideEmptySessions: () =>
     set((state) => {
