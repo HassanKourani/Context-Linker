@@ -88,6 +88,65 @@ function getSession(): ActiveSession | null {
   return loadActiveSession(ownSessionId);
 }
 
+/** Auto-create or resume a session on MCP server boot. */
+async function ensureSession(): Promise<ActiveSession | null> {
+  const existing = getSession();
+  if (existing) return existing;
+
+  try {
+    const sessionId = crypto.randomUUID();
+    ownSessionId = sessionId;
+
+    const { existsSync, readFileSync } = await import("node:fs");
+    let projectName = process.cwd().split("/").pop() ?? "unknown";
+    const pkgPath = `${process.cwd()}/package.json`;
+    if (existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+        if (pkg.name) projectName = pkg.name;
+      } catch {}
+    }
+
+    let branch: string | null = null;
+    try {
+      const { execSync } = await import("node:child_process");
+      branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf8" }).trim();
+    } catch {}
+
+    const globalCfg = loadGlobalConfig();
+    const projectCfg = loadProjectConfig();
+
+    logSession({
+      project_name: projectName,
+      project_path: process.cwd(),
+      machine_id: globalCfg.machine_id,
+      started_at: new Date().toISOString(),
+      branch,
+      bundle: null,
+      mode: projectCfg?.mode ?? "local",
+    });
+
+    const session: ActiveSession = {
+      session_id: sessionId,
+      project_name: projectName,
+      project_path: process.cwd(),
+      bundles: [],
+      started_at: new Date().toISOString(),
+      branch,
+      cloud_session_id: null,
+      team_id: null,
+      cloud_copies: [],
+    };
+
+    saveActiveSession(session);
+    setActiveSessionId(sessionId);
+    return session;
+  } catch {
+    // Non-fatal — session_start tool still works as fallback
+    return null;
+  }
+}
+
 const server = new Server(
   { name: "ctx-link", version: "0.1.0" },
   { capabilities: { tools: {}, logging: {} } }
@@ -307,6 +366,7 @@ const tools = [
       "PROACTIVE USE: You SHOULD call this after every meaningful interaction — code changes, decisions, " +
       "API modifications, architecture choices, file creations, configuration updates. " +
       "Keep summaries state-focused: describe WHAT EXISTS now, not what changed from before. " +
+      "NOTE: ctx-link tool calls are auto-logged, so this is mainly for YOUR work (code edits, decisions, etc.). " +
       "These entries accumulate locally and get consolidated when the user triggers context_push.",
     inputSchema: {
       type: "object",
@@ -405,9 +465,8 @@ const tools = [
     name: "session_start",
     description:
       "Create or resume a session for the current project. " +
-      "If a session already exists for the given session_id, it resumes it. " +
-      "Otherwise creates a new active session record. " +
-      "This is automatically called by Claude Code hooks, but can be called manually if no session exists.",
+      "NOTE: A session is auto-created when the MCP server starts — you usually do NOT need to call this. " +
+      "Use only if you need to bind to a specific session_id.",
     inputSchema: {
       type: "object",
       properties: {
@@ -678,9 +737,32 @@ function fail(err: unknown) {
   };
 }
 
+/** Tools that generate auto-log entries on success. Return null to skip. */
+const AUTO_LOG_TOOLS: Record<string, (a: Record<string, any>) => string | null> = {
+  bundle_create: (a) => `Created ${a.mode ?? "local"} bundle "${a.name}"`,
+  bundle_join: (a) => `Joined bundle ${a.bundle_id}`,
+  bundle_delete: (a) => `Deleted bundle ${a.bundle_id}`,
+  bundle_remove_entry: (a) => `Removed entry ref from bundle ${a.bundle_id}`,
+  context_push: (a) => a.summary ? null : `Pushed context to ${a.bundle_id ?? "connected bundles"}`,
+  context_pull: (a) => `Pulled context from bundle ${a.bundle_id ?? "connected bundles"}`,
+  context_rewind: (a) => `Rewound entries in bundle ${a.bundle_id}`,
+  context_restore: (a) => `Restored entries in bundle ${a.bundle_id}`,
+  session_connect: (a) => `Connected to bundle ${a.bundle_id}`,
+  session_disconnect: (a) => `Disconnected from bundle ${a.bundle_id}`,
+  session_push_to_cloud: () => `Session pushed to cloud`,
+  session_push_to_bundle: (a) => a.bundle_id ? `Pushed entries to bundle ${a.bundle_id}` : null,
+  team_create: (a) => `Created team "${a.name}"`,
+  team_join: (a) => `Joined team "${a.name}"`,
+  bundle_ask_question: (a) => `Asked question: "${(a.question ?? "").slice(0, 100)}"`,
+  bundle_answer_question: () => `Answered a bundle question`,
+  bundle_push_to_cloud: (a) => `Migrated bundle ${a.bundle_id} to cloud`,
+  bundle_pull_from_sessions: (a) => `Pulled entries from sessions into bundle ${a.bundle_id}`,
+};
+
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args } = req.params;
 
+  const result = await (async () => {
   try {
     switch (name) {
       case "bundle_create": {
@@ -1087,6 +1169,20 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       case "session_start": {
         const a = z.object({ session_id: z.string().optional() }).parse(args);
+
+        // If no specific ID, return the auto-started session
+        if (!a.session_id) {
+          const autoSession = getSession();
+          if (autoSession) {
+            try {
+              const { execSync } = await import("node:child_process");
+              autoSession.branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf8" }).trim();
+            } catch {}
+            saveActiveSession(autoSession);
+            return ok({ resumed: true, session_id: autoSession.session_id, project_name: autoSession.project_name });
+          }
+        }
+
         const sessionId = a.session_id ?? crypto.randomUUID();
 
         // Bind this MCP server instance to this session ID
@@ -1473,6 +1569,32 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   } catch (e) {
     return fail(e);
   }
+  })();
+
+  // Auto-log successful state-changing tool calls
+  if (result && !('isError' in result)) {
+    const gen = AUTO_LOG_TOOLS[name];
+    if (gen) {
+      const summary = gen((args ?? {}) as Record<string, any>);
+      if (summary) {
+        try {
+          const session = getSession();
+          if (session) {
+            pushSessionEntry(session.session_id, {
+              project_name: session.project_name,
+              event_type: "auto",
+              trigger_ref: null,
+              summary,
+              files_touched: [],
+              decisions: [],
+            });
+          }
+        } catch {} // Auto-log failure must not break the tool call
+      }
+    }
+  }
+
+  return result;
 });
 
 // ---------- Boot ----------
@@ -1480,12 +1602,14 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 const transport = new StdioServerTransport();
 await server.connect(transport);
 
+// Auto-start session — no manual session_start needed
+const bootSession = await ensureSession();
+
 // Start Q&A channel listener for cross-session notifications
-const session = getSession();
 let channelHandle: { port: number; close: () => void } | null = null;
 
-if (session) {
-  channelHandle = startChannelListener(session.session_id, async (msg) => {
+if (bootSession) {
+  channelHandle = startChannelListener(bootSession.session_id, async (msg) => {
     const currentSession = getSession();
     const projectName = currentSession?.project_name;
 

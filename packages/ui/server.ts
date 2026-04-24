@@ -53,6 +53,7 @@ import {
   resolveQuestion,
   countOpenQuestions,
   getQuestion,
+  getSupabase,
 } from "@ctx-link/core";
 
 // Broadcast Q&A events to active MCP sessions via their channel ports
@@ -129,45 +130,78 @@ const server = Bun.serve({
       try {
         const config = loadGlobalConfig();
         const teams = listMyTeams();
+        const sb = getSupabase();
 
-        const teamData = await Promise.all(
+        // Fetch bundles + sessions for ALL teams in parallel (2 queries per team)
+        const teamRawData = await Promise.all(
           teams.map(async (team) => {
-            const [bundles, cloudSessions] = await Promise.all([
-              listTeamBundles(team.team_id),
+            const [{ data: bundleRows }, cloudSessions] = await Promise.all([
+              sb.from("bundles")
+                .select("id, name, created_at")
+                .eq("team_id", team.team_id)
+                .order("created_at", { ascending: false }),
               listTeamSessions(team.team_id),
             ]);
-            const bundlesWithDetails = await Promise.all(
-              bundles.map(async (b) => {
-                const status = await bundleStatus(b.bundle_id, "cloud", true);
-                return {
-                  bundle_id: b.bundle_id,
-                  bundle_name: b.name,
-                  entry_count: status.entry_count,
-                  last_entry_at: status.last_entry_at,
-                };
-              })
-            );
-            // Enrich cloud sessions with entry counts and bundle connections
-            const enrichedSessions = await Promise.all(
-              cloudSessions.map(async (cs) => {
-                const entries = await getCloudSessionEntries(cs.id);
-                const bundles = getCloudSessionBundleConnections(cs.id);
-                return {
-                  ...cs,
-                  entry_count: entries.length,
-                  bundles,
-                };
-              })
-            );
-
-            return {
-              team_id: team.team_id,
-              team_name: team.name,
-              bundles: bundlesWithDetails,
-              cloud_sessions: enrichedSessions,
-            };
+            return { team, bundles: bundleRows ?? [], cloudSessions };
           })
         );
+
+        // Collect ALL bundle IDs and session IDs across teams for batch queries
+        const allBundleIds = teamRawData.flatMap((t) => t.bundles.map((b) => b.id));
+        const allSessionIds = teamRawData.flatMap((t) => t.cloudSessions.map((s) => s.id));
+
+        // Batch: get ALL entry refs + ALL session entry counts in 2 queries total
+        const [entryRefsResult, sessionEntriesResult] = await Promise.all([
+          allBundleIds.length > 0
+            ? sb.from("bundle_entry_refs")
+                .select("bundle_id, cloud_session_entries(created_at)")
+                .in("bundle_id", allBundleIds)
+            : Promise.resolve({ data: [] as any[] }),
+          allSessionIds.length > 0
+            ? sb.from("cloud_session_entries")
+                .select("session_id")
+                .in("session_id", allSessionIds)
+                .is("superseded_at", null)
+            : Promise.resolve({ data: [] as any[] }),
+        ]);
+
+        // Index bundle entry refs: { bundle_id → { count, last_entry_at } }
+        const bundleStats = new Map<string, { count: number; last_entry_at: string | null }>();
+        for (const ref of (entryRefsResult.data ?? [])) {
+          const stats = bundleStats.get(ref.bundle_id) ?? { count: 0, last_entry_at: null };
+          stats.count++;
+          const createdAt = (ref as any).cloud_session_entries?.created_at;
+          if (createdAt && (!stats.last_entry_at || new Date(createdAt) > new Date(stats.last_entry_at))) {
+            stats.last_entry_at = createdAt;
+          }
+          bundleStats.set(ref.bundle_id, stats);
+        }
+
+        // Index session entry counts: { session_id → count }
+        const sessionEntryCounts = new Map<string, number>();
+        for (const entry of (sessionEntriesResult.data ?? [])) {
+          sessionEntryCounts.set(entry.session_id, (sessionEntryCounts.get(entry.session_id) ?? 0) + 1);
+        }
+
+        // Assemble team data (no more Supabase calls — all local lookups)
+        const teamData = teamRawData.map(({ team, bundles, cloudSessions }) => ({
+          team_id: team.team_id,
+          team_name: team.name,
+          bundles: bundles.map((b) => {
+            const stats = bundleStats.get(b.id);
+            return {
+              bundle_id: b.id,
+              bundle_name: b.name,
+              entry_count: stats?.count ?? 0,
+              last_entry_at: stats?.last_entry_at ?? null,
+            };
+          }),
+          cloud_sessions: cloudSessions.map((cs) => ({
+            ...cs,
+            entry_count: sessionEntryCounts.get(cs.id) ?? 0,
+            bundles: getCloudSessionBundleConnections(cs.id),
+          })),
+        }));
 
         const localBundles = listAllLocalBundleDetails();
         const sessions = listActiveSessions().map((s) => ({
