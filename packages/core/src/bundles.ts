@@ -40,7 +40,11 @@ export interface CreateBundleResult {
 
 export async function createBundle(name: string, mode: "local" | "cloud" = "cloud", teamId?: string): Promise<CreateBundleResult> {
   if (mode === "local") {
-    const { localCreateBundle } = await import("./local-store.js");
+    const { localCreateBundle, listAllLocalBundleDetails } = await import("./local-store.js");
+    const existing = listAllLocalBundleDetails();
+    if (existing.some((b) => b.bundle_name.toLowerCase() === name.toLowerCase())) {
+      throw new Error(`A local bundle named "${name}" already exists.`);
+    }
     const r = localCreateBundle(name);
     storeBundleToken(r.bundle_id, r.join_token, r.name);
     return r;
@@ -54,6 +58,17 @@ export async function createBundle(name: string, mode: "local" | "cloud" = "clou
 
   const cfg = loadGlobalConfig();
   const sb = getSupabase();
+
+  // Check for duplicate name within the same team
+  const { data: dup } = await sb
+    .from("bundles")
+    .select("id")
+    .eq("team_id", teamId)
+    .ilike("name", name)
+    .limit(1);
+  if (dup && dup.length > 0) {
+    throw new Error(`A bundle named "${name}" already exists in this team.`);
+  }
 
   const { data, error } = await sb
     .from("bundles")
