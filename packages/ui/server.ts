@@ -507,10 +507,21 @@ const server = Bun.serve({
             }
 
             // Now add the cloud entry IDs to the bundle
+            // Local and cloud entries have different IDs (cloud gets new UUIDs),
+            // so map local IDs → cloud IDs by matching on created_at + summary.
             const cloudEntries = await getCloudSessionEntries(copy.cloud_session_id);
-            const cloudIds = entry_ids
-              ? cloudEntries.filter((e) => ids.includes(e.id)).map((e) => e.id)
-              : cloudEntries.map((e) => e.id);
+            let cloudIds: string[];
+            if (entry_ids) {
+              const selectedLocal = allEntries.filter((e) => ids.includes(e.id));
+              const selectedKeys = new Set(
+                selectedLocal.map((e) => `${new Date(e.created_at).getTime()}|${e.summary}`)
+              );
+              cloudIds = cloudEntries
+                .filter((e) => selectedKeys.has(`${new Date(e.created_at).getTime()}|${e.summary}`))
+                .map((e) => e.id);
+            } else {
+              cloudIds = cloudEntries.map((e) => e.id);
+            }
 
             if (cloudIds.length > 0) {
               await addEntriesToBundle(bundle_id, cloudIds);

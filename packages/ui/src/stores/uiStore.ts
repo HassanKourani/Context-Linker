@@ -13,6 +13,7 @@ type ModalType =
   | "push-session"
   | "push-to-cloud"
   | "push-to-cloud-prompt"
+  | "connect-and-push"
   | "rewind"
   | null;
 
@@ -39,6 +40,9 @@ interface UIState {
   // Pending connect after push-to-cloud (session → cloud bundle blocked until session is in cloud)
   pendingCloudConnect: { sessionId: string; bundleId: string } | null;
 
+  // Pending connect-and-push (drag session → bundle opens entry picker)
+  pendingConnectPush: { sessionId: string; bundleId: string } | null;
+
   // Edge hover
   hoveredEdgeId: string | null;
 
@@ -55,6 +59,7 @@ interface UIState {
   closeModal: () => void;
   setDeleteTarget: (target: DeleteTarget | null) => void;
   setPushToCloudTarget: (sessionId: string | null) => void;
+  setPendingConnectPush: (target: { sessionId: string; bundleId: string } | null) => void;
   toggleEntry: (entryId: string) => void;
   clearEntrySelection: () => void;
   setHoveredEdge: (id: string | null) => void;
@@ -73,6 +78,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   deleteBundleTarget: null,
   pushToCloudTarget: null,
   pendingCloudConnect: null,
+  pendingConnectPush: null,
   selectedEntryIds: new Set(),
   hoveredEdgeId: null,
   hideEmptySessions: (() => {
@@ -120,11 +126,13 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   openModal: (modal) => set({ activeModal: modal }),
 
-  closeModal: () => set({ activeModal: null, deleteBundleTarget: null, pushToCloudTarget: null, pendingCloudConnect: null }),
+  closeModal: () => set({ activeModal: null, deleteBundleTarget: null, pushToCloudTarget: null, pendingCloudConnect: null, pendingConnectPush: null }),
 
   setDeleteTarget: (target) => set({ deleteBundleTarget: target }),
 
   setPushToCloudTarget: (sessionId) => set({ pushToCloudTarget: sessionId }),
+
+  setPendingConnectPush: (target) => set({ pendingConnectPush: target }),
 
   toggleEntry: (entryId) =>
     set((state) => {

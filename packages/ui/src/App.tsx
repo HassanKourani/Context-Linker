@@ -14,7 +14,6 @@ import {
   type Edge,
   type Node,
 } from "@xyflow/react";
-import { useConnectSession } from "./hooks/mutations/useConnectSession";
 import { useGraphData } from "./hooks/useGraphData";
 import { useUIStore } from "./stores/uiStore";
 import { buildFlowGraph } from "./lib/buildGraph";
@@ -31,6 +30,7 @@ import { PushEntryDialog } from "./components/PushEntryForm";
 import { RewindDialog } from "./components/RewindDialog";
 import { TeamManagementDialog } from "./components/TeamManagementDialog";
 import { PushSessionToBundleDialog } from "./components/PushSessionToBundleDialog";
+import { ConnectSessionDialog } from "./components/ConnectSessionDialog";
 import { DeletableEdge } from "./components/edges/DeletableEdge";
 
 const nodeTypes: NodeTypes = {
@@ -136,7 +136,8 @@ export function App() {
     );
   }, [hoveredEdgeId, setEdges]);
 
-  const connectMutation = useConnectSession();
+  const openModal = useUIStore((s) => s.openModal);
+  const setPendingConnectPush = useUIStore((s) => s.setPendingConnectPush);
 
   const onConnect = useCallback(
     (connection: Connection) => {
@@ -150,9 +151,10 @@ export function App() {
 
       if (!bundleId || !sessionId) return;
 
-      connectMutation.mutate({ sessionId, bundle_id: bundleId });
+      setPendingConnectPush({ sessionId, bundleId });
+      openModal("connect-and-push");
     },
-    [nodes, connectMutation]
+    [nodes, openModal, setPendingConnectPush]
   );
 
   const isValidConnection = useCallback(
@@ -220,6 +222,7 @@ export function App() {
       <RewindDialog />
       <TeamManagementDialog />
       <PushSessionToBundleDialog />
+      <ConnectSessionDialog />
     </div>
   );
 }
