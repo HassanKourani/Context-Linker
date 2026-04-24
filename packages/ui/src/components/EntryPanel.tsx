@@ -1,13 +1,14 @@
 import { useMemo } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { ArrowUpRight, RefreshCw, Trash2, X } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, RefreshCw, Trash2, X } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { useEntries } from "@/hooks/useEntries";
 import { useSessionEntries } from "@/hooks/useSessionEntries";
 import { useGraphData } from "@/hooks/useGraphData";
 import { useDeleteSessionEntry } from "@/hooks/mutations/useDeleteSessionEntry";
 import { useRemoveBundleEntryRef } from "@/hooks/mutations/useRemoveBundleEntryRef";
+import { usePullFromSessions } from "@/hooks/mutations/usePullFromSessions";
 import { EntryCard } from "./EntryCard";
 import { RewindHistoryTab } from "./RewindHistoryTab";
 
@@ -37,6 +38,7 @@ export function EntryPanel() {
   const refetch = isBundle ? refetchBundle : refetchSession;
   const deleteSessionEntryMutation = useDeleteSessionEntry();
   const removeBundleEntryRefMutation = useRemoveBundleEntryRef();
+  const pullFromSessionsMutation = usePullFromSessions();
 
   const handleDeleteSelected = () => {
     if (isSession && sessionId && selectedEntryIds.size > 0) {
@@ -151,6 +153,22 @@ export function EntryPanel() {
                 <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
               </Button>
             </div>
+          </div>
+        )}
+
+        {/* Pull from sessions (bundle only) */}
+        {isBundle && bundleId && (
+          <div className="px-4">
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs w-full"
+              disabled={pullFromSessionsMutation.isPending}
+              onClick={() => pullFromSessionsMutation.mutate({ bundleId: bundleId! })}
+            >
+              <ArrowDownLeft className="w-3 h-3 mr-1" />
+              {pullFromSessionsMutation.isPending ? "Pulling..." : "Pull from Sessions"}
+            </Button>
           </div>
         )}
 

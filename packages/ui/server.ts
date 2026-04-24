@@ -382,6 +382,100 @@ const server = Bun.serve({
       }
     }
 
+    // ── POST /api/bundles/:id/pull-from-sessions ─────────────────────────────
+    // Pulls entries from ALL sessions connected to this bundle in one shot.
+    {
+      const match = url.pathname.match(/^\/api\/bundles\/([^/]+)\/pull-from-sessions$/);
+      if (match && req.method === "POST") {
+        try {
+          const bundleId = match[1];
+          const mode = resolveBundleMode(bundleId);
+          let totalPushed = 0;
+          let totalSkipped = 0;
+
+          // Collect active sessions connected to this bundle
+          const activeSessions = listActiveSessions();
+          const connectedActive = activeSessions.filter(
+            (s) => s.bundles.some((b) => b.bundle_id === bundleId)
+          );
+
+          for (const session of connectedActive) {
+            const entries = getSessionEntries(session.session_id);
+            if (entries.length === 0) continue;
+            const entryIds = entries.map((e) => e.id);
+
+            if (mode === "local") {
+              const result = localAddEntriesToBundle(bundleId, entryIds, session.session_id);
+              totalPushed += result.added;
+              totalSkipped += result.skipped;
+            } else {
+              // Cloud bundle — ensure cloud copy exists, sync, then add
+              const bundleTeamId = await getBundleTeamId(bundleId);
+              if (!bundleTeamId) continue;
+
+              const copies = session.cloud_copies ?? [];
+              let copy = copies.find((c) => c.team_id === bundleTeamId)
+                ?? (session.cloud_session_id && session.team_id === bundleTeamId
+                  ? { cloud_session_id: session.cloud_session_id, team_id: bundleTeamId }
+                  : null);
+
+              if (!copy) {
+                const result = await copySessionToCloud(session.session_id, bundleTeamId);
+                if (!session.cloud_copies) session.cloud_copies = [];
+                session.cloud_copies.push({ cloud_session_id: result.cloud_session_id, team_id: bundleTeamId });
+                if (!session.cloud_session_id) {
+                  session.cloud_session_id = result.cloud_session_id;
+                  session.team_id = bundleTeamId;
+                }
+                saveActiveSession(session);
+                copy = { cloud_session_id: result.cloud_session_id, team_id: bundleTeamId };
+              } else {
+                await syncSessionToCloud(session.session_id, copy.cloud_session_id);
+              }
+
+              const cloudEntries = await getCloudSessionEntries(copy.cloud_session_id);
+              const cloudIds = cloudEntries.map((e) => e.id);
+              if (cloudIds.length > 0) {
+                const result = await addEntriesToBundle(bundleId, cloudIds);
+                totalPushed += result.added;
+                totalSkipped += result.skipped;
+              }
+            }
+          }
+
+          // Also pull from cloud sessions connected to this bundle
+          if (mode === "cloud") {
+            const teams = listMyTeams();
+            for (const team of teams) {
+              const cloudSessions = await listTeamSessions(team.team_id);
+              for (const cs of cloudSessions) {
+                const bundles = getCloudSessionBundleConnections(cs.id);
+                if (!bundles.some((b) => b.bundle_id === bundleId)) continue;
+
+                const cloudEntries = await getCloudSessionEntries(cs.id);
+                const cloudIds = cloudEntries.map((e) => e.id);
+                if (cloudIds.length > 0) {
+                  const result = await addEntriesToBundle(bundleId, cloudIds);
+                  totalPushed += result.added;
+                  totalSkipped += result.skipped;
+                }
+              }
+            }
+          }
+
+          return Response.json(
+            { ok: true, pushed: totalPushed, skipped: totalSkipped },
+            { headers: corsHeaders }
+          );
+        } catch (err: any) {
+          return Response.json(
+            { error: err.message ?? String(err) },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+      }
+    }
+
     // ── GET /api/sessions/:id/entries ────────────────────────────────────────
     {
       const match = url.pathname.match(/^\/api\/sessions\/([^/]+)\/entries$/);

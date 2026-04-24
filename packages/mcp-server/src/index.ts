@@ -504,8 +504,50 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
             const r = localAddEntriesToBundle(b.bundle_id, entryIds, session.session_id);
             results.push({ bundle_id: b.bundle_id, added: r.added, skipped: r.skipped });
           } else {
-            const r = await addEntriesToBundle(b.bundle_id, entryIds);
-            results.push({ bundle_id: b.bundle_id, added: r.added, skipped: r.skipped });
+            // Cloud bundle — ensure session entries are synced to cloud first
+            const bundleTeamId = await getBundleTeamId(b.bundle_id);
+            if (!bundleTeamId) {
+              results.push({ bundle_id: b.bundle_id, added: 0, skipped: 0, error: "Could not determine bundle team" });
+              continue;
+            }
+
+            const copies = session.cloud_copies ?? [];
+            let copy = copies.find((c) => c.team_id === bundleTeamId)
+              ?? (session.cloud_session_id && session.team_id === bundleTeamId
+                ? { cloud_session_id: session.cloud_session_id, team_id: bundleTeamId }
+                : null);
+
+            if (!copy) {
+              const result = await copySessionToCloud(session.session_id, bundleTeamId);
+              if (!session.cloud_copies) session.cloud_copies = [];
+              session.cloud_copies.push({ cloud_session_id: result.cloud_session_id, team_id: bundleTeamId });
+              if (!session.cloud_session_id) {
+                session.cloud_session_id = result.cloud_session_id;
+                session.team_id = bundleTeamId;
+              }
+              saveActiveSession(session);
+              copy = { cloud_session_id: result.cloud_session_id, team_id: bundleTeamId };
+            } else {
+              await syncSessionToCloud(session.session_id, copy.cloud_session_id);
+            }
+
+            // Map local entry IDs to cloud entry IDs by matching created_at + summary
+            const cloudEntries = await getCloudSessionEntries(copy.cloud_session_id);
+            const allLocal = getSessionEntries(session.session_id);
+            const selectedLocal = allLocal.filter((e) => entryIds.includes(e.id));
+            const selectedKeys = new Set(
+              selectedLocal.map((e) => `${new Date(e.created_at).getTime()}|${e.summary}`)
+            );
+            const cloudIds = cloudEntries
+              .filter((e) => selectedKeys.has(`${new Date(e.created_at).getTime()}|${e.summary}`))
+              .map((e) => e.id);
+
+            if (cloudIds.length > 0) {
+              const r = await addEntriesToBundle(b.bundle_id, cloudIds);
+              results.push({ bundle_id: b.bundle_id, added: r.added, skipped: r.skipped });
+            } else {
+              results.push({ bundle_id: b.bundle_id, added: 0, skipped: 0 });
+            }
           }
         }
 

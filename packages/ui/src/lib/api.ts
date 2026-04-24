@@ -131,6 +131,13 @@ export function removeEntryRefFromBundle(bundleId: string, entryId: string) {
   return apiDelete<{ ok: true }>(`/api/bundles/${bundleId}/entries/${entryId}`);
 }
 
+export function pullFromSessions(bundleId: string) {
+  return apiPost<{ ok: true; pushed: number; skipped: number }>(
+    `/api/bundles/${bundleId}/pull-from-sessions`,
+    {},
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Rewind
 // ---------------------------------------------------------------------------
