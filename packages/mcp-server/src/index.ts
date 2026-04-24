@@ -89,7 +89,7 @@ function getSession(): ActiveSession | null {
 
 const server = new Server(
   { name: "ctx-link", version: "0.1.0" },
-  { capabilities: { tools: {} } }
+  { capabilities: { tools: {}, logging: {} } }
 );
 
 // ---------- Tool definitions ----------
@@ -1494,30 +1494,16 @@ if (session) {
     try {
       if (msg.type === "question_asked") {
         await server.sendLoggingMessage({
-          level: "info",
+          level: "warning",
           logger: "ctx-link-qa",
-          data: {
-            action: "question_received",
-            bundle_id: msg.bundle_id,
-            question_id: msg.question.id,
-            question: msg.question.question,
-            from_project: msg.from_project,
-            target_project: msg.target_project ?? "any",
-            hint: `Use bundle_answer_question with question_id="${msg.question.id}" to respond.`,
-          },
+          data: `[ACTION REQUIRED] Question from "${msg.from_project}" on bundle ${msg.bundle_id}: "${msg.question.question}" — Answer using: bundle_answer_question(bundle_id="${msg.bundle_id}", question_id="${msg.question.id}", answer="<your answer>")`,
         });
       } else if (msg.type === "question_answered") {
+        const latestAnswer = msg.question.answers[msg.question.answers.length - 1]?.answer ?? "";
         await server.sendLoggingMessage({
           level: "info",
           logger: "ctx-link-qa",
-          data: {
-            action: "answer_received",
-            bundle_id: msg.bundle_id,
-            question_id: msg.question.id,
-            question: msg.question.question,
-            latest_answer: msg.question.answers[msg.question.answers.length - 1]?.answer ?? "",
-            from_project: msg.from_project,
-          },
+          data: `[ANSWER RECEIVED] Your question "${msg.question.question}" was answered by "${msg.from_project}": "${latestAnswer}"`,
         });
       }
     } catch {
