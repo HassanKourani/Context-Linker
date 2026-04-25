@@ -11,6 +11,7 @@
     "./rewind": "./src/rewind.ts"
   },
   "scripts": {
+    "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

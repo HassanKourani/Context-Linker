@@ -37,6 +37,7 @@
     "build:ui": "bun run --cwd packages/ui build",
     "serve:ui": "bun packages/ui/server.ts",
     "cli": "bun packages/cli/src/index.ts",
+    "test": "bun run --filter '@ctx-link/core' test",
     "typecheck": "bun run --filter '*' typecheck",
     "prepublishOnly": "bun run build"
   },

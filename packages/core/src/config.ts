@@ -42,7 +42,7 @@ export type BundleTokenStore = z.infer<typeof BundleTokenStoreSchema>;
 // ---------- Paths ----------
 
 export function globalConfigDir(): string {
-  return join(homedir(), ".ctx-link");
+  return process.env.CTX_LINK_HOME ?? join(homedir(), ".ctx-link");
 }
 
 export function globalConfigPath(): string {

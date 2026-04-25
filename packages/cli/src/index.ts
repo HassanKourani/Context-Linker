@@ -424,6 +424,65 @@ program
   });
 
 program
+  .command("session-resume")
+  .description(
+    "Resume an existing session. Lists all active sessions and lets you pick one.\n" +
+    "Sets the marker file so the MCP server and hooks use that session.\n\n" +
+    "Examples:\n" +
+    "  $ ctxl session-resume\n" +
+    "  $ ctxl session-resume <session_id>"
+  )
+  .argument("[session_id]", "session ID to resume (prompted if not given)")
+  .action(async (sessionIdArg?: string) => {
+    let sessionId = sessionIdArg;
+
+    if (!sessionId) {
+      const sessions = listActiveSessions();
+      if (sessions.length === 0) {
+        console.log("No active sessions found.");
+        return;
+      }
+
+      const currentId = getActiveSessionId();
+
+      sessionId = await select({
+        message: "Which session to resume?",
+        choices: sessions.map((s) => {
+          const entryCount = getSessionEntries(s.session_id).length;
+          const bundleCount = s.bundles.length;
+          const isCurrent = s.session_id === currentId;
+          const label = [
+            s.name ?? s.project_name,
+            s.branch ? `(${s.branch})` : null,
+            `${entryCount} entries`,
+            bundleCount > 0 ? `${bundleCount} bundles` : null,
+            isCurrent ? "[current]" : null,
+          ].filter(Boolean).join("  ");
+
+          return {
+            name: label,
+            value: s.session_id,
+            description: `${s.session_id}  started ${s.started_at}`,
+          };
+        }),
+      });
+    }
+
+    const session = loadActiveSession(sessionId);
+    if (!session) {
+      console.error(`Session ${sessionId} not found.`);
+      process.exit(1);
+    }
+
+    setActiveSessionId(sessionId);
+    console.log(`Resumed session ${sessionId.slice(0, 8)}...`);
+    console.log(`  Project: ${session.project_name}`);
+    console.log(`  Branch:  ${session.branch ?? "unknown"}`);
+    console.log(`  Bundles: ${session.bundles.length}`);
+    console.log(`  Entries: ${getSessionEntries(sessionId).length}`);
+  });
+
+program
   .command("sessions")
   .description(
     "List recent Claude Code sessions across all projects.\n" +
