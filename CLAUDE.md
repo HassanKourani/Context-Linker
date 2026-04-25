@@ -53,23 +53,29 @@ All exported from `@ctx-link/core`:
 - `deleteBundle(bundleId, mode?)` → void
 - `bundleStatus(bundleId, mode?, skipAuth?)` → `{ bundle_id, name, session_count, entry_count, last_entry_at }`
 - `listLocalBundles()` → `LocalBundleInfo[]`
+- `generateJoinToken()` → string
+- `assertTokenValid(bundleId)` → void (throws if token invalid)
+- `getBundleTeamId(bundleId)` → `string | null`
 
 ### Entries (entries.ts) — Reference Model
 - `pullEntries(input)` → `EntryRow[]` — JOINs `bundle_entry_refs` → `cloud_session_entries`, filters rewound
 - `addEntriesToBundle(bundleId, entryIds)` → `{ added, skipped }` — creates `bundle_entry_refs`, skips existing
 - `removeEntryFromBundle(bundleId, entryId)` → void — removes single ref, entry stays in session
+- `removeSessionEntriesFromBundle(bundleId, cloudSessionId)` → void — removes all refs for a cloud session from bundle
 - `getUnpushedEntries(cloudSessionId, bundleId)` → `string[]` — entry IDs not yet referenced by bundle
 - `renderEntriesForClaude(entries)` → string (markdown format for LLM context)
 
 ### Cloud Sessions (cloud-sessions.ts)
-- `pushSessionToCloud(sessionId, teamId)` → `{ cloud_session_id, entries_synced }` — promote local session to cloud
-- `syncNewEntries(session)` → number — sync local entries not yet in cloud
-- `syncEntryToCloud(session, entry)` → void — sync single entry
+- `copySessionToCloud(sessionId, teamId)` → `{ cloud_session_id, entries_copied }` — create independent cloud copy of local session
+- `syncSessionToCloud(sessionId, cloudSessionId)` → `{ entries_synced }` — sync new local entries to existing cloud session
+- `getCloudSession(cloudSessionId)` → `CloudSession | null` — get single cloud session by ID
 - `deleteCloudSession(cloudSessionId)` → void — cascades entries → bundle refs
 - `deleteCloudSessionEntry(entryId)` → void — cascades bundle refs
+- `renameCloudSession(cloudSessionId, name)` → void — rename cloud session
 - `listTeamSessions(teamId)` → `CloudSession[]`
 - `getCloudSessionEntries(cloudSessionId)` → `CloudSessionEntry[]`
 - `getEntryBundleRefs(entryId)` → `{ bundle_id, added_at }[]`
+- `getCloudSessionBundleIds(cloudSessionId)` → `string[]` — get bundle IDs referencing session entries
 
 ### Rewind (rewind.ts)
 - `rewindProject(input)` → `RewindResult` — strategies: since, last_n, entry_ids, after_ref
@@ -84,21 +90,43 @@ All exported from `@ctx-link/core`:
 - `assertTeamMember(teamId)` / `assertBundleTeamAccess(bundleId)`
 
 ### Config (config.ts)
-- `loadGlobalConfig()` → `{ machine_id }` (auto-creates on first use)
-- `loadProjectConfig(cwd?)` → `ProjectConfig | null`
+- `loadGlobalConfig()` / `saveGlobalConfig(cfg)` — read/write `{ machine_id }` (auto-creates on first use)
+- `loadProjectConfig(cwd?)` / `saveProjectConfig(config, cwd?)` — per-project `.ctx-link.json`
 - `getBundleToken(bundleId)` / `storeBundleToken(bundleId, token, name)`
 - `loadSessionLog()` / `logSession(entry)` — session history across projects
 - `listActiveSessions()` → active Claude Code sessions from `~/.ctx-link/active-sessions/`
+- `loadActiveSession(sessionId)` / `saveActiveSession(session)` / `deleteActiveSession(sessionId)` / `renameActiveSession(sessionId, name)` — active session CRUD
+- `getActiveSessionId(cwd?)` / `setActiveSessionId(sessionId, cwd?)` — per-project active session tracking
+- `connectSessionToBundle(sessionId, bundleId)` / `disconnectSessionFromBundle(sessionId, bundleId)` — local session-bundle connection
+- `connectCloudSessionToBundle(cloudSessionId, bundleId)` / `disconnectCloudSessionFromBundle(cloudSessionId, bundleId)` — cloud session-bundle connection
+- `getCloudSessionBundleConnections(sessionId)` → cloud bundle connections for a session
 - `pushSessionEntry(sessionId, entry)` / `getSessionEntries(sessionId)` — per-session entry log
 - `getUnpushedSessionEntries(sessionId)` — entries not yet pushed
+- `markSessionEntriesPushed(sessionId, entryIds)` — mark entries as pushed
 - `deleteSessionEntry(sessionId, entryId)` — remove entry from session log
 
 ### Local Store (local-store.ts) — Reference Model
-- Mirrors cloud functions for `mode: "local"`: `localCreateBundle`, `localJoinBundle`, `localPullEntries`, etc.
+- `isLocalBundle(bundleId)` → boolean — check if bundle exists locally
+- `localCreateBundle(name)` / `localJoinBundle(bundleId)` / `localDeleteBundle(bundleId)` — CRUD
+- `localBundleStatus(bundleId)` → `BundleStatus`
+- `localPullEntries(input)` → `EntryRow[]` — pull entries via local refs
 - `localAddEntriesToBundle(bundleId, entryIds, sessionId)` → `{ added, skipped }` — creates refs in `entry_refs.json`
 - `localRemoveEntryFromBundle(bundleId, entryId)` → removes single ref
+- `localRemoveSessionRefsFromBundle(bundleId, sessionId)` → remove all refs for a session
+- `localRemoveEntryRefsFromBundleByIds(bundleId, entryIds)` → remove refs by entry IDs
+- `localRewindProject(input)` → `RewindResult` / `localRestoreRewound(input)` → `RestoreResult` / `localListRewinds(bundleId, projectName?, limit?)` → `RewindLogRow[]`
+- `getLocalBundleIdsForSession(sessionId)` → `string[]` — get bundles a session is linked to
 - `listAllLocalBundleDetails()` → bundle + project list derived from refs
 - Local bundles use `entry_refs.json` (references to session entries) instead of copying entries
+
+### Questions (questions.ts)
+- `readQuestions(bundleId)` → `Question[]` — read all questions for a local bundle
+- `askQuestion(input)` → `Question` — create a new question on a bundle
+- `answerQuestion(input)` → `Answer` — answer an existing question
+- `resolveQuestion(bundleId, questionId)` → void — mark question as resolved
+- `listBundleQuestions(bundleId, status?, targetProject?)` → `Question[]` — filtered list
+- `getQuestion(bundleId, questionId)` → `Question | undefined`
+- `countOpenQuestions(bundleId)` → number
 
 ## MCP Tools (packages/mcp-server/)
 
@@ -145,7 +173,7 @@ The MCP server exposes 31 tools that Claude Code calls via stdio. All tools auto
 
 ## CLI Commands (packages/cli/)
 
-The CLI (`ctxl`) supports 26 commands. All commands prompt interactively when flags are omitted (via `@inquirer/prompts`).
+The CLI (`ctxl`) supports 29 commands. All commands prompt interactively when flags are omitted (via `@inquirer/prompts`).
 
 ### Team Commands
 - `create-team` — create a team
@@ -176,6 +204,11 @@ The CLI (`ctxl`) supports 26 commands. All commands prompt interactively when fl
 - `rewind-history` — list rewind history
 - `leave` — leave a bundle
 - `delete-bundle` — permanently delete a bundle
+
+### Question Commands
+- `ask` — ask a question on a bundle, optionally targeting a project
+- `answer` — answer an open question
+- `questions` — list questions by status and target project
 
 ## UI Architecture (packages/ui/)
 
@@ -275,6 +308,7 @@ All write operations use TanStack Query mutations with optimistic updates. All r
   pendingEdgeAction,     // { sessionId, bundleId, action: "push"|"unlink" } — edge action confirmation
   pushBundleToCloudTarget, // { id, name } — local bundle pending cloud migration
   hideEmptySessions,     // graph filter toggle (persisted to localStorage)
+  hideEmptyQuestions,    // Q&A filter toggle (persisted to localStorage)
 }
 ```
 

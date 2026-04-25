@@ -165,6 +165,71 @@ program
     }
   });
 
+// ==================== SETUP ====================
+
+program
+  .command("setup")
+  .description(
+    "Add ctx-link MCP server to Claude Code settings.\n" +
+    "Writes the MCP configuration so Claude Code can use ctx-link tools.\n\n" +
+    "Examples:\n" +
+    "  $ ctxl setup            # add to global (user) settings\n" +
+    "  $ ctxl setup --project  # add to current project only"
+  )
+  .option("--project", "add to .claude/settings.json in the current directory instead of global", false)
+  .action(async (opts) => {
+    const { resolve, dirname } = await import("node:path");
+    const { mkdirSync, readFileSync, writeFileSync } = await import("node:fs");
+    const os = await import("node:os");
+
+    const settingsPath = opts.project
+      ? resolve(process.cwd(), ".claude", "settings.json")
+      : resolve(os.homedir(), ".claude", "settings.json");
+
+    const scope = opts.project ? "project" : "global";
+
+    // Read existing settings or start fresh
+    let settings: any = {};
+    if (existsSync(settingsPath)) {
+      try {
+        settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+      } catch {
+        console.error(`Failed to parse ${settingsPath}. Fix it manually or delete it.`);
+        process.exit(1);
+      }
+    }
+
+    // Check if already configured
+    if (settings.mcpServers?.["ctx-link"]) {
+      console.log(`ctx-link MCP is already configured in ${scope} settings.`);
+      console.log(`  ${settingsPath}`);
+      return;
+    }
+
+    // Find the ctx-link binary
+    let ctxLinkBin: string;
+    try {
+      ctxLinkBin = execSync("which ctx-link", { encoding: "utf8" }).trim();
+    } catch {
+      // Fallback: resolve relative to this CLI file
+      ctxLinkBin = "ctx-link";
+    }
+
+    // Add MCP server config
+    if (!settings.mcpServers) settings.mcpServers = {};
+    settings.mcpServers["ctx-link"] = {
+      command: ctxLinkBin,
+    };
+
+    // Write
+    mkdirSync(dirname(settingsPath), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+
+    console.log(`ctx-link MCP added to ${scope} Claude Code settings.`);
+    console.log(`  ${settingsPath}`);
+    console.log(`\nRestart Claude Code to activate. Run /mcp to verify.`);
+  });
+
 // ==================== UI DASHBOARD ====================
 
 program

@@ -10,22 +10,22 @@ When you're building a feature that spans multiple repos (e.g., backend API + fr
 
 ```
 Claude Code (Project A)
-    │
-    │ git commit / manual log
-    ▼
-Session entry accumulated locally
-    │
-    │ ctxl push --consolidate (or auto via hook)
-    ▼
-Consolidated entry stored in bundle
-    │
-    │  local mode → ~/.ctx-link/local/<id>/entries.json
-    │  cloud mode → Supabase (shared across machines)
-    ▼
+    |
+    |  session_log / auto-log on commit
+    v
+Session entries accumulated locally
+    |
+    |  context_push (or ctxl push)
+    v
+Bundle (shared context container)
+    |
+    |  local mode  -> ~/.ctx-link/local/<id>/
+    |  cloud mode  -> Supabase (cross-machine)
+    v
 Claude Code (Project B)
-    │
-    │ ctxl pull (or ask Claude: "pull context")
-    ▼
+    |
+    |  context_pull (or ctxl pull)
+    v
 Claude sees what Project A did
 ```
 
@@ -39,40 +39,65 @@ Claude sees what Project A did
 
 ## Quick start
 
-### Install
+### 1. Install
 
 ```bash
-git clone https://github.com/HassanKourani/Context-Linker.git ctx-link
-cd ctx-link
-bun install
+bun add -g ctx-link
 ```
 
-### Make CLI globally accessible
+### 2. Add MCP to Claude Code
 
 ```bash
-cd packages/cli && bun link
-echo 'export PATH="$HOME/.bun/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
-```
-
-### Register MCP server with Claude Code
-
-```bash
-claude mcp add --scope user ctx-link -- bun /absolute/path/to/ctx-link/packages/mcp-server/src/index.ts
+ctxl setup            # adds to global Claude Code settings
+# or
+ctxl setup --project  # adds to current project only
 ```
 
 Restart Claude Code. Run `/mcp` to verify `ctx-link` is connected.
 
+### 3. Use it
+
+Inside Claude Code, the tools are available immediately. Just ask:
+
+- "Pull context from my bundle"
+- "Push what I just did to the bundle"
+- "Create a local bundle called my-feature"
+- "Connect this session to bundle xyz"
+
+Or use the CLI:
+
+```bash
+ctxl create my-feature     # create a bundle (prompts for mode)
+ctxl connect <bundle_id>   # connect your session to a bundle
+ctxl push                  # push session entries to connected bundles
+ctxl pull                  # pull entries from connected bundles
+```
+
+### 4. Open the dashboard (optional)
+
+```bash
+ctxl ui
+```
+
+Opens the web dashboard at `http://localhost:5174` — a node graph showing teams, sessions, and bundles. The dashboard also auto-starts when the MCP server boots.
+
 ### (Optional) Session logging hook
 
-Add to `~/.claude/settings.json` in the `PostToolUse` array:
+Add to `~/.claude/settings.json` in the `hooks` object:
 
 ```json
 {
-  "matcher": "Bash",
-  "hooks": [{
-    "type": "command",
-    "command": "/absolute/path/to/ctx-link/packages/hooks/claude-code-hook.sh"
-  }]
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{
+          "type": "command",
+          "command": "claude-code-hook.sh"
+        }]
+      }
+    ]
+  }
 }
 ```
 
@@ -88,10 +113,10 @@ Every project starts in this mode. No linking, no data stored, hooks do nothing.
 
 ### Mode: local
 
-For FE + BE on the same machine. Entries stored in `~/.ctx-link/local/<bundle_id>/entries.json`. No network, no tokens, no Supabase.
+For FE + BE on the same machine. Entries stored in `~/.ctx-link/local/<bundle_id>/`. No network, no tokens, no Supabase.
 
 ```bash
-# In your frontend repo (interactive — prompts for mode):
+# In your frontend repo:
 ctxl create my-feature
 
 # In your backend repo:
@@ -103,16 +128,16 @@ ctxl join <bundle_id>
 For cross-machine or team use. Entries stored in Supabase. Requires team membership.
 
 ```bash
-# Create a team (once, interactive prompts):
+# Create a team (once):
 ctxl create-team
 
 # Teammate joins the team:
 ctxl join-team
 
-# Create a bundle (interactive — prompts for mode + team):
-ctxl create my-feature
+# Create a cloud bundle:
+ctxl create my-feature    # select "cloud" + pick team when prompted
 
-# Teammate joins the bundle (mode auto-detected):
+# Teammate joins the bundle:
 ctxl join <bundle_id>
 ```
 
@@ -121,6 +146,15 @@ ctxl join <bundle_id>
 ## CLI reference
 
 The CLI binary is `ctxl`. All commands with multiple options are interactive — they prompt when flags aren't provided. Flags still work for scripting.
+
+### Setup
+
+| Command | Description |
+|---------|-------------|
+| `ctxl setup` | Add ctx-link MCP to global Claude Code settings. |
+| `ctxl setup --project` | Add ctx-link MCP to current project's settings only. |
+| `ctxl ui` | Open the web dashboard (starts server if needed). |
+| `ctxl ui --no-open` | Start the dashboard server without opening the browser. |
 
 ### Teams
 
@@ -165,16 +199,13 @@ The CLI binary is `ctxl`. All commands with multiple options are interactive —
 
 | Command | Description |
 |---------|-------------|
-| `ctxl push --message <text>` | Push a summary to all connected bundles. |
-| `ctxl push --diff` | Push using git diff; auto-extracts commit message as summary. |
-| `ctxl push --consolidate --message <text>` | Consolidate pending session entries into one push. |
-| `ctxl push --event <type> --ref <ref>` | Specify event type and reference (commit SHA, PR#). |
+| `ctxl push` | Push all session entries to connected bundles. |
+| `ctxl push --message <text>` | Log a new entry, then push all to bundles. |
+| `ctxl push-to-bundle` | Push entries to a specific bundle (interactive picker). |
 | `ctxl pull` | Pull entries from all connected bundles (excludes own project). |
 | `ctxl pull <bundle_id>` | Pull from one specific bundle. |
 | `ctxl pull --include-self` | Include your own project's entries. |
 | `ctxl pull --since <iso> --limit <n>` | Filter by time and count. |
-
-**Event types:** `commit`, `pr_open`, `manual`, `session_end`
 
 ### Rewind / Restore
 
@@ -185,39 +216,57 @@ All commands are interactive when flags are omitted — they prompt for bundle, 
 | `ctxl rewind` | Interactive rewind: prompts for bundle, project, strategy. Dry-run first, then asks to apply. |
 | `ctxl rewind --bundle <id> --project <name> --last-n <n>` | Dry-run preview with flags. |
 | `ctxl rewind ... --apply --reason "text"` | Apply directly with flags (skip prompts). |
-| `ctxl rewind ... --since <iso>` | Rewind entries since a timestamp. |
-| `ctxl rewind ... --entry-ids <a,b,c>` | Rewind specific entries. |
-| `ctxl rewind ... --after-ref <sha>` | Rewind everything after a commit (keeps the pivot). |
-| `ctxl rewind ... --force` | Override the 50-entry safety cap. |
 | `ctxl restore` | Interactive restore: prompts for bundle, project, method. |
 | `ctxl restore --bundle <id> --project <name> --from-log <log_id>` | Restore from a specific rewind. |
-| `ctxl restore --bundle <id> --project <name> --entry-ids <a,b,c>` | Restore specific entries. |
 | `ctxl rewind-history [bundle_id]` | List past rewinds. Prompts for bundle if not given. |
+
+### Questions (cross-session Q&A)
+
+| Command | Description |
+|---------|-------------|
+| `ctxl ask` | Ask a question on a bundle. Other sessions get notified. |
+| `ctxl answer` | Answer an open question. |
+| `ctxl questions` | List questions on a bundle. |
 
 ---
 
-## MCP tool reference
+## MCP tools
 
-These are the 16 tools Claude Code sees when the MCP server is connected.
+These are the tools Claude Code sees when the MCP server is connected.
 
 | Tool | Description |
 |------|-------------|
-| `bundle_create` | Create a new bundle. |
+| `bundle_create` | Create a new bundle (local or cloud). |
 | `bundle_join` | Join a bundle with ID + token. |
-| `bundle_list` | List bundles this machine has joined. |
-| `bundle_status` | Get session count, entry count, last activity. |
+| `bundle_list` | List all bundles (local + cloud from joined teams). |
+| `bundle_status` | Get entry count, last activity, linked sessions. |
 | `bundle_delete` | Permanently delete a bundle (irreversible). |
-| `context_push` | Push a context entry. Claude generates the summary. |
-| `context_pull` | Pull recent entries, formatted for Claude's context. |
-| `context_rewind` | Soft-delete entries scoped to one project. |
+| `bundle_entries` | List all entries in a bundle (unfiltered). |
+| `bundle_remove_entry` | Remove a single entry ref from a bundle. |
+| `bundle_pull_from_sessions` | Pull entries from all sessions connected to a bundle. |
+| `bundle_push_to_cloud` | Migrate a local bundle to cloud under a team. |
+| `bundle_ask_question` | Ask a question on a bundle (last resort). |
+| `bundle_answer_question` | Answer a question in a bundle. |
+| `bundle_questions` | List questions for a bundle. |
+| `context_push` | Push session entries to connected bundles as refs. |
+| `context_pull` | Pull entries from connected bundles. |
+| `context_rewind` | Soft-delete entries by project + strategy. |
 | `context_restore` | Undo a rewind. |
 | `rewind_history` | List past rewinds. |
-| `session_connect` | Connect current session to a bundle. |
-| `session_disconnect` | Disconnect current session from a bundle. |
-| `session_info` | Get active session details (project, branch, bundles). |
-| `session_log` | Log an entry to the current session. |
+| `session_start` | Create or resume a session (usually auto-started). |
+| `session_info` | Current session details (project, branch, bundles). |
+| `session_log` | Log an entry to the session. |
 | `session_entries` | List accumulated session entries. |
-| `source_entry_delete` | Remove a source entry from a consolidated entry. |
+| `session_connect` | Connect session to a bundle. |
+| `session_disconnect` | Disconnect session from a bundle. |
+| `session_push_to_cloud` | Push session to cloud under a team. |
+| `session_push_to_bundle` | Push entries to a specific bundle. |
+| `session_rename` | Rename the current session. |
+| `session_delete` | Delete a session and all cloud copies. |
+| `session_delete_entry` | Delete a specific entry from the session. |
+| `session_list` | List all active sessions on this machine. |
+| `team_create` | Create a team. |
+| `team_join` | Join a team. |
 
 **Usage from Claude Code** — just ask naturally:
 - "Pull context from my bundle"
@@ -225,83 +274,49 @@ These are the 16 tools Claude Code sees when the MCP server is connected.
 - "Check bundle status"
 - "Rewind the last 3 entries from this project"
 - "Connect this session to bundle xyz"
+- "Create a local bundle called auth-feature"
 
 ---
 
-## Architecture
+## Web dashboard
 
-```
-ctx-link/
-  packages/
-    core/          # Shared logic: config, Supabase, bundles, entries, teams,
-    |              # rewind, local-store — no transport layer
-    mcp-server/    # MCP protocol wrapper (stdio) with 16 tools
-    cli/           # ctxl CLI (commander + @inquirer/prompts) — interactive
-    ui/            # React web dashboard — node graph + management
-    hooks/         # Git post-commit + Claude Code PostToolUse hook scripts
-  supabase/
-    migrations/    # SQL schema: 0001-0004 (teams, bundles, sessions, entries, rewind_log)
-```
+Run `ctxl ui` or open `http://localhost:5174`. The dashboard auto-starts when the MCP server boots.
 
-### Data model
+Features:
+- Node graph showing teams, sessions, and bundles
+- Drag sessions to bundles to connect them
+- View and manage entries, rewinds, and questions
+- Create teams and bundles
+- Push/pull entries between sessions and bundles
 
-```
-teams            -- access control container
-  id              uuid
-  name            text (unique)
-  password_hash   text (argon2)
-  created_at      timestamptz
+---
 
-team_members     -- who belongs to which team
-  id              uuid
-  team_id         uuid → teams
-  machine_id      text
-  joined_at       timestamptz
+## Development
 
-bundles          -- shared context container, belongs to a team
-  id              uuid
-  name            text
-  team_id         uuid → teams
-  created_at      timestamptz
-  created_by      text
+```bash
+git clone https://github.com/AHK-tech/ctx-link.git
+cd ctx-link
+bun install
 
-sessions         -- one per (project, machine) in a bundle
-  id              uuid
-  bundle_id       uuid → bundles
-  project_name    text
-  machine_id      text
-
-entries          -- the context handoff notes
-  id              uuid
-  bundle_id       uuid → bundles
-  session_id      uuid → sessions
-  event_type      text (commit | pr_open | manual | session_end)
-  trigger_ref     text (commit SHA, PR number)
-  summary         text
-  files_touched   text[]
-  decisions       jsonb
-  source_entries  jsonb (consolidated session entries)
-  superseded_at   timestamptz (soft-delete for rewind)
-
-rewind_log       -- audit trail
-  id, bundle_id, project_name, strategy_kind, strategy_detail,
-  affected_entry_ids, affected_count, reason, performed_by, performed_at
+bun run dev:mcp       # MCP server (watch mode)
+bun run dev:ui-api    # API server (port 5174)
+bun run dev:ui        # Vite dev server (port 5173)
+bun run cli -- <args> # Run CLI from source
+bun run typecheck     # Typecheck all packages
+bun run build         # Full production build -> dist/
 ```
 
-### Local mode storage
+### Architecture
 
 ```
-~/.ctx-link/
-  config.json        # machine_id (auto-generated)
-  tokens.json        # bundle tokens (mode 600)
-  teams.json         # team memberships (mode 600)
-  sessions.json      # session history log
-  active-sessions/   # one JSON per live Claude Code session
-  session-entries/   # per-session accumulated entry logs
-  local/
-    <bundle_id>/
-      meta.json      # bundle name, created_at
-      entries.json   # array of entries
+packages/
+  core/          Shared business logic (bundles, entries, teams, rewind, config)
+  mcp-server/    MCP protocol wrapper (stdio) — Claude Code talks to this
+  cli/           CLI tool (ctxl) — interactive commands
+  ui/            React web dashboard — node graph + management
+  hooks/         Git post-commit + Claude Code hook scripts
+supabase/
+  migrations/    SQL schema
 ```
 
 ---
@@ -310,8 +325,8 @@ rewind_log       -- audit trail
 
 - **Cloud bundles are team-gated.** You must join the team (name + password) before accessing any bundle in it.
 - **Team passwords are hashed.** Supabase only stores argon2 hashes.
-- **Local bundles have no auth.** They're files on your machine — if you can read the filesystem, you can read the entries.
-- **Bundle IDs are UUIDs.** Not guessable; no "list all bundles" endpoint.
+- **Local bundles have no auth.** They're files on your machine.
+- **Bundle IDs are UUIDs.** Not guessable.
 - **Summaries are plaintext in Supabase.** E2E encryption is a future improvement.
 
 ---
@@ -324,21 +339,16 @@ Run `ctxl connect <bundle_id>` to connect to a bundle, or `ctxl create <name>` t
 ### "You are not a member of this team"
 Run `ctxl join-team` and enter the team name + password.
 
-### "No teams found"
-Run `ctxl create-team` to create a team first (required for cloud bundles).
-
 ### Claude Code doesn't see ctx-link MCP server
 - Run `/mcp` in Claude Code to check status.
-- Verify you ran `claude mcp add --scope user ctx-link -- bun /path/to/mcp-server/src/index.ts`.
-- Check `bun` is in your PATH.
+- Run `ctxl setup` to add the MCP config.
+- Make sure `ctx-link` is in your PATH (`which ctx-link`).
+- Restart Claude Code after setup.
 
-### Hooks aren't firing
-- Check `~/.claude/settings.json` has the PostToolUse hook entry.
-- Verify the hook script path is absolute and executable (`chmod +x`).
-- Hooks only fire when a `.ctxl-active-session` marker file exists in the project.
-
-### Rewind affected too many entries
-The safety cap (50) refuses bulk rewinds without `--force`.
+### Dashboard not loading
+- Run `ctxl ui` to start the server manually.
+- Check `http://localhost:5174` is accessible.
+- If port is in use: `lsof -ti:5174 | xargs kill` then try again.
 
 ---
 
