@@ -43,26 +43,149 @@ import {
   answerQuestion,
   resolveQuestion,
   listBundleQuestions,
+  renameActiveSession,
+  renameCloudSession,
+  deleteSession,
+  deleteSessionEntry,
+  deleteCloudSessionEntry,
+  removeEntryFromBundle,
+  localRemoveEntryFromBundle,
+  pullEntries,
+  pushBundleToCloud,
+  getBundleTeamId,
+  syncSessionToCloud,
+  getCloudSessionEntries,
+  addEntriesToBundle,
+  listTeamSessions,
+  getCloudSessionBundleConnections,
   type RewindStrategy,
 } from "@ctx-link/core";
+
+const HELP_TEXT = `Usage: ctxl [command] [options]
+
+Connect Claude Code sessions across projects via shared context bundles.
+
+Quick start:
+  $ ctxl setup                     Add MCP server to Claude Code
+  $ ctxl create-team               Create a team (cloud mode, once)
+  $ ctxl create                    Create a bundle
+  $ ctxl join                      Join from another project
+  $ ctxl push --message '...'      Push context (or auto on git commit)
+  $ ctxl pull                      Pull context from the other project
+
+Setup:
+  setup                            Add ctx-link MCP server to Claude Code settings
+  ui                               Start the web dashboard
+  info                             Show current project config
+
+Teams:
+  create-team                      Create a new team (cloud mode)
+  join-team                        Join an existing team
+  my-teams                         List your teams
+  team-bundles [team_id]           List bundles in a team
+
+Sessions:
+  session-start                    Record active session (used by hooks)
+  session-resume [id]              Resume a previous session
+  sessions                         List all active sessions
+  session-log                      Log a context entry to the session
+  session-entries                  List session entries
+  session-rename [name]            Rename the current session
+  session-delete [id]              Delete a session and all cloud copies
+  session-delete-entry [id]        Delete a specific entry from session
+
+Session Connectivity:
+  connect [bundle_id]              Connect session to a bundle
+  disconnect [bundle_id]           Disconnect session from a bundle
+
+Bundles:
+  create [name]                    Create a new bundle
+  join [bundle_id]                 Join an existing bundle
+  my-bundles                       List all bundles
+  status [bundle_id]               Show bundle details
+  delete-bundle [bundle_id]        Permanently delete a bundle
+  leave                            Disconnect from bundle (keeps it alive)
+
+Bundle Entries:
+  push                             Push session entries to all connected bundles
+  push-to-bundle                   Push entries to a specific bundle
+  pull [bundle_id]                 Pull entries from a bundle
+  bundle-entries [bundle_id]       List all entries in a bundle
+  bundle-remove-entry              Remove an entry ref from a bundle
+  bundle-pull-from-sessions        Pull from all connected sessions into bundle
+  bundle-to-cloud [bundle_id]      Migrate a local bundle to cloud
+
+Options:
+  -V, --version                    Output the version number
+  -h, --help                       Display help for command
+
+Run 'ctxl <command> --help' for details on any command.
+`;
+
+// Detect if running from source (dev) or published (prod)
+const isDev = import.meta.path.endsWith(".ts");
+let cliVersion = "0.1.3";
+try {
+  // In dev, read version from root package.json
+  if (isDev) {
+    const rootPkg = JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8"));
+    if (rootPkg.version) cliVersion = rootPkg.version;
+  }
+} catch {}
+const versionString = isDev ? `${cliVersion} (dev)` : cliVersion;
+
+// Hidden --env flag: switch CLI + MCP between dev/prod without exposing to users
+const envIdx = process.argv.indexOf("--env");
+if (envIdx !== -1 && process.argv[envIdx + 1]) {
+  const mode = process.argv[envIdx + 1];
+  if (mode !== "dev" && mode !== "prod") {
+    console.error("Usage: ctxl --env dev|prod");
+    process.exit(1);
+  }
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const { writeFileSync, mkdirSync } = await import("node:fs");
+  const bunBin = path.resolve(os.homedir(), ".bun/bin");
+  const settingsPath = path.resolve(os.homedir(), ".claude/settings.json");
+  const repoRoot = path.resolve(import.meta.dir, "../../..");
+
+  // Switch CLI symlinks
+  if (mode === "dev") {
+    const { symlinkSync, unlinkSync } = await import("node:fs");
+    try { unlinkSync(path.resolve(bunBin, "ctxl")); } catch {}
+    try { unlinkSync(path.resolve(bunBin, "ctx-link")); } catch {}
+    symlinkSync(path.resolve(repoRoot, "packages/cli/src/index.ts"), path.resolve(bunBin, "ctxl"));
+    symlinkSync(path.resolve(repoRoot, "packages/mcp-server/src/index.ts"), path.resolve(bunBin, "ctx-link"));
+  } else {
+    execSync("bun install -g ctx-link", { stdio: "ignore" });
+  }
+
+  // Switch MCP server config
+  let settings: any = {};
+  if (existsSync(settingsPath)) {
+    try { settings = JSON.parse(readFileSync(settingsPath, "utf8")); } catch {}
+  }
+  if (!settings.mcpServers) settings.mcpServers = {};
+  settings.mcpServers["ctx-link"] = mode === "dev"
+    ? { command: "bun", args: [path.resolve(repoRoot, "packages/mcp-server/src/index.ts")] }
+    : { command: path.resolve(bunBin, "ctx-link") };
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+
+  console.log(`Switched to ${mode}.`);
+  if (mode === "dev") console.log(`  ctxl → local source`);
+  console.log("Restart Claude Code for MCP changes.");
+  process.exit(0);
+}
 
 const program = new Command();
 program
   .name("ctxl")
-  .description(
-    "Connect Claude Code sessions across projects via shared context bundles.\n\n" +
-    "Modes:\n" +
-    "  off   — default, no linking, hooks do nothing\n" +
-    "  local — entries stored in ~/.ctx-link/local/, same machine only\n" +
-    "  cloud — entries stored in Supabase, requires team membership\n\n" +
-    "Typical flow:\n" +
-    "  1. ctxl create-team          (cloud only, once)\n" +
-    "  2. ctxl create               (prompts for name, mode + team)\n" +
-    "  3. In other project: ctxl join\n" +
-    "  4. ctxl push --message '...' (or auto on git commit)\n" +
-    "  5. ctxl pull                 (from the other project)"
-  )
-  .version("0.1.0");
+  .description("Connect Claude Code sessions across projects via shared context bundles.")
+  .version(versionString)
+  .helpCommand(false);
+
+// Replace Commander's default help with our grouped layout (root command only)
+program.helpInformation = () => HELP_TEXT;
 
 // ==================== TEAMS (cloud mode only) ====================
 
@@ -1642,6 +1765,310 @@ program
         }
       }
     }
+  });
+
+// ==================== SESSION MANAGEMENT ====================
+
+program
+  .command("session-rename")
+  .description(
+    "Rename the current session. Also renames all cloud copies.\n\n" +
+    "Examples:\n" +
+    "  $ ctxl session-rename\n" +
+    "  $ ctxl session-rename 'backend work'"
+  )
+  .argument("[name]", "new name (prompted if not given)")
+  .action(async (nameArg?: string) => {
+    const sessionId = getActiveSessionId();
+    if (!sessionId) { console.error("No active session."); process.exit(1); }
+    const session = loadActiveSession(sessionId);
+    if (!session) { console.error(`Session ${sessionId} not found.`); process.exit(1); }
+
+    const name = nameArg ?? await input({ message: "New name (empty to clear):" });
+    const trimmed = name.trim() || null;
+
+    renameActiveSession(sessionId, trimmed);
+    for (const c of (session.cloud_copies ?? [])) {
+      try { await renameCloudSession(c.cloud_session_id, trimmed); } catch {}
+    }
+    if (session.cloud_session_id) {
+      try { await renameCloudSession(session.cloud_session_id, trimmed); } catch {}
+    }
+
+    console.log(trimmed ? `Renamed to "${trimmed}".` : "Name cleared.");
+  });
+
+program
+  .command("session-delete")
+  .description(
+    "Delete a session and all its cloud copies. Cascades to entries and bundle refs.\n\n" +
+    "Examples:\n" +
+    "  $ ctxl session-delete\n" +
+    "  $ ctxl session-delete <session_id>"
+  )
+  .argument("[session_id]", "session to delete (prompted if not given)")
+  .action(async (sessionIdArg?: string) => {
+    let sessionId = sessionIdArg;
+
+    if (!sessionId) {
+      const sessions = listActiveSessions();
+      if (sessions.length === 0) { console.log("No active sessions."); return; }
+
+      sessionId = await select({
+        message: "Which session to delete?",
+        choices: sessions.map((s) => ({
+          name: `${s.name ?? s.project_name}  ${s.branch ? `(${s.branch})` : ""}  ${getSessionEntries(s.session_id).length} entries`,
+          value: s.session_id,
+          description: s.session_id,
+        })),
+      });
+    }
+
+    const session = loadActiveSession(sessionId);
+    if (!session) { console.error(`Session ${sessionId} not found.`); process.exit(1); }
+
+    const ok = await confirm({ message: `Delete session "${session.name ?? session.project_name}" and all cloud copies?` });
+    if (!ok) { console.log("Cancelled."); return; }
+
+    await deleteSession(sessionId);
+    console.log(`Deleted session ${sessionId.slice(0, 8)}...`);
+  });
+
+program
+  .command("session-delete-entry")
+  .description(
+    "Delete a specific entry from the current session. Cascades to cloud and bundle refs.\n\n" +
+    "Examples:\n" +
+    "  $ ctxl session-delete-entry\n" +
+    "  $ ctxl session-delete-entry <entry_id>"
+  )
+  .argument("[entry_id]", "entry to delete (prompted if not given)")
+  .action(async (entryIdArg?: string) => {
+    const sessionId = getActiveSessionId();
+    if (!sessionId) { console.error("No active session."); process.exit(1); }
+    const session = loadActiveSession(sessionId);
+    if (!session) { console.error(`Session ${sessionId} not found.`); process.exit(1); }
+
+    let entryId = entryIdArg;
+    if (!entryId) {
+      const entries = getSessionEntries(sessionId);
+      if (entries.length === 0) { console.log("No entries in this session."); return; }
+
+      entryId = await select({
+        message: "Which entry to delete?",
+        choices: entries.map((e) => ({
+          name: `[${e.type}] ${e.summary.slice(0, 80)}`,
+          value: e.id,
+          description: `${e.id}  ${e.created_at}`,
+        })),
+      });
+    }
+
+    deleteSessionEntry(sessionId, entryId);
+    if (session.cloud_copies?.length || session.cloud_session_id) {
+      try { await deleteCloudSessionEntry(entryId); } catch {}
+    }
+    console.log(`Deleted entry ${entryId.slice(0, 8)}...`);
+  });
+
+// ==================== BUNDLE MANAGEMENT ====================
+
+program
+  .command("bundle-entries")
+  .description(
+    "List all entries in a bundle (unfiltered).\n\n" +
+    "Examples:\n" +
+    "  $ ctxl bundle-entries\n" +
+    "  $ ctxl bundle-entries <bundle_id>\n" +
+    "  $ ctxl bundle-entries --limit 20"
+  )
+  .argument("[bundle_id]", "bundle ID (prompted if not given)")
+  .option("--limit <n>", "max entries to show", "50")
+  .action(async (bundleIdArg?: string, opts?: { limit: string }) => {
+    const bundleId = bundleIdArg ?? await promptForBundle("Which bundle?");
+    const limit = parseInt(opts?.limit ?? "50", 10);
+    const mode = isLocalBundle(bundleId) ? "local" : "cloud";
+
+    const rows = await pullEntries({
+      bundle_id: bundleId,
+      since: null,
+      limit,
+      exclude_project: undefined,
+      mode,
+    });
+
+    if (rows.length === 0) { console.log("No entries."); return; }
+
+    for (const r of rows) {
+      console.log(`\n[${r.type}] ${r.project_name}  ${r.created_at}`);
+      console.log(`  ID: ${r.id}`);
+      console.log(`  ${r.summary}`);
+    }
+    console.log(`\n${rows.length} entries.`);
+  });
+
+program
+  .command("bundle-remove-entry")
+  .description(
+    "Remove an entry reference from a bundle. The entry stays in its session.\n\n" +
+    "Examples:\n" +
+    "  $ ctxl bundle-remove-entry --bundle <id> --entry <id>"
+  )
+  .option("--bundle <id>", "bundle ID")
+  .option("--entry <id>", "entry ID")
+  .action(async (opts: { bundle?: string; entry?: string }) => {
+    const bundleId = opts.bundle ?? await promptForBundle("Which bundle?");
+    let entryId = opts.entry;
+
+    if (!entryId) {
+      const mode = isLocalBundle(bundleId) ? "local" : "cloud";
+      const rows = await pullEntries({ bundle_id: bundleId, since: null, limit: 50, exclude_project: undefined, mode });
+      if (rows.length === 0) { console.log("No entries in this bundle."); return; }
+
+      entryId = await select({
+        message: "Which entry to remove?",
+        choices: rows.map((r) => ({
+          name: `[${r.type}] ${r.project_name}: ${r.summary.slice(0, 60)}`,
+          value: r.id,
+          description: r.id,
+        })),
+      });
+    }
+
+    if (isLocalBundle(bundleId)) {
+      localRemoveEntryFromBundle(bundleId, entryId);
+    } else {
+      await removeEntryFromBundle(bundleId, entryId);
+    }
+    console.log(`Removed entry ${entryId.slice(0, 8)}... from bundle.`);
+  });
+
+program
+  .command("bundle-pull-from-sessions")
+  .description(
+    "Pull entries from ALL sessions connected to a bundle in one shot.\n\n" +
+    "Examples:\n" +
+    "  $ ctxl bundle-pull-from-sessions\n" +
+    "  $ ctxl bundle-pull-from-sessions <bundle_id>"
+  )
+  .argument("[bundle_id]", "bundle ID (prompted if not given)")
+  .action(async (bundleIdArg?: string) => {
+    const bundleId = bundleIdArg ?? await promptForBundle("Which bundle?");
+    const mode = isLocalBundle(bundleId) ? "local" : "cloud";
+    let totalPushed = 0;
+    let totalSkipped = 0;
+
+    const activeSessions = listActiveSessions();
+    const connectedActive = activeSessions.filter(
+      (s) => s.bundles.some((b) => b.bundle_id === bundleId)
+    );
+
+    for (const session of connectedActive) {
+      const entries = getSessionEntries(session.session_id);
+      if (entries.length === 0) continue;
+      const entryIds = entries.map((e) => e.id);
+
+      if (mode === "local") {
+        const result = localAddEntriesToBundle(bundleId, entryIds, session.session_id);
+        totalPushed += result.added;
+        totalSkipped += result.skipped;
+      } else {
+        const bundleTeamId = await getBundleTeamId(bundleId);
+        if (!bundleTeamId) continue;
+
+        const copies = session.cloud_copies ?? [];
+        let copy = copies.find((c) => c.team_id === bundleTeamId)
+          ?? (session.cloud_session_id && session.team_id === bundleTeamId
+            ? { cloud_session_id: session.cloud_session_id, team_id: bundleTeamId }
+            : null);
+
+        if (!copy) {
+          const result = await copySessionToCloud(session.session_id, bundleTeamId);
+          if (!session.cloud_copies) session.cloud_copies = [];
+          session.cloud_copies.push({ cloud_session_id: result.cloud_session_id, team_id: bundleTeamId });
+          if (!session.cloud_session_id) {
+            session.cloud_session_id = result.cloud_session_id;
+            session.team_id = bundleTeamId;
+          }
+          saveActiveSession(session);
+          copy = { cloud_session_id: result.cloud_session_id, team_id: bundleTeamId };
+        } else {
+          await syncSessionToCloud(session.session_id, copy.cloud_session_id);
+        }
+
+        const cloudEntries = await getCloudSessionEntries(copy.cloud_session_id);
+        const cloudIds = cloudEntries.map((e) => e.id);
+        if (cloudIds.length > 0) {
+          const result = await addEntriesToBundle(bundleId, cloudIds);
+          totalPushed += result.added;
+          totalSkipped += result.skipped;
+        }
+      }
+    }
+
+    if (mode === "cloud") {
+      const teams = listMyTeams();
+      for (const team of teams) {
+        const cloudSessions = await listTeamSessions(team.team_id);
+        for (const cs of cloudSessions) {
+          const bundles = getCloudSessionBundleConnections(cs.id);
+          if (!bundles.some((b) => b.bundle_id === bundleId)) continue;
+          const cloudEntries = await getCloudSessionEntries(cs.id);
+          const cloudIds = cloudEntries.map((e) => e.id);
+          if (cloudIds.length > 0) {
+            const result = await addEntriesToBundle(bundleId, cloudIds);
+            totalPushed += result.added;
+            totalSkipped += result.skipped;
+          }
+        }
+      }
+    }
+
+    console.log(`Pulled from sessions: ${totalPushed} added, ${totalSkipped} skipped.`);
+  });
+
+program
+  .command("bundle-to-cloud")
+  .description(
+    "Migrate a local bundle to cloud under a team.\n" +
+    "Creates a cloud bundle, migrates all entry refs, and removes the local bundle.\n\n" +
+    "Examples:\n" +
+    "  $ ctxl bundle-to-cloud\n" +
+    "  $ ctxl bundle-to-cloud <bundle_id>"
+  )
+  .argument("[bundle_id]", "local bundle ID (prompted if not given)")
+  .action(async (bundleIdArg?: string) => {
+    const bundleId = bundleIdArg ?? await promptForBundle("Which local bundle?");
+
+    if (!isLocalBundle(bundleId)) {
+      console.error("That bundle is already in cloud mode.");
+      process.exit(1);
+    }
+
+    const teams = listMyTeams();
+    if (teams.length === 0) {
+      console.error("You need to join a team first. Run 'ctxl create-team' or 'ctxl join-team'.");
+      process.exit(1);
+    }
+
+    let teamId: string;
+    if (teams.length === 1) {
+      teamId = teams[0].team_id;
+    } else {
+      teamId = await select({
+        message: "Which team?",
+        choices: teams.map((t) => ({
+          name: t.name,
+          value: t.team_id,
+          description: t.team_id,
+        })),
+      });
+    }
+
+    const result = await pushBundleToCloud(bundleId, teamId);
+    console.log(`Migrated to cloud.`);
+    console.log(`  New bundle ID: ${result.new_bundle_id}`);
+    console.log(`  Entries migrated: ${result.entries_migrated}`);
   });
 
 // ==================== HELPERS ====================

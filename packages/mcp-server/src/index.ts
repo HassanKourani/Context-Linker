@@ -95,6 +95,9 @@ function getSession(): ActiveSession | null {
 
 /** Auto-create a fresh session on MCP server boot. */
 async function ensureSession(): Promise<ActiveSession | null> {
+  // If we already created a session (guard against double-call), return it.
+  if (ownSessionId) return loadActiveSession(ownSessionId);
+
   // Always create a new session — each MCP instance is a new Claude Code chat.
   // The marker file may contain a stale session ID from a previous chat;
   // don't inherit it. The user can explicitly resume via session_start.
