@@ -305,10 +305,14 @@ export function localPullEntries(input: PullInput): EntryRow[] {
 /**
  * Remove a single entry ref from a local bundle.
  */
-export function localRemoveEntryFromBundle(bundleId: string, entryId: string): void {
+export function localRemoveEntryFromBundle(bundleId: string, entryId: string, options?: { exclude?: boolean }): void {
   const refs = readEntryRefs(bundleId);
   const filtered = refs.filter(r => r.entry_id !== entryId);
   writeEntryRefs(bundleId, filtered);
+
+  if (options?.exclude) {
+    localExcludeEntryFromBundle(bundleId, entryId);
+  }
 }
 
 /**

@@ -1027,11 +1027,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "bundle_remove_entry": {
         const a = BundleRemoveEntryArgs.parse(args);
         if (isLocalBundle(a.bundle_id)) {
-          localRemoveEntryFromBundle(a.bundle_id, a.entry_id);
+          localRemoveEntryFromBundle(a.bundle_id, a.entry_id, { exclude: true });
         } else {
-          await removeEntryFromBundle(a.bundle_id, a.entry_id);
+          const cfg = loadGlobalConfig();
+          await removeEntryFromBundle(a.bundle_id, a.entry_id, { exclude: true, machineId: cfg.machine_id });
         }
-        return ok({ removed: true });
+        return ok({ removed: true, excluded: true });
       }
 
       case "session_push_to_cloud": {

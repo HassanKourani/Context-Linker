@@ -114,7 +114,8 @@ export async function addEntriesToBundle(
  */
 export async function removeEntryFromBundle(
   bundleId: string,
-  entryId: string
+  entryId: string,
+  options?: { exclude?: boolean; machineId?: string },
 ): Promise<void> {
   const sb = getSupabase();
   const { error } = await sb
@@ -123,6 +124,11 @@ export async function removeEntryFromBundle(
     .eq("bundle_id", bundleId)
     .eq("entry_id", entryId);
   if (error) throw new Error(`removeEntryFromBundle failed: ${error.message}`);
+
+  if (options?.exclude) {
+    const { excludeEntryFromBundle } = await import("./exclusions.js");
+    await excludeEntryFromBundle(bundleId, entryId, options.machineId);
+  }
 }
 
 /**
