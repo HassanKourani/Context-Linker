@@ -36,6 +36,7 @@ export interface CreateBundleResult {
   bundle_id: string;
   name: string;
   join_token: string;
+  join_code?: string;
 }
 
 export async function createBundle(name: string, mode: "local" | "cloud" = "cloud", teamId?: string): Promise<CreateBundleResult> {
@@ -90,7 +91,15 @@ export async function createBundle(name: string, mode: "local" | "cloud" = "clou
     }).catch(() => {});
   } catch {}
 
-  return { bundle_id: data.id, name: data.name, join_token: `team_${teamId}` };
+  // Auto-generate a short join code for cloud bundles
+  try {
+    const { createJoinCode } = await import("./join-codes.js");
+    const joinCode = await createJoinCode(data.id, `team_${teamId}`);
+    return { bundle_id: data.id, name: data.name, join_token: `team_${teamId}`, join_code: joinCode };
+  } catch {
+    // Non-fatal — code generation is optional
+    return { bundle_id: data.id, name: data.name, join_token: `team_${teamId}` };
+  }
 }
 
 export interface JoinBundleResult {
