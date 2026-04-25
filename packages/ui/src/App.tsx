@@ -36,6 +36,7 @@ import { ConnectSessionDialog } from "./components/ConnectSessionDialog";
 import { DeletableEdge } from "./components/edges/DeletableEdge";
 import { EdgeActionDialog } from "./components/EdgeActionDialog";
 import { PushBundleToCloudDialog } from "./components/PushBundleToCloudDialog";
+import { FeedPanel } from "./components/FeedPanel";
 
 const nodeTypes: NodeTypes = {
   project: ProjectNode,
@@ -199,6 +200,7 @@ export function App() {
         isLoading={isLoading}
         dataUpdatedAt={dataUpdatedAt}
         onTidyUp={tidyUp}
+        teams={data?.teams?.map(t => ({ team_id: t.team_id, name: t.team_name }))}
       />
       <div className="flex-1">
         <ReactFlow
@@ -238,6 +240,7 @@ export function App() {
       <DeleteBundleDialog />
       <EntryPanel />
       <QuestionsPanel />
+      <FeedPanel />
       <PushEntryDialog />
       <RewindDialog />
       <TeamManagementDialog />
