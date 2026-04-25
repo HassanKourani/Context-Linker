@@ -123,15 +123,20 @@ Run 'ctxl <command> --help' for details on any command.
 
 // Detect if running from source (dev) or published (prod)
 const isDev = import.meta.path.endsWith(".ts");
-let cliVersion = "0.1.5";
-try {
-  // In dev, read version from root package.json
-  if (isDev) {
-    const rootPkg = JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8"));
-    if (rootPkg.version) cliVersion = rootPkg.version;
-  }
-} catch {}
+const rootPkg = await import("../../../package.json");
+const cliVersion = rootPkg.version ?? "0.0.0";
 const versionString = isDev ? `${cliVersion} (dev)` : cliVersion;
+
+function updateMcpSettings(settingsPath: string, entry: Record<string, unknown>) {
+  const { writeFileSync } = require("node:fs");
+  let settings: any = {};
+  if (existsSync(settingsPath)) {
+    try { settings = JSON.parse(readFileSync(settingsPath, "utf8")); } catch {}
+  }
+  if (!settings.mcpServers) settings.mcpServers = {};
+  settings.mcpServers["ctx-link"] = entry;
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+}
 
 // Hidden --env flag: switch CLI + MCP between dev/prod without exposing to users
 const envIdx = process.argv.indexOf("--env");
@@ -143,47 +148,59 @@ if (envIdx !== -1 && process.argv[envIdx + 1]) {
   }
   const os = await import("node:os");
   const path = await import("node:path");
-  const { writeFileSync, mkdirSync } = await import("node:fs");
+  const { mkdirSync } = await import("node:fs");
   const bunBin = path.resolve(os.homedir(), ".bun/bin");
   const settingsPath = path.resolve(os.homedir(), ".claude/settings.json");
-  // Find repo root: walk up from import.meta.dir looking for package.json with name "ctx-link"
-  let repoRoot = path.resolve(import.meta.dir);
-  while (repoRoot !== "/") {
-    const pkgPath = path.resolve(repoRoot, "package.json");
-    if (existsSync(pkgPath)) {
-      try {
-        const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-        if (pkg.name === "ctx-link" && pkg.workspaces) break;
-      } catch {}
-    }
-    repoRoot = path.dirname(repoRoot);
-  }
-  if (repoRoot === "/") {
-    console.error("Could not find ctx-link repo root. Run this from the repo or the dev source.");
-    process.exit(1);
-  }
+  const devRepoFile = path.resolve(os.homedir(), ".ctx-link/dev-repo.txt");
 
-  // Switch CLI symlinks
   if (mode === "dev") {
+    // Find repo root: walk up from import.meta.dir, or from cwd, looking for workspace package.json
+    let repoRoot: string | null = null;
+    for (const start of [import.meta.dir, process.cwd()]) {
+      let dir = path.resolve(start);
+      while (dir !== "/") {
+        const pkgPath = path.resolve(dir, "package.json");
+        if (existsSync(pkgPath)) {
+          try {
+            const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+            if (pkg.name === "ctx-link" && existsSync(path.resolve(dir, "packages/cli/src/index.ts"))) { repoRoot = dir; break; }
+          } catch {}
+        }
+        dir = path.dirname(dir);
+      }
+      if (repoRoot) break;
+    }
+    // Fallback: read saved repo path
+    if (!repoRoot && existsSync(devRepoFile)) {
+      const saved = readFileSync(devRepoFile, "utf8").trim();
+      if (existsSync(path.resolve(saved, "packages/cli/src/index.ts"))) repoRoot = saved;
+    }
+    if (!repoRoot) {
+      console.error("Could not find ctx-link repo. Run 'ctxl --env dev' from the repo directory first.");
+      process.exit(1);
+    }
+
+    // Save repo path for future use from published binary
+    const { writeFileSync: wf, mkdirSync: md } = await import("node:fs");
+    md(path.dirname(devRepoFile), { recursive: true });
+    wf(devRepoFile, repoRoot + "\n");
+
+    // Symlink CLI + MCP to local source
     const { symlinkSync, unlinkSync } = await import("node:fs");
     try { unlinkSync(path.resolve(bunBin, "ctxl")); } catch {}
     try { unlinkSync(path.resolve(bunBin, "ctx-link")); } catch {}
     symlinkSync(path.resolve(repoRoot, "packages/cli/src/index.ts"), path.resolve(bunBin, "ctxl"));
     symlinkSync(path.resolve(repoRoot, "packages/mcp-server/src/index.ts"), path.resolve(bunBin, "ctx-link"));
+
+    // MCP config → local source
+    const mpcEntry = { command: "bun", args: [path.resolve(repoRoot, "packages/mcp-server/src/index.ts")] };
+    updateMcpSettings(settingsPath, mpcEntry);
   } else {
     execSync("bun install -g ctx-link", { stdio: "ignore" });
-  }
 
-  // Switch MCP server config
-  let settings: any = {};
-  if (existsSync(settingsPath)) {
-    try { settings = JSON.parse(readFileSync(settingsPath, "utf8")); } catch {}
+    // MCP config → published binary
+    updateMcpSettings(settingsPath, { command: path.resolve(bunBin, "ctx-link") });
   }
-  if (!settings.mcpServers) settings.mcpServers = {};
-  settings.mcpServers["ctx-link"] = mode === "dev"
-    ? { command: "bun", args: [path.resolve(repoRoot, "packages/mcp-server/src/index.ts")] }
-    : { command: path.resolve(bunBin, "ctx-link") };
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
 
   console.log(`Switched to ${mode}.`);
   if (mode === "dev") console.log(`  ctxl → local source`);

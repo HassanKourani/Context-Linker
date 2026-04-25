@@ -155,9 +155,28 @@ async function ensureSession(): Promise<ActiveSession | null> {
   }
 }
 
+const pkg = await import("../../../package.json");
+
 const server = new Server(
-  { name: "ctx-link", version: "0.1.0" },
-  { capabilities: { tools: {}, logging: {} } }
+  { name: "ctx-link", version: pkg.version ?? "0.0.0" },
+  {
+    capabilities: { tools: {}, logging: {} },
+    instructions:
+      "You are connected to ctx-link, a context-sharing system for Claude Code sessions. " +
+      "The CLI command is `ctxl`. If you need help with available commands, run `ctxl --help`.\n" +
+      "A session is auto-created on boot. Key tools:\n" +
+      "- session_log: Log a context entry to the current session. Use for any 'log entry' requests.\n" +
+      "- session_entries: List accumulated session entries.\n" +
+      "- session_info: Show current session details and connected bundles.\n" +
+      "- context_push: Push session entries to connected bundles.\n" +
+      "- context_pull: Pull entries from bundles (use at session start).\n" +
+      "- session_connect: Connect session to a bundle.\n" +
+      "- bundle_create: Create a new bundle.\n" +
+      "- bundle_list: List all bundles.\n" +
+      "Proactive behavior: call context_pull at session start if bundles are connected.\n" +
+      "**IMPORTANT: Call session_log after meaningful work (code changes, decisions, architecture choices).** " +
+      "**Break work into separate entries — one entry per logical change, not everything in one entry.**",
+  }
 );
 
 // ---------- Tool definitions ----------
