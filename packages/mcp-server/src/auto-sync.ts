@@ -100,6 +100,8 @@ export function startAutoSync(
       const consolidated = consolidateEntries(unpushed);
       const entryIds = consolidated.map((e) => e.id);
 
+      const pushedIds = new Set<string>();
+
       for (const b of cloudBundles) {
         try {
           // Get excluded entries for this bundle
@@ -111,6 +113,7 @@ export function startAutoSync(
           if (filteredIds.length === 0) continue;
 
           await pushSessionToBundle(sessionId, b.bundle_id, filteredIds);
+          for (const id of filteredIds) pushedIds.add(id);
           log(
             `Auto-synced ${filteredIds.length} entries to bundle ${b.bundle_id}`,
           );
@@ -119,9 +122,11 @@ export function startAutoSync(
         }
       }
 
-      // Mark all consolidated entries as pushed
-      markSessionEntriesPushed(sessionId, entryIds);
-      lastPushAt = now();
+      // Only mark entries that were actually pushed to at least one bundle
+      if (pushedIds.size > 0) {
+        markSessionEntriesPushed(sessionId, [...pushedIds]);
+        lastPushAt = now();
+      }
     } catch (err: any) {
       log(`Auto-sync error: ${err.message}`);
     }
