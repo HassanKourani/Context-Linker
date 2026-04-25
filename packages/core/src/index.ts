@@ -8,4 +8,5 @@ export * from "./cloud-sessions.js";
 export * from "./questions.js";
 export * from "./session-actions.js";
 export * from "./exclusions.js";
+export * from "./consolidate.js";
 export { getSupabase } from "./supabase.js";
