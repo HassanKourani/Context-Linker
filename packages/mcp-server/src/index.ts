@@ -33,7 +33,9 @@ import {
   addEntriesToBundle,
   localAddEntriesToBundle,
   removeEntryFromBundle,
+  includeEntryInBundle,
   localRemoveEntryFromBundle,
+  localIncludeEntryInBundle,
   localRemoveSessionRefsFromBundle,
   removeSessionEntriesFromBundle,
   copySessionToCloud,
@@ -459,6 +461,18 @@ const tools = [
     },
   },
   {
+    name: "bundle_include_entry",
+    description: "Re-include a previously excluded entry in a bundle. Removes the entry from the exclusion list so auto-sync can add it again. Use after bundle_remove_entry if you change your mind.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bundle_id: { type: "string", description: "Bundle ID" },
+        entry_id: { type: "string", description: "Entry ID to re-include" },
+      },
+      required: ["bundle_id", "entry_id"],
+    },
+  },
+  {
     name: "session_push_to_cloud",
     description:
       "Push the current local session to the cloud under a team. " +
@@ -748,6 +762,11 @@ const BundleRemoveEntryArgs = z.object({
   entry_id: z.string(),
 });
 
+const BundleIncludeEntryArgs = z.object({
+  bundle_id: z.string(),
+  entry_id: z.string(),
+});
+
 function ok(result: unknown) {
   return {
     content: [
@@ -1033,6 +1052,16 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           await removeEntryFromBundle(a.bundle_id, a.entry_id, { exclude: true, machineId: cfg.machine_id });
         }
         return ok({ removed: true, excluded: true });
+      }
+
+      case "bundle_include_entry": {
+        const a = BundleIncludeEntryArgs.parse(args);
+        if (isLocalBundle(a.bundle_id)) {
+          localIncludeEntryInBundle(a.bundle_id, a.entry_id);
+        } else {
+          await includeEntryInBundle(a.bundle_id, a.entry_id);
+        }
+        return ok({ included: true });
       }
 
       case "session_push_to_cloud": {
