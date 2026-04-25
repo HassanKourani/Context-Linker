@@ -50,6 +50,9 @@ interface UIState {
   // Edge hover
   hoveredEdgeId: string | null;
 
+  // Session row hover (for edge highlighting)
+  hoveredSessionId: string | null;
+
   // Edge action confirmation
   pendingEdgeAction: { sessionId: string; bundleId: string; action: "push" | "unlink" } | null;
 
@@ -76,6 +79,7 @@ interface UIState {
   toggleEntry: (entryId: string) => void;
   clearEntrySelection: () => void;
   setHoveredEdge: (id: string | null) => void;
+  setHoveredSession: (id: string | null) => void;
   setPendingEdgeAction: (action: { sessionId: string; bundleId: string; action: "push" | "unlink" } | null) => void;
   setPushBundleToCloudTarget: (target: { id: string; name: string } | null) => void;
   toggleHideEmptySessions: () => void;
@@ -97,6 +101,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   pendingConnectPush: null,
   selectedEntryIds: new Set(),
   hoveredEdgeId: null,
+  hoveredSessionId: null,
   pendingEdgeAction: null,
   pushBundleToCloudTarget: null,
   hideEmptySessions: (() => {
@@ -182,6 +187,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   clearEntrySelection: () => set({ selectedEntryIds: new Set() }),
 
   setHoveredEdge: (id) => set({ hoveredEdgeId: id }),
+  setHoveredSession: (id) => set({ hoveredSessionId: id }),
 
   setPendingEdgeAction: (action) => set({ pendingEdgeAction: action }),
 

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { X } from "lucide-react";
+import { FolderGit2, X } from "lucide-react";
 import { relativeTime } from "@/lib/time";
 import { useUIStore } from "@/stores/uiStore";
 import { useDeleteActiveSession } from "@/hooks/mutations/useDeleteActiveSession";
@@ -19,6 +19,7 @@ interface SessionData {
   branchSeq: number;
   branchTotal: number;
   cloudSessionId?: string | null;
+  edgeColor: string;
 }
 
 function SessionLabel({ session }: { session: SessionData }) {
@@ -94,6 +95,7 @@ export function ProjectNode({ data }: NodeProps) {
 
   const openBundlePanel = useUIStore((s) => s.openBundlePanel);
   const openSessionPanel = useUIStore((s) => s.openSessionPanel);
+  const setHoveredSession = useUIStore((s) => s.setHoveredSession);
   const deleteMutation = useDeleteActiveSession();
 
   const handleSessionClick = (s: SessionData) => {
@@ -110,16 +112,23 @@ export function ProjectNode({ data }: NodeProps) {
   };
 
   return (
-    <div className="bg-card border border-border rounded-lg min-w-[200px] shadow-lg">
-      <div className="px-3 py-2 border-b border-border font-semibold text-sm text-foreground">
-        {projectName}
+    <div className="bg-card border border-border rounded-lg min-w-[200px] shadow-lg" style={{ borderLeftWidth: 3, borderLeftColor: '#94e2d5' }}>
+      <div className="px-3 py-2 border-b border-border flex items-center gap-2" style={{ background: 'rgba(148, 226, 213, 0.06)' }}>
+        <FolderGit2 className="w-3.5 h-3.5 text-[#94e2d5] shrink-0" />
+        <span className="font-semibold text-sm text-foreground">{projectName}</span>
       </div>
       {sessions.map((s) => (
         <div
           key={s.id}
           className="group px-3 py-1.5 flex items-center gap-2 text-xs text-muted-foreground relative cursor-pointer hover:bg-accent/50 transition-colors"
           onClick={() => handleSessionClick(s)}
+          onMouseEnter={() => setHoveredSession(s.id)}
+          onMouseLeave={() => setHoveredSession(null)}
         >
+          <span
+            className="w-1.5 h-1.5 rounded-full shrink-0"
+            style={{ background: s.edgeColor }}
+          />
           <SessionLabel session={s} />
           {s.isYou && (
             <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#a6e3a1]/20 text-[#a6e3a1]">
@@ -141,7 +150,8 @@ export function ProjectNode({ data }: NodeProps) {
             position={Position.Right}
             id={s.id}
             isConnectable={true}
-            className="!w-2.5 !h-2.5 !bg-[#585b70] !border-border hover:!bg-[#a6e3a1] !cursor-grab !transition-colors"
+            className="!w-2.5 !h-2.5 !border-[#313244] !cursor-grab"
+            style={{ background: s.edgeColor }}
           />
         </div>
       ))}

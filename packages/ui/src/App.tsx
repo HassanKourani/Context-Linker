@@ -52,6 +52,7 @@ const edgeTypes: EdgeTypes = {
 export function App() {
   const { data, isLoading, dataUpdatedAt } = useGraphData();
   const hoveredEdgeId = useUIStore((s) => s.hoveredEdgeId);
+  const hoveredSessionId = useUIStore((s) => s.hoveredSessionId);
   const hideEmptySessions = useUIStore((s) => s.hideEmptySessions);
   const hideEmptyQuestions = useUIStore((s) => s.hideEmptyQuestions);
   const rfInstance = useRef<ReactFlowInstance | null>(null);
@@ -130,18 +131,24 @@ export function App() {
     setEdges(built.edges);
   }, [built, setNodes, setEdges, loadPositions]);
 
-  // Inject _hovered into the hovered edge's data
+  // Inject _hovered / _dimmed into edge data for color-coded highlighting
   useEffect(() => {
     setEdges((eds) =>
-      eds.map((e) =>
-        e.id === hoveredEdgeId
-          ? { ...e, data: { ...e.data, _hovered: true } }
-          : e.data?._hovered
-            ? { ...e, data: { ...e.data, _hovered: false } }
-            : e
-      )
+      eds.map((e) => {
+        const edgeSessionId = (e.data as any)?.sessionId as string | undefined;
+        const isHovered =
+          e.id === hoveredEdgeId ||
+          (hoveredSessionId != null && edgeSessionId === hoveredSessionId);
+        const isDimmed =
+          hoveredSessionId != null && edgeSessionId !== hoveredSessionId;
+
+        const prev = e.data as any;
+        if (prev?._hovered === isHovered && prev?._dimmed === isDimmed) return e;
+
+        return { ...e, data: { ...e.data, _hovered: isHovered, _dimmed: isDimmed } };
+      })
     );
-  }, [hoveredEdgeId, setEdges]);
+  }, [hoveredEdgeId, hoveredSessionId, setEdges]);
 
   const openModal = useUIStore((s) => s.openModal);
   const setPendingConnectPush = useUIStore((s) => s.setPendingConnectPush);
