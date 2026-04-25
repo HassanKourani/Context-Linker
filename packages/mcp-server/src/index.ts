@@ -1515,8 +1515,11 @@ const bootSession = await ensureSession();
 
 // Start auto-sync for cloud bundles
 if (bootSession) {
+  const projectConfig = loadProjectConfig(bootSession.project_path);
+  const autoSyncEnabled = projectConfig?.auto_sync !== false; // default true
   const hasCloudBundles = bootSession.bundles.some(b => b.mode === "cloud");
-  if (hasCloudBundles) {
+
+  if (autoSyncEnabled && hasCloudBundles) {
     autoSyncHandle = startAutoSync(
       bootSession.session_id,
       (msg) => process.stderr.write(`[auto-sync] ${msg}\n`),

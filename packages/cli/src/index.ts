@@ -950,6 +950,7 @@ program
       project_name: detectProjectName(),
       auto_push_on: ["commit"],
       push_debounce_seconds: 600,
+      auto_sync: true,
     };
     cfg.mode = mode;
     cfg.bundle = r.bundle_id;
@@ -1057,6 +1058,7 @@ program
       project_name: projectName,
       auto_push_on: ["commit"],
       push_debounce_seconds: 600,
+      auto_sync: true,
     };
     cfg.mode = mode;
     cfg.bundle = r.bundle_id;

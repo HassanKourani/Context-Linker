@@ -96,6 +96,7 @@ describe("loadProjectConfig / saveProjectConfig", () => {
       project_name: "my-project",
       auto_push_on: ["commit"] as ("commit" | "pr_open")[],
       push_debounce_seconds: 600,
+      auto_sync: true,
     };
     saveProjectConfig(cfg, projectDir);
     const loaded = loadProjectConfig(projectDir);

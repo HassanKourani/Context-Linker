@@ -22,6 +22,8 @@ export const ProjectConfigSchema = z.object({
   auto_push_on: z.array(z.enum(["commit", "pr_open"])).default(["commit"]),
   // Debounce pushes from the same event source in seconds.
   push_debounce_seconds: z.number().int().nonnegative().default(600),
+  // Whether to auto-sync cloud session entries in the background.
+  auto_sync: z.boolean().default(true),
 });
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
