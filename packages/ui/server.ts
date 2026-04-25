@@ -63,6 +63,7 @@ import {
   deleteSession,
   pushSessionToBundle,
   pushBundleToCloud,
+  readFeedEvents,
 } from "@ctx-link/core";
 
 // Broadcast Q&A events to active MCP sessions via their channel ports
@@ -276,6 +277,22 @@ const server = Bun.serve({
           { error: err.message ?? String(err) },
           { status: 500, headers: corsHeaders }
         );
+      }
+    }
+
+    // ── GET /api/teams/:id/feed ───────────────────────────────────────────────
+    {
+      const feedMatch = url.pathname.match(/^\/api\/teams\/([^/]+)\/feed$/);
+      if (feedMatch && req.method === "GET") {
+        try {
+          const teamId = feedMatch[1];
+          const limit = parseInt(url.searchParams.get("limit") ?? "50", 10);
+          const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
+          const events = await readFeedEvents(teamId, { limit, offset });
+          return Response.json(events, { headers: corsHeaders });
+        } catch (err: any) {
+          return Response.json({ error: err.message }, { status: 500, headers: corsHeaders });
+        }
       }
     }
 
