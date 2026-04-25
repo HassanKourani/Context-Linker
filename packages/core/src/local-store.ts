@@ -580,3 +580,32 @@ export function localListRewinds(bundleId: string, projectName?: string, limit =
     performed_at: l.performed_at,
   }));
 }
+
+// ─── Exclusion List ────────────────────────────────────────────────────────
+
+function readExcludedRefs(bundleId: string): Array<{ entry_id: string; excluded_at: string }> {
+  const p = join(bundleDir(bundleId), "excluded_refs.json");
+  if (!existsSync(p)) return [];
+  return JSON.parse(readFileSync(p, "utf-8"));
+}
+
+function writeExcludedRefs(bundleId: string, refs: Array<{ entry_id: string; excluded_at: string }>): void {
+  const p = join(bundleDir(bundleId), "excluded_refs.json");
+  writeFileSync(p, JSON.stringify(refs, null, 2));
+}
+
+export function localExcludeEntryFromBundle(bundleId: string, entryId: string): void {
+  const refs = readExcludedRefs(bundleId);
+  if (refs.some(r => r.entry_id === entryId)) return; // already excluded
+  refs.push({ entry_id: entryId, excluded_at: new Date().toISOString() });
+  writeExcludedRefs(bundleId, refs);
+}
+
+export function localIncludeEntryInBundle(bundleId: string, entryId: string): void {
+  const refs = readExcludedRefs(bundleId);
+  writeExcludedRefs(bundleId, refs.filter(r => r.entry_id !== entryId));
+}
+
+export function localGetExcludedEntryIds(bundleId: string): Set<string> {
+  return new Set(readExcludedRefs(bundleId).map(r => r.entry_id));
+}
