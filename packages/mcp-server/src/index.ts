@@ -59,6 +59,8 @@ import {
   type ActiveSession,
   type RewindStrategy,
   isLocalBundle,
+  isJoinCode,
+  resolveJoinCode,
   askQuestion,
   answerQuestion,
   resolveQuestion,
@@ -86,6 +88,7 @@ import { startAutoSync, type AutoSyncHandle } from "./auto-sync.js";
  */
 let ownSessionId: string | null = null;
 let autoSyncHandle: AutoSyncHandle | null = null;
+let hasShownWelcome = false;
 
 /** Get the active session for this MCP server instance. */
 function getSession(): ActiveSession | null {
@@ -698,7 +701,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 const BundleCreateArgs = z.object({ name: z.string() });
 const BundleJoinArgs = z.object({
   bundle_id: z.string(),
-  join_token: z.string(),
+  join_token: z.string().optional(),
   project_name: z.string(),
 });
 const BundleStatusArgs = z.object({ bundle_id: z.string() });
@@ -827,12 +830,30 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         }).parse(args);
         if (a.mode === "cloud" && !a.team_id) return fail("team_id is required when mode is 'cloud'.");
         const r = await createBundle(a.name, a.mode, a.team_id);
-        return ok(r);
+        return ok({
+          ...r,
+          join_code: r.join_code ?? null,
+          message: r.join_code
+            ? `Bundle created. Share with teammates: ctxl join ${r.join_code}`
+            : `Bundle created.`,
+        });
       }
 
       case "bundle_join": {
-        const a = BundleJoinArgs.parse(args);
-        const r = await joinBundle(a.bundle_id, a.join_token, a.project_name, "local");
+        const raw = BundleJoinArgs.parse(args);
+
+        // Resolve short join code if provided
+        let bundleId = raw.bundle_id;
+        let joinToken = raw.join_token;
+        if (isJoinCode(bundleId)) {
+          const resolved = await resolveJoinCode(bundleId);
+          if (!resolved) return fail("Join code not found or expired.");
+          bundleId = resolved.bundle_id;
+          joinToken = resolved.token;
+        }
+
+        if (!joinToken) return fail("join_token is required when bundle_id is a full bundle ID.");
+        const r = await joinBundle(bundleId, joinToken, raw.project_name, "local");
         return ok(r);
       }
 
@@ -932,6 +953,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           });
           let rendered = renderEntriesForClaude(rows);
           rendered = appendQuestions(rendered, [a.bundle_id], session?.project_name);
+          if (!hasShownWelcome && rows.length > 0) {
+            hasShownWelcome = true;
+            const projects = new Set(rows.map(r => r.project_name));
+            const header = `--- Context shared via ctx-link — ${rows.length} entries from ${projects.size} project(s) ---\n\n`;
+            rendered = header + rendered;
+          }
           return ok({ count: rows.length, rendered, entries: rows });
         }
 
@@ -955,6 +982,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const limited = allRows.slice(0, a.limit ?? 20);
         let rendered = renderEntriesForClaude(limited);
         rendered = appendQuestions(rendered, session.bundles.map((b) => b.bundle_id), session.project_name);
+        if (!hasShownWelcome && limited.length > 0) {
+          hasShownWelcome = true;
+          const projects = new Set(limited.map(r => r.project_name));
+          const header = `--- Context shared via ctx-link — ${limited.length} entries from ${projects.size} project(s) ---\n\n`;
+          rendered = header + rendered;
+        }
         return ok({ count: limited.length, rendered, entries: limited });
       }
 
