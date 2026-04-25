@@ -200,7 +200,6 @@ export function App() {
         isLoading={isLoading}
         dataUpdatedAt={dataUpdatedAt}
         onTidyUp={tidyUp}
-        teams={data?.teams?.map(t => ({ team_id: t.team_id, name: t.team_name }))}
       />
       <div className="flex-1">
         <ReactFlow
