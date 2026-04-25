@@ -69,6 +69,7 @@ import {
   pushSessionToBundle,
   pushBundleToCloud,
   ensureCloudCopy,
+  writeFeedEvent,
 } from "@ctx-link/core";
 import { z } from "zod";
 import { startChannelListener, broadcastToBundle, type ChannelMessage } from "./channel.js";
@@ -1001,6 +1002,19 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           return ok({ already_connected: true, bundle_id: a.bundle_id });
         }
         const updated = connectSessionToBundle(session.session_id, a.bundle_id, resolvedMode);
+
+        // Fire feed event for cloud bundles
+        if (!isLocalBundle(a.bundle_id)) {
+          const teamId = await getBundleTeamId(a.bundle_id);
+          if (teamId) {
+            writeFeedEvent(teamId, "session_connected", {
+              bundle_id: a.bundle_id,
+              project_name: session.project_name,
+              machine_id: loadGlobalConfig().machine_id,
+            }).catch(() => {});
+          }
+        }
+
         return ok({ connected: true, bundle_id: a.bundle_id, total_bundles: updated.bundles.length });
       }
 
@@ -1009,6 +1023,19 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const session = getSession();
         if (!session) return fail("No active session.");
         await unlinkSessionFromBundle(session.session_id, a.bundle_id);
+
+        // Fire feed event for cloud bundles
+        if (!isLocalBundle(a.bundle_id)) {
+          const teamId = await getBundleTeamId(a.bundle_id);
+          if (teamId) {
+            writeFeedEvent(teamId, "session_disconnected", {
+              bundle_id: a.bundle_id,
+              project_name: session.project_name,
+              machine_id: loadGlobalConfig().machine_id,
+            }).catch(() => {});
+          }
+        }
+
         const updated = loadActiveSession(session.session_id);
         return ok({ disconnected: true, bundle_id: a.bundle_id, total_bundles: updated?.bundles.length ?? 0 });
       }
