@@ -1597,10 +1597,47 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   return result;
 });
 
+// ---------- Auto-start UI server ----------
+
+async function startUiServer() {
+  try {
+    // Check if already running
+    const res = await fetch("http://127.0.0.1:5174/api/teams", {
+      signal: AbortSignal.timeout(1000),
+    });
+    if (res.ok) return; // already running
+  } catch {
+    // Not running — start it
+  }
+
+  try {
+    const { resolve } = await import("node:path");
+    const { existsSync } = await import("node:fs");
+
+    // Find server.js — works in both bundled (dist/) and dev (monorepo) mode
+    const candidates = [
+      resolve(import.meta.dir, "server.js"),           // bundled: dist/server.js
+      resolve(import.meta.dir, "../../ui/server.ts"),   // dev: packages/mcp-server/src/ → packages/ui/server.ts
+    ];
+    const serverPath = candidates.find(existsSync);
+    if (!serverPath) return; // UI server not available
+
+    const proc = Bun.spawn(["bun", serverPath], {
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    proc.unref(); // detach so MCP can exit without killing the UI server
+  } catch {
+    // Non-fatal — UI server is optional
+  }
+}
+
 // ---------- Boot ----------
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
+
+// Auto-start UI server (non-blocking)
+startUiServer();
 
 // Auto-start session — no manual session_start needed
 const bootSession = await ensureSession();

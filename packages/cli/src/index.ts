@@ -165,6 +165,83 @@ program
     }
   });
 
+// ==================== UI DASHBOARD ====================
+
+program
+  .command("ui")
+  .description(
+    "Start the ctx-link web dashboard.\n" +
+    "Launches the API + UI server on port 5174 and opens the browser.\n" +
+    "Requires 'bun run build:ui' to have been run at least once.\n\n" +
+    "Example:\n" +
+    "  $ ctxl ui\n" +
+    "  $ ctxl ui --no-open"
+  )
+  .option("--no-open", "don't open the browser automatically")
+  .action(async (opts) => {
+    const { resolve } = await import("node:path");
+
+    // Find server — works in both bundled (dist/) and dev (monorepo) mode
+    const serverCandidates = [
+      resolve(import.meta.dir, "server.js"),           // bundled: dist/server.js (cli.js is in dist/)
+      resolve(import.meta.dir, "../../ui/server.ts"),   // dev: packages/cli/src/ → packages/ui/server.ts
+    ];
+    const serverPath = serverCandidates.find(existsSync);
+    if (!serverPath) {
+      console.error("UI server not found. Make sure ctx-link is fully installed.");
+      process.exit(1);
+    }
+
+    // Find built UI — check both bundled and dev locations
+    const distCandidates = [
+      resolve(import.meta.dir, "ui/index.html"),        // bundled: dist/ui/index.html
+      resolve(import.meta.dir, "../../ui/dist/index.html"), // dev
+    ];
+    if (!distCandidates.some(existsSync)) {
+      console.error("UI not built. Run 'bun run build' first.");
+      process.exit(1);
+    }
+
+    // Check if already running
+    let alreadyRunning = false;
+    try {
+      const res = await fetch("http://127.0.0.1:5174/api/teams", {
+        signal: AbortSignal.timeout(1000),
+      });
+      if (res.ok) alreadyRunning = true;
+    } catch {}
+
+    if (alreadyRunning) {
+      console.log("ctx-link UI already running at http://localhost:5174");
+    } else {
+      console.log("Starting ctx-link UI server...");
+      const proc = Bun.spawn(["bun", serverPath], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      proc.unref();
+
+      // Wait briefly for server to start
+      for (let i = 0; i < 10; i++) {
+        await new Promise((r) => setTimeout(r, 300));
+        try {
+          const res = await fetch("http://127.0.0.1:5174/api/teams", {
+            signal: AbortSignal.timeout(500),
+          });
+          if (res.ok) break;
+        } catch {}
+      }
+      console.log("ctx-link UI server running at http://localhost:5174");
+    }
+
+    if (opts.open !== false) {
+      const { platform } = await import("node:os");
+      const openCmd = platform() === "darwin" ? "open" : platform() === "win32" ? "start" : "xdg-open";
+      try {
+        execSync(`${openCmd} http://localhost:5174`, { stdio: "ignore" });
+      } catch {}
+    }
+  });
+
 // ==================== PROJECT INFO ====================
 
 program

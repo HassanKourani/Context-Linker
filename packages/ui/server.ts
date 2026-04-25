@@ -1,3 +1,6 @@
+import { join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+
 import {
   loadGlobalConfig,
   listActiveSessions,
@@ -110,8 +113,9 @@ const server = Bun.serve({
   async fetch(req) {
     const url = new URL(req.url);
 
+    const origin = req.headers.get("Origin") ?? "*";
     const corsHeaders = {
-      "Access-Control-Allow-Origin": "http://localhost:5173",
+      "Access-Control-Allow-Origin": origin,
       "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
     };
@@ -1273,8 +1277,31 @@ const server = Bun.serve({
       }
     }
 
+    // ── Static file serving (built UI from dist/) ─────────────────────────────
+    // Works in both bundled (dist/server.js → dist/ui/) and dev (packages/ui/server.ts → packages/ui/dist/)
+    const distCandidates = [
+      join(import.meta.dir, "ui"),    // bundled: dist/ui/
+      join(import.meta.dir, "dist"),  // dev: packages/ui/dist/
+    ];
+    const distDir = distCandidates.find((d) => existsSync(join(d, "index.html")));
+    if (distDir) {
+      // Strip leading slash, default to index.html
+      let filePath = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
+      let fullPath = join(distDir, filePath);
+
+      // If the file doesn't exist, serve index.html (SPA client-side routing)
+      if (!existsSync(fullPath)) {
+        fullPath = join(distDir, "index.html");
+      }
+
+      const file = Bun.file(fullPath);
+      if (await file.exists()) {
+        return new Response(file);
+      }
+    }
+
     return new Response("Not found", { status: 404, headers: corsHeaders });
   },
 });
 
-console.log(`ctx-link UI API running at http://localhost:${server.port}`);
+console.log(`ctx-link UI server running at http://localhost:${server.port}`);
