@@ -93,11 +93,11 @@ function getSession(): ActiveSession | null {
   return loadActiveSession(ownSessionId);
 }
 
-/** Auto-create or resume a session on MCP server boot. */
+/** Auto-create a fresh session on MCP server boot. */
 async function ensureSession(): Promise<ActiveSession | null> {
-  const existing = getSession();
-  if (existing) return existing;
-
+  // Always create a new session — each MCP instance is a new Claude Code chat.
+  // The marker file may contain a stale session ID from a previous chat;
+  // don't inherit it. The user can explicitly resume via session_start.
   try {
     const sessionId = crypto.randomUUID();
     ownSessionId = sessionId;
