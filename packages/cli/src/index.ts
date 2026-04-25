@@ -57,6 +57,10 @@ import {
   addEntriesToBundle,
   listTeamSessions,
   getCloudSessionBundleConnections,
+  isJoinCode,
+  resolveJoinCode,
+  regenerateJoinCode,
+  getBundleToken,
   type RewindStrategy,
 } from "@ctx-link/core";
 
@@ -65,15 +69,14 @@ const HELP_TEXT = `Usage: ctxl [command] [options]
 Connect Claude Code sessions across projects via shared context bundles.
 
 Quick start:
-  $ ctxl setup                     Add MCP server to Claude Code
-  $ ctxl create-team               Create a team (cloud mode, once)
-  $ ctxl create                    Create a bundle
-  $ ctxl join                      Join from another project
+  $ ctxl init                      Create a bundle + connect in one step
+  $ ctxl join ctx-a3f9k2           Join via short code from a teammate
   $ ctxl push --message '...'      Push context (or auto on git commit)
   $ ctxl pull                      Pull context from the other project
 
 Setup:
-  setup                            Add ctx-link MCP server to Claude Code settings
+  setup                            Add MCP server to Claude Code
+  init                             Create bundle, connect session, get join code
   ui                               Start the web dashboard
   info                             Show current project config
 
@@ -99,10 +102,11 @@ Session Connectivity:
 
 Bundles:
   create [name]                    Create a new bundle
-  join [bundle_id]                 Join an existing bundle
+  join [bundle_id]                 Join a bundle (accepts short codes: ctx-abc123)
   my-bundles                       List all bundles
   status [bundle_id]               Show bundle details
   delete-bundle [bundle_id]        Permanently delete a bundle
+  regenerate-code [bundle_id]      Generate a new short join code
   leave                            Disconnect from bundle (keeps it alive)
 
 Bundle Entries:
@@ -512,6 +516,114 @@ program
       for (const b of session.bundles) {
         console.log(`  - ${b.bundle_id} [${b.mode}]`);
       }
+    }
+  });
+
+// ==================== INIT WIZARD ====================
+
+program
+  .command("init")
+  .description(
+    "Initialize ctx-link in this project. Creates a bundle, connects your session,\n" +
+    "and prints a join code for teammates.\n\n" +
+    "Example:\n" +
+    "  $ ctxl init\n" +
+    "  Bundle name: my-api\n" +
+    "  Mode: cloud\n" +
+    "  Team: my-team\n" +
+    "  ✓ Bundle created\n" +
+    "  ✓ Session connected\n" +
+    "  Share with teammates: ctxl join ctx-a3f9k2"
+  )
+  .option("--name <name>", "Bundle name")
+  .option("--mode <mode>", "local or cloud")
+  .option("--team <team_id>", "Team ID (cloud mode)")
+  .action(async (opts) => {
+    // Check for existing config
+    const existing = loadProjectConfig();
+    if (existing?.bundle) {
+      const overwrite = await confirm({
+        message: `This project is already linked to bundle ${existing.bundle.slice(0, 8)}... Create a new bundle?`,
+        default: false,
+      });
+      if (!overwrite) {
+        console.log("Keeping existing configuration.");
+        return;
+      }
+    }
+
+    // 1. Bundle name
+    const name = opts.name ?? await input({ message: "Bundle name:" });
+    if (!name) { console.error("Bundle name is required."); process.exit(1); }
+
+    // 2. Mode
+    const mode: "local" | "cloud" = opts.mode ?? await select({
+      message: "Mode:",
+      choices: [
+        { name: "local — same machine only, no network", value: "local" as const },
+        { name: "cloud — cross-machine, requires team", value: "cloud" as const },
+      ],
+    });
+
+    // 3. Team (cloud only)
+    let teamId = opts.team;
+    if (mode === "cloud" && !teamId) {
+      const teams = listMyTeams();
+      if (teams.length === 0) {
+        console.log("\nNo teams found. Create one first:");
+        const teamName = await input({ message: "Team name:" });
+        if (!teamName) { console.error("Team name is required."); process.exit(1); }
+        const pw = await password({ message: "Team password:" });
+        if (!pw) { console.error("Password is required."); process.exit(1); }
+        const team = await createTeam(teamName, pw);
+        teamId = team.team_id;
+        console.log(`  Team "${team.name}" created.`);
+      } else if (teams.length === 1) {
+        teamId = teams[0].team_id;
+      } else {
+        teamId = await select({
+          message: "Team:",
+          choices: teams.map(t => ({ name: t.name, value: t.team_id })),
+        });
+      }
+    }
+
+    // 4. Create bundle
+    console.log("");
+    const result = await createBundle(name, mode, teamId);
+    console.log(`  ✓ Bundle "${result.name}" created`);
+
+    // 5. Connect session
+    const sessionId = getActiveSessionId();
+    if (sessionId) {
+      connectSessionToBundle(sessionId, result.bundle_id, mode);
+      console.log(`  ✓ Session connected`);
+    } else {
+      console.log(`  ⚠ No active session — start Claude Code first`);
+    }
+
+    // 6. Detect project name
+    const projectName = detectProjectName();
+
+    // 7. Write .ctx-link.json
+    saveProjectConfig({
+      mode,
+      bundle: result.bundle_id,
+      project_name: projectName,
+      auto_push_on: ["commit"],
+      push_debounce_seconds: 600,
+      auto_sync: true,
+    });
+    console.log(`  ✓ .ctx-link.json written`);
+
+    // 8. Print join info
+    console.log("");
+    if (mode === "cloud" && result.join_code) {
+      console.log(`Share with teammates:`);
+      console.log(`  ctxl join ${result.join_code}`);
+    } else {
+      console.log(`Others can join with:`);
+      console.log(`  ctxl join ${result.bundle_id}`);
     }
   });
 
@@ -981,18 +1093,32 @@ program
   .command("join")
   .description(
     "Join an existing bundle from the current project.\n" +
+    "Accepts a bundle ID, or a short join code (e.g., ctx-abc123).\n" +
     "Mode is auto-detected (local if bundle dir exists, else cloud).\n" +
     "Cloud mode: lists your team bundles to pick from.\n" +
     "Local mode: pass the token from 'ctxl create' output.\n\n" +
     "Interactive:\n" +
     "  $ ctxl join\n\n" +
     "With flags (for scripting):\n" +
-    "  $ ctxl join abc-123"
+    "  $ ctxl join abc-123\n" +
+    "  $ ctxl join ctx-a3f9k2"
   )
   .argument("[bundle_id]", "bundle ID (prompted if not given)")
   .argument("[token]", "join token (local mode only)")
   .option("--mode <mode>", "'local' or 'cloud' (auto-detected if not set)")
   .action(async (bundleIdArg: string | undefined, token: string | undefined, opts) => {
+    // Resolve short join code if provided
+    if (bundleIdArg && isJoinCode(bundleIdArg)) {
+      const resolved = await resolveJoinCode(bundleIdArg);
+      if (!resolved) {
+        console.error("Join code not found or expired. Ask the bundle owner for a new code.");
+        process.exit(1);
+      }
+      bundleIdArg = resolved.bundle_id;
+      token = resolved.token;
+      console.log(`Resolved join code → bundle ${resolved.bundle_id.slice(0, 8)}...`);
+    }
+
     let bundleId = bundleIdArg;
     let mode: "local" | "cloud" = opts.mode;
 
@@ -1628,6 +1754,43 @@ program
       saveProjectConfig(cfg);
     }
     console.log(`Deleted bundle ${bundleId}.`);
+  });
+
+// ==================== JOIN CODES ====================
+
+program
+  .command("regenerate-code [bundle_id]")
+  .description(
+    "Generate a new short join code for a cloud bundle.\n" +
+    "Invalidates any existing code.\n\n" +
+    "Example:\n" +
+    "  $ ctxl regenerate-code\n" +
+    "  New join code: ctx-x7m2q9 (expires in 7 days)"
+  )
+  .option("--expiry <days>", "Expiry in days (default: 7)", "7")
+  .action(async (bundleIdArg, opts) => {
+    let bundleId = bundleIdArg;
+    if (!bundleId) {
+      const config = loadProjectConfig();
+      if (config?.bundle) {
+        bundleId = config.bundle;
+      } else {
+        bundleId = await input({ message: "Bundle ID:" });
+      }
+    }
+    if (!bundleId) { console.error("Bundle ID is required."); process.exit(1); }
+
+    const tokenInfo = getBundleToken(bundleId);
+    if (!tokenInfo) {
+      console.error("No token found for this bundle. Are you a member?");
+      process.exit(1);
+    }
+
+    const expiryDays = parseInt(opts.expiry, 10);
+    const code = await regenerateJoinCode(bundleId, tokenInfo, expiryDays);
+    console.log(`\nNew join code: ${code} (expires in ${expiryDays} days)`);
+    console.log(`\nShare with teammates:`);
+    console.log(`  ctxl join ${code}`);
   });
 
 // ==================== QUESTIONS ====================
