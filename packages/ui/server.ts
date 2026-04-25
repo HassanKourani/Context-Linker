@@ -17,9 +17,11 @@ import {
   addEntriesToBundle,
   removeEntryFromBundle,
   removeSessionEntriesFromBundle,
+  includeEntryInBundle,
   localAddEntriesToBundle,
   localRemoveEntryFromBundle,
   localRemoveSessionRefsFromBundle,
+  localIncludeEntryInBundle,
   localRemoveEntryRefsFromBundleByIds,
   createTeam,
   joinTeam,
@@ -61,6 +63,7 @@ import {
   deleteSession,
   pushSessionToBundle,
   pushBundleToCloud,
+  readFeedEvents,
 } from "@ctx-link/core";
 
 // Broadcast Q&A events to active MCP sessions via their channel ports
@@ -277,6 +280,22 @@ const server = Bun.serve({
       }
     }
 
+    // ── GET /api/teams/:id/feed ───────────────────────────────────────────────
+    {
+      const feedMatch = url.pathname.match(/^\/api\/teams\/([^/]+)\/feed$/);
+      if (feedMatch && req.method === "GET") {
+        try {
+          const teamId = feedMatch[1];
+          const limit = parseInt(url.searchParams.get("limit") ?? "50", 10);
+          const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
+          const events = await readFeedEvents(teamId, { limit, offset });
+          return Response.json(events, { headers: corsHeaders });
+        } catch (err: any) {
+          return Response.json({ error: err.message }, { status: 500, headers: corsHeaders });
+        }
+      }
+    }
+
     // ── GET /api/teams/:id/sessions ───────────────────────────────────────────
     {
       const match = url.pathname.match(/^\/api\/teams\/([^/]+)\/sessions$/);
@@ -374,9 +393,9 @@ const server = Bun.serve({
           const entryId = match[2];
           const mode = resolveBundleMode(bundleId);
           if (mode === "local") {
-            localRemoveEntryFromBundle(bundleId, entryId);
+            localRemoveEntryFromBundle(bundleId, entryId, { exclude: true });
           } else {
-            await removeEntryFromBundle(bundleId, entryId);
+            await removeEntryFromBundle(bundleId, entryId, { exclude: true });
           }
           return Response.json({ ok: true }, { headers: corsHeaders });
         } catch (err: any) {
@@ -384,6 +403,25 @@ const server = Bun.serve({
             { error: err.message ?? String(err) },
             { status: 500, headers: corsHeaders }
           );
+        }
+      }
+    }
+
+    // ── POST /api/bundles/:id/include-entry — re-include a previously excluded entry
+    {
+      const includeMatch = url.pathname.match(/^\/api\/bundles\/([^/]+)\/include-entry$/);
+      if (includeMatch && req.method === "POST") {
+        try {
+          const bundleId = includeMatch[1];
+          const { entry_id } = await req.json() as { entry_id: string };
+          if (isLocalBundle(bundleId)) {
+            localIncludeEntryInBundle(bundleId, entry_id);
+          } else {
+            await includeEntryInBundle(bundleId, entry_id);
+          }
+          return Response.json({ included: true }, { headers: corsHeaders });
+        } catch (err: any) {
+          return Response.json({ error: err.message }, { status: 500, headers: corsHeaders });
         }
       }
     }

@@ -23,6 +23,7 @@ type PanelView =
   | { kind: "bundle"; bundleId: string; filterProject: string | null }
   | { kind: "session"; sessionId: string; projectName: string; sessionName?: string | null }
   | { kind: "questions"; bundleId: string; bundleName: string }
+  | { kind: "feed" }
   | null;
 
 interface UIState {
@@ -49,6 +50,9 @@ interface UIState {
   // Edge hover
   hoveredEdgeId: string | null;
 
+  // Session row hover (for edge highlighting)
+  hoveredSessionId: string | null;
+
   // Edge action confirmation
   pendingEdgeAction: { sessionId: string; bundleId: string; action: "push" | "unlink" } | null;
 
@@ -63,6 +67,7 @@ interface UIState {
   openBundlePanel: (bundleId: string, filterProject?: string) => void;
   openSessionPanel: (sessionId: string, projectName: string, sessionName?: string | null) => void;
   openQuestionsPanel: (bundleId: string, bundleName: string) => void;
+  openFeedPanel: () => void;
   closePanel: () => void;
   setPanelTab: (tab: "entries" | "rewinds") => void;
   setFilterProject: (project: string | null) => void;
@@ -74,6 +79,7 @@ interface UIState {
   toggleEntry: (entryId: string) => void;
   clearEntrySelection: () => void;
   setHoveredEdge: (id: string | null) => void;
+  setHoveredSession: (id: string | null) => void;
   setPendingEdgeAction: (action: { sessionId: string; bundleId: string; action: "push" | "unlink" } | null) => void;
   setPushBundleToCloudTarget: (target: { id: string; name: string } | null) => void;
   toggleHideEmptySessions: () => void;
@@ -95,6 +101,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   pendingConnectPush: null,
   selectedEntryIds: new Set(),
   hoveredEdgeId: null,
+  hoveredSessionId: null,
   pendingEdgeAction: null,
   pushBundleToCloudTarget: null,
   hideEmptySessions: (() => {
@@ -126,6 +133,14 @@ export const useUIStore = create<UIState>((set, get) => ({
   openQuestionsPanel: (bundleId, bundleName) =>
     set({
       panel: { kind: "questions", bundleId, bundleName },
+      panelTab: "entries",
+      selectedBundleId: null,
+      filterProject: null,
+    }),
+
+  openFeedPanel: () =>
+    set({
+      panel: { kind: "feed" },
       panelTab: "entries",
       selectedBundleId: null,
       filterProject: null,
@@ -172,6 +187,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   clearEntrySelection: () => set({ selectedEntryIds: new Set() }),
 
   setHoveredEdge: (id) => set({ hoveredEdgeId: id }),
+  setHoveredSession: (id) => set({ hoveredSessionId: id }),
 
   setPendingEdgeAction: (action) => set({ pendingEdgeAction: action }),
 

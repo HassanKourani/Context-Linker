@@ -1,4 +1,4 @@
-import { Plus, Users, EyeOff, Eye, LayoutGrid, MessageCircleQuestion } from "lucide-react";
+import { Plus, Users, EyeOff, Eye, LayoutGrid, MessageCircleQuestion, Radio } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useUIStore } from "@/stores/uiStore";
 
@@ -11,6 +11,7 @@ interface TopBarProps {
 
 export function TopBar({ machineId, isLoading, dataUpdatedAt, onTidyUp }: TopBarProps) {
   const openModal = useUIStore((s) => s.openModal);
+  const openFeedPanel = useUIStore((s) => s.openFeedPanel);
   const hideEmptySessions = useUIStore((s) => s.hideEmptySessions);
   const toggleHideEmptySessions = useUIStore((s) => s.toggleHideEmptySessions);
   const hideEmptyQuestions = useUIStore((s) => s.hideEmptyQuestions);
@@ -53,6 +54,15 @@ export function TopBar({ machineId, isLoading, dataUpdatedAt, onTidyUp }: TopBar
           >
             <LayoutGrid className="w-3.5 h-3.5 mr-1" />
             Tidy up
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-xs text-muted-foreground hover:text-foreground"
+            onClick={() => openFeedPanel()}
+          >
+            <Radio className="w-3.5 h-3.5 mr-1" />
+            Live Feed
           </Button>
         </div>
       </div>

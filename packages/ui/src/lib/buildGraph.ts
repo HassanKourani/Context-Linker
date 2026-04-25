@@ -1,7 +1,7 @@
 import type { Node, Edge } from "@xyflow/react";
 import type { GraphData, BundleGraphData, ActiveSessionData, CloudSessionData } from "../types";
 import { computeLayout, type LayoutNode, type LayoutEdge } from "./layout";
-import { teamColor, LOCAL_GROUP_COLOR } from "./colors";
+import { teamColor, LOCAL_GROUP_COLOR, sessionColor } from "./colors";
 
 const PROJECT_NODE_WIDTH = 220;
 const PROJECT_NODE_HEADER = 36;
@@ -10,9 +10,9 @@ const BUNDLE_NODE_WIDTH = 200;
 const BUNDLE_NODE_HEIGHT = 88;
 const QUESTIONS_NODE_SIZE = 40;
 const QUESTIONS_NODE_GAP = 12;
-const GROUP_PADDING = 40;
+const GROUP_PADDING = 48;
 const GROUP_HEADER = 36;
-const GROUP_GAP = 40;
+const GROUP_GAP = 60;
 
 function projectNodeHeight(sessionCount: number): number {
   return PROJECT_NODE_HEADER + Math.max(sessionCount, 1) * PROJECT_NODE_ROW + 8;
@@ -132,19 +132,26 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
 
   if (layoutNodes.length === 0) return { nodes, edges };
 
-  // Ensure dagre always ranks projects left of bundles.
+  // Ensure dagre always ranks projects left, bundles right.
   // Without edges, dagre puts disconnected nodes in the same rank.
-  // Add one phantom edge per project to the first bundle to enforce LR ranking
-  // without creating a full bipartite graph that distorts the layout.
+  // Phantom edges enforce LR ordering without appearing visually.
   const projectNodeIds = [...projectSessions.keys()].map((p) => `project-${groupId}-${p}`);
   const bundleNodeIds = bundles.map((b) => `bundle-${b.bundle_id}`);
-  const realTargets = new Set(layoutEdges.map((e) => `${e.source}->${e.target}`));
-  if (bundleNodeIds.length > 0) {
+  if (projectNodeIds.length > 0 && bundleNodeIds.length > 0) {
+    const sources = new Set(layoutEdges.map((e) => e.source));
+    const targets = new Set(layoutEdges.map((e) => e.target));
+
+    // Every project needs at least one outgoing edge → left rank
+    // weight: 0 so phantom edges don't distort vertical ordering
     for (const pid of projectNodeIds) {
-      // Only add phantom edge if this project has no real edge to any bundle
-      const hasRealEdge = bundleNodeIds.some((bid) => realTargets.has(`${pid}->${bid}`));
-      if (!hasRealEdge) {
-        layoutEdges.push({ source: pid, target: bundleNodeIds[0] });
+      if (!sources.has(pid)) {
+        layoutEdges.push({ source: pid, target: bundleNodeIds[0], weight: 0 });
+      }
+    }
+    // Every bundle needs at least one incoming edge → right rank
+    for (const bid of bundleNodeIds) {
+      if (!targets.has(bid)) {
+        layoutEdges.push({ source: projectNodeIds[0], target: bid, weight: 0 });
       }
     }
   }
@@ -194,6 +201,7 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
             branchSeq: sameBranchBefore + 1,
             branchTotal: sessions.filter((o) => o.branch === s.branch).length,
             cloudSessionId: s.cloudSessionId ?? null,
+            edgeColor: sessionColor(s.sessionId),
           };
         }),
       },
@@ -245,6 +253,7 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
             bundleId: s.bundleId,
             projectName,
             mode: isLocal ? "local" : "cloud",
+            _color: sessionColor(s.sessionId),
           },
           style: { stroke: "#585b70", strokeWidth: 2 },
         });
@@ -282,6 +291,7 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
             bundleId: b.bundle_id,
             projectName: as.project_name,
             mode: b.mode,
+            _color: sessionColor(as.session_id),
           },
           style: { stroke: "#585b70", strokeWidth: 2 },
         });
@@ -326,6 +336,7 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
             bundleId: b.bundle_id,
             projectName: cs.project_name,
             mode: b.mode,
+            _color: sessionColor(cs.id),
           },
           style: { stroke: "#585b70", strokeWidth: 2 },
         });

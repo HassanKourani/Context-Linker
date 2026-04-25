@@ -1,5 +1,5 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { Cloud, CloudUpload, MoreHorizontal, Trash2 } from "lucide-react";
+import { Cloud, CloudUpload, MoreHorizontal, Package, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -44,7 +44,8 @@ export function BundleNode({ data }: NodeProps) {
 
   return (
     <div
-      className="bg-card border border-border rounded-lg min-w-[180px] shadow-lg cursor-pointer hover:border-primary/50 transition-colors"
+      className="bg-card border border-border rounded-lg min-w-[180px] shadow-lg cursor-pointer transition-all hover:shadow-[0_0_12px_rgba(203,166,247,0.2)]"
+      style={{ borderTopWidth: 3, borderTopColor: '#cba6f7' }}
       onClick={handleClick}
     >
       <Handle
@@ -59,9 +60,10 @@ export function BundleNode({ data }: NodeProps) {
         id="questions"
         className="!w-2 !h-2 !bg-yellow/60 !border-border"
       /> */}
-      <div className="px-3 py-2 border-b border-border flex items-center justify-between">
+      <div className="px-3 py-2 border-b border-border flex items-center justify-between" style={{ background: 'rgba(203, 166, 247, 0.06)' }}>
         <div className="flex items-center gap-1.5 min-w-0">
-          {!isLocal && <Cloud className="w-3 h-3 text-blue/60 shrink-0" />}
+          <Package className="w-3.5 h-3.5 text-[#cba6f7] shrink-0" />
+          {!isLocal && <Cloud className="w-3 h-3 text-[#89b4fa]/60 shrink-0" />}
           <span className="font-semibold text-sm text-foreground truncate">
             {bundleName}
           </span>

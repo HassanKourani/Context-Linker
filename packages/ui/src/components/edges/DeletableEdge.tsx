@@ -23,8 +23,23 @@ export function DeletableEdge({
     targetPosition,
   });
 
+  const color = (data as any)?._color ?? "#585b70";
   const isHovered = (data as any)?._hovered as boolean | undefined;
-  const highlight = isHovered || selected;
+  const isDimmed = (data as any)?._dimmed as boolean | undefined;
+
+  let strokeOpacity: number;
+  let strokeWidth: number;
+
+  if (isHovered || selected) {
+    strokeOpacity = 1;
+    strokeWidth = 2.5;
+  } else if (isDimmed) {
+    strokeOpacity = 0.12;
+    strokeWidth = 1.5;
+  } else {
+    strokeOpacity = 0.55;
+    strokeWidth = 2;
+  }
 
   return (
     <>
@@ -39,10 +54,11 @@ export function DeletableEdge({
         id={id}
         d={edgePath}
         fill="none"
-        stroke={highlight ? "#89b4fa" : "#585b70"}
-        strokeWidth={highlight ? 2.5 : 2}
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeOpacity={strokeOpacity}
         style={{
-          transition: "stroke 0.15s, stroke-width 0.15s",
+          transition: "stroke-opacity 0.2s, stroke-width 0.2s",
           pointerEvents: "none",
         }}
         className="react-flow__edge-path"

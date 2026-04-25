@@ -150,3 +150,11 @@ export interface QuestionData {
   created_at: string;
   answers: QuestionAnswer[];
 }
+
+export interface FeedEvent {
+  id: string;
+  team_id: string;
+  event_type: "entry_pushed" | "session_connected" | "session_disconnected" | "bundle_created" | "bundle_deleted";
+  payload: Record<string, unknown>;
+  created_at: string;
+}

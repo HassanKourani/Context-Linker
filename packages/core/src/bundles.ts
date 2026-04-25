@@ -36,6 +36,7 @@ export interface CreateBundleResult {
   bundle_id: string;
   name: string;
   join_token: string;
+  join_code?: string;
 }
 
 export async function createBundle(name: string, mode: "local" | "cloud" = "cloud", teamId?: string): Promise<CreateBundleResult> {
@@ -80,7 +81,25 @@ export async function createBundle(name: string, mode: "local" | "cloud" = "clou
 
   storeBundleToken(data.id, `team_${teamId}`, data.name);
 
-  return { bundle_id: data.id, name: data.name, join_token: `team_${teamId}` };
+  // Fire feed event
+  try {
+    const { writeFeedEvent } = await import("./feed.js");
+    writeFeedEvent(teamId!, "bundle_created", {
+      bundle_id: data.id,
+      bundle_name: data.name,
+      machine_id: cfg.machine_id,
+    }).catch(() => {});
+  } catch {}
+
+  // Auto-generate a short join code for cloud bundles
+  try {
+    const { createJoinCode } = await import("./join-codes.js");
+    const joinCode = await createJoinCode(data.id, `team_${teamId}`);
+    return { bundle_id: data.id, name: data.name, join_token: `team_${teamId}`, join_code: joinCode };
+  } catch {
+    // Non-fatal — code generation is optional
+    return { bundle_id: data.id, name: data.name, join_token: `team_${teamId}` };
+  }
 }
 
 export interface JoinBundleResult {
@@ -198,6 +217,10 @@ export async function bundleStatus(bundleId: string, mode: "local" | "cloud" = "
 }
 
 export async function deleteBundle(bundleId: string, mode: "local" | "cloud" = "cloud"): Promise<void> {
+  // Read team ID before delete (row won't exist after)
+  let feedTeamId: string | null = null;
+  try { feedTeamId = await getBundleTeamId(bundleId); } catch {}
+
   if (mode === "local") {
     const { localDeleteBundle } = await import("./local-store.js");
     localDeleteBundle(bundleId);
@@ -212,6 +235,16 @@ export async function deleteBundle(bundleId: string, mode: "local" | "cloud" = "
   const store = loadTokenStore();
   delete store[bundleId];
   saveTokenStore(store);
+
+  // Fire feed event
+  if (feedTeamId) {
+    try {
+      const { writeFeedEvent } = await import("./feed.js");
+      writeFeedEvent(feedTeamId, "bundle_deleted", {
+        bundle_id: bundleId,
+      }).catch(() => {});
+    } catch {}
+  }
 }
 
 export interface LocalBundleInfo {

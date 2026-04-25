@@ -33,7 +33,9 @@ import {
   addEntriesToBundle,
   localAddEntriesToBundle,
   removeEntryFromBundle,
+  includeEntryInBundle,
   localRemoveEntryFromBundle,
+  localIncludeEntryInBundle,
   localRemoveSessionRefsFromBundle,
   removeSessionEntriesFromBundle,
   copySessionToCloud,
@@ -57,6 +59,8 @@ import {
   type ActiveSession,
   type RewindStrategy,
   isLocalBundle,
+  isJoinCode,
+  resolveJoinCode,
   askQuestion,
   answerQuestion,
   resolveQuestion,
@@ -67,9 +71,11 @@ import {
   pushSessionToBundle,
   pushBundleToCloud,
   ensureCloudCopy,
+  writeFeedEvent,
 } from "@ctx-link/core";
 import { z } from "zod";
 import { startChannelListener, broadcastToBundle, type ChannelMessage } from "./channel.js";
+import { startAutoSync, type AutoSyncHandle } from "./auto-sync.js";
 
 /**
  * Each MCP server instance is 1:1 with a Claude Code instance.
@@ -81,6 +87,8 @@ import { startChannelListener, broadcastToBundle, type ChannelMessage } from "./
  * (so a second instance overwriting it doesn't affect us).
  */
 let ownSessionId: string | null = null;
+let autoSyncHandle: AutoSyncHandle | null = null;
+let hasShownWelcome = false;
 
 /** Get the active session for this MCP server instance. */
 function getSession(): ActiveSession | null {
@@ -459,6 +467,18 @@ const tools = [
     },
   },
   {
+    name: "bundle_include_entry",
+    description: "Re-include a previously excluded entry in a bundle. Removes the entry from the exclusion list so auto-sync can add it again. Use after bundle_remove_entry if you change your mind.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bundle_id: { type: "string", description: "Bundle ID" },
+        entry_id: { type: "string", description: "Entry ID to re-include" },
+      },
+      required: ["bundle_id", "entry_id"],
+    },
+  },
+  {
     name: "session_push_to_cloud",
     description:
       "Push the current local session to the cloud under a team. " +
@@ -681,7 +701,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 const BundleCreateArgs = z.object({ name: z.string() });
 const BundleJoinArgs = z.object({
   bundle_id: z.string(),
-  join_token: z.string(),
+  join_token: z.string().optional(),
   project_name: z.string(),
 });
 const BundleStatusArgs = z.object({ bundle_id: z.string() });
@@ -748,6 +768,11 @@ const BundleRemoveEntryArgs = z.object({
   entry_id: z.string(),
 });
 
+const BundleIncludeEntryArgs = z.object({
+  bundle_id: z.string(),
+  entry_id: z.string(),
+});
+
 function ok(result: unknown) {
   return {
     content: [
@@ -789,6 +814,11 @@ const CTX_LINK_AUTO_LOG: Record<string, (a: Record<string, any>) => string | nul
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args } = req.params;
 
+  // Notify auto-sync of activity on any tool call (Claude is working)
+  if (autoSyncHandle) {
+    autoSyncHandle.recordActivity();
+  }
+
   const result = await (async () => {
   try {
     switch (name) {
@@ -800,12 +830,30 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         }).parse(args);
         if (a.mode === "cloud" && !a.team_id) return fail("team_id is required when mode is 'cloud'.");
         const r = await createBundle(a.name, a.mode, a.team_id);
-        return ok(r);
+        return ok({
+          ...r,
+          join_code: r.join_code ?? null,
+          message: r.join_code
+            ? `Bundle created. Share with teammates: ctxl join ${r.join_code}`
+            : `Bundle created.`,
+        });
       }
 
       case "bundle_join": {
-        const a = BundleJoinArgs.parse(args);
-        const r = await joinBundle(a.bundle_id, a.join_token, a.project_name, "local");
+        const raw = BundleJoinArgs.parse(args);
+
+        // Resolve short join code if provided
+        let bundleId = raw.bundle_id;
+        let joinToken = raw.join_token;
+        if (isJoinCode(bundleId)) {
+          const resolved = await resolveJoinCode(bundleId);
+          if (!resolved) return fail("Join code not found or expired.");
+          bundleId = resolved.bundle_id;
+          joinToken = resolved.token;
+        }
+
+        if (!joinToken) return fail("join_token is required when bundle_id is a full bundle ID.");
+        const r = await joinBundle(bundleId, joinToken, raw.project_name, "local");
         return ok(r);
       }
 
@@ -905,6 +953,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           });
           let rendered = renderEntriesForClaude(rows);
           rendered = appendQuestions(rendered, [a.bundle_id], session?.project_name);
+          if (!hasShownWelcome && rows.length > 0) {
+            hasShownWelcome = true;
+            const projects = new Set(rows.map(r => r.project_name));
+            const header = `--- Context shared via ctx-link — ${rows.length} entries from ${projects.size} project(s) ---\n\n`;
+            rendered = header + rendered;
+          }
           return ok({ count: rows.length, rendered, entries: rows });
         }
 
@@ -928,6 +982,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const limited = allRows.slice(0, a.limit ?? 20);
         let rendered = renderEntriesForClaude(limited);
         rendered = appendQuestions(rendered, session.bundles.map((b) => b.bundle_id), session.project_name);
+        if (!hasShownWelcome && limited.length > 0) {
+          hasShownWelcome = true;
+          const projects = new Set(limited.map(r => r.project_name));
+          const header = `--- Context shared via ctx-link — ${limited.length} entries from ${projects.size} project(s) ---\n\n`;
+          rendered = header + rendered;
+        }
         return ok({ count: limited.length, rendered, entries: limited });
       }
 
@@ -975,6 +1035,19 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           return ok({ already_connected: true, bundle_id: a.bundle_id });
         }
         const updated = connectSessionToBundle(session.session_id, a.bundle_id, resolvedMode);
+
+        // Fire feed event for cloud bundles
+        if (!isLocalBundle(a.bundle_id)) {
+          const teamId = await getBundleTeamId(a.bundle_id);
+          if (teamId) {
+            writeFeedEvent(teamId, "session_connected", {
+              bundle_id: a.bundle_id,
+              project_name: session.project_name,
+              machine_id: loadGlobalConfig().machine_id,
+            }).catch(() => {});
+          }
+        }
+
         return ok({ connected: true, bundle_id: a.bundle_id, total_bundles: updated.bundles.length });
       }
 
@@ -983,6 +1056,19 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const session = getSession();
         if (!session) return fail("No active session.");
         await unlinkSessionFromBundle(session.session_id, a.bundle_id);
+
+        // Fire feed event for cloud bundles
+        if (!isLocalBundle(a.bundle_id)) {
+          const teamId = await getBundleTeamId(a.bundle_id);
+          if (teamId) {
+            writeFeedEvent(teamId, "session_disconnected", {
+              bundle_id: a.bundle_id,
+              project_name: session.project_name,
+              machine_id: loadGlobalConfig().machine_id,
+            }).catch(() => {});
+          }
+        }
+
         const updated = loadActiveSession(session.session_id);
         return ok({ disconnected: true, bundle_id: a.bundle_id, total_bundles: updated?.bundles.length ?? 0 });
       }
@@ -1027,11 +1113,22 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "bundle_remove_entry": {
         const a = BundleRemoveEntryArgs.parse(args);
         if (isLocalBundle(a.bundle_id)) {
-          localRemoveEntryFromBundle(a.bundle_id, a.entry_id);
+          localRemoveEntryFromBundle(a.bundle_id, a.entry_id, { exclude: true });
         } else {
-          await removeEntryFromBundle(a.bundle_id, a.entry_id);
+          const cfg = loadGlobalConfig();
+          await removeEntryFromBundle(a.bundle_id, a.entry_id, { exclude: true, machineId: cfg.machine_id });
         }
-        return ok({ removed: true });
+        return ok({ removed: true, excluded: true });
+      }
+
+      case "bundle_include_entry": {
+        const a = BundleIncludeEntryArgs.parse(args);
+        if (isLocalBundle(a.bundle_id)) {
+          localIncludeEntryInBundle(a.bundle_id, a.entry_id);
+        } else {
+          await includeEntryInBundle(a.bundle_id, a.entry_id);
+        }
+        return ok({ included: true });
       }
 
       case "session_push_to_cloud": {
@@ -1476,6 +1573,53 @@ startUiServer();
 // Auto-start session — no manual session_start needed
 const bootSession = await ensureSession();
 
+// Start auto-sync for cloud bundles
+if (bootSession) {
+  const projectConfig = loadProjectConfig(bootSession.project_path);
+  const autoSyncEnabled = projectConfig?.auto_sync !== false; // default true
+  const hasCloudBundles = bootSession.bundles.some(b => b.mode === "cloud");
+
+  if (autoSyncEnabled && hasCloudBundles) {
+    autoSyncHandle = startAutoSync(
+      bootSession.session_id,
+      (msg) => process.stderr.write(`[auto-sync] ${msg}\n`),
+    );
+  }
+}
+
+// Auto-pull from cloud bundles on session start (respects auto_sync config)
+if (bootSession) {
+  const projectConfig = loadProjectConfig(bootSession.project_path);
+  const autoSyncEnabled = projectConfig?.auto_sync !== false;
+  if (autoSyncEnabled) {
+    const cloudBundles = bootSession.bundles.filter(b => b.mode === "cloud");
+    for (const b of cloudBundles) {
+      try {
+        const rows = await pullEntries({
+          bundle_id: b.bundle_id,
+          exclude_project: bootSession.project_name,
+          mode: "cloud",
+          limit: 20,
+          skipAuth: true,
+        });
+        if (rows.length > 0) {
+          const rendered = renderEntriesForClaude(rows);
+          process.stderr.write(`[auto-sync] Auto-pulled ${rows.length} entries from bundle ${b.bundle_id}\n`);
+          try {
+            await server.sendLoggingMessage({
+              level: "info",
+              logger: "ctx-link-auto-pull",
+              data: `[AUTO-PULL] ${rows.length} entries from connected bundles:\n\n${rendered}`,
+            });
+          } catch {}
+        }
+      } catch (err: any) {
+        process.stderr.write(`[auto-sync] Auto-pull from ${b.bundle_id} failed: ${err.message}\n`);
+      }
+    }
+  }
+}
+
 // Start Q&A channel listener for cross-session notifications
 let channelHandle: { port: number; close: () => void } | null = null;
 
@@ -1509,8 +1653,8 @@ if (bootSession) {
 }
 
 // Clean shutdown
-process.on("SIGINT", () => { channelHandle?.close(); process.exit(0); });
-process.on("SIGTERM", () => { channelHandle?.close(); process.exit(0); });
+process.on("SIGINT", () => { autoSyncHandle?.stop(); channelHandle?.close(); process.exit(0); });
+process.on("SIGTERM", () => { autoSyncHandle?.stop(); channelHandle?.close(); process.exit(0); });
 
 // Stderr only, stdio is the MCP wire.
 process.stderr.write("ctx-link MCP server ready\n");

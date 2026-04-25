@@ -9,6 +9,8 @@ export interface LayoutNode {
 export interface LayoutEdge {
   source: string;
   target: string;
+  /** 0 = ranking only (phantom), 1 = normal (default) */
+  weight?: number;
 }
 
 export interface LayoutResult {
@@ -17,8 +19,8 @@ export interface LayoutResult {
   graphHeight: number;
 }
 
-const NODE_SEP = 40;
-const RANK_SEP = 100;
+const NODE_SEP = 64;
+const RANK_SEP = 120;
 
 export function computeLayout(
   nodes: LayoutNode[],
@@ -31,7 +33,6 @@ export function computeLayout(
     ranksep: RANK_SEP,
     marginx: 0,
     marginy: 0,
-    align: "UL",
   });
   g.setDefaultEdgeLabel(() => ({}));
 
@@ -39,7 +40,7 @@ export function computeLayout(
     g.setNode(node.id, { width: node.width, height: node.height });
   }
   for (const edge of edges) {
-    g.setEdge(edge.source, edge.target);
+    g.setEdge(edge.source, edge.target, { weight: edge.weight ?? 1 });
   }
 
   dagre.layout(g);

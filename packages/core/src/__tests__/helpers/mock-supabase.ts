@@ -21,6 +21,7 @@ interface MockQueryBuilder {
   not: ReturnType<typeof import("bun:test").mock>;
   order: ReturnType<typeof import("bun:test").mock>;
   limit: ReturnType<typeof import("bun:test").mock>;
+  range: ReturnType<typeof import("bun:test").mock>;
   single: ReturnType<typeof import("bun:test").mock>;
   maybeSingle: ReturnType<typeof import("bun:test").mock>;
   // The terminal result — what the chain resolves to
@@ -35,7 +36,7 @@ export function createMockQueryBuilder(): MockQueryBuilder {
   // All chainable methods return `builder` so calls like .select().eq().order() work
   const chainMethods = [
     "select", "insert", "update", "upsert", "delete",
-    "eq", "neq", "in", "is", "not", "order", "limit",
+    "eq", "neq", "in", "is", "not", "order", "limit", "range",
   ];
 
   for (const method of chainMethods) {
