@@ -39,7 +39,7 @@ SHA=$(git rev-parse HEAD)
 SHORT_SHA=$(git rev-parse --short HEAD)
 
 echo "ctx-link: logging commit $SHORT_SHA to session"
-ctx-link session-log --event commit --ref "$SHA" --diff || {
+ctxl session-log --event commit --ref "$SHA" --diff || {
   echo "ctx-link: session-log failed (non-fatal)" >&2
   exit 0
 }

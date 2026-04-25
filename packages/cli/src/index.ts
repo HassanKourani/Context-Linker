@@ -123,7 +123,7 @@ Run 'ctxl <command> --help' for details on any command.
 
 // Detect if running from source (dev) or published (prod)
 const isDev = import.meta.path.endsWith(".ts");
-let cliVersion = "0.1.4";
+let cliVersion = "0.1.5";
 try {
   // In dev, read version from root package.json
   if (isDev) {
@@ -146,7 +146,22 @@ if (envIdx !== -1 && process.argv[envIdx + 1]) {
   const { writeFileSync, mkdirSync } = await import("node:fs");
   const bunBin = path.resolve(os.homedir(), ".bun/bin");
   const settingsPath = path.resolve(os.homedir(), ".claude/settings.json");
-  const repoRoot = path.resolve(import.meta.dir, "../../..");
+  // Find repo root: walk up from import.meta.dir looking for package.json with name "ctx-link"
+  let repoRoot = path.resolve(import.meta.dir);
+  while (repoRoot !== "/") {
+    const pkgPath = path.resolve(repoRoot, "package.json");
+    if (existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+        if (pkg.name === "ctx-link" && pkg.workspaces) break;
+      } catch {}
+    }
+    repoRoot = path.dirname(repoRoot);
+  }
+  if (repoRoot === "/") {
+    console.error("Could not find ctx-link repo root. Run this from the repo or the dev source.");
+    process.exit(1);
+  }
 
   // Switch CLI symlinks
   if (mode === "dev") {
@@ -644,8 +659,9 @@ program
   .option("--diff", "use git diff HEAD~1 as raw context for summary", false)
   .option("--message <text>", "summary text")
   .option("--summary <text>", "explicit summary (use with --diff)")
+  .option("--session-id <id>", "target session ID (defaults to active session)")
   .action(async (opts) => {
-    const sessionId = getActiveSessionId();
+    const sessionId = opts.sessionId ?? getActiveSessionId();
     if (!sessionId) {
       console.error("No active session.");
       process.exit(1);

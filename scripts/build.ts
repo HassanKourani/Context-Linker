@@ -25,8 +25,17 @@ mkdirSync(distDir, { recursive: true });
 console.log("Building ctx-link...\n");
 
 // 1. Bundle server-side entry points
-// --packages=external keeps all node_modules as external imports (installed as deps)
-// Workspace packages (@ctx-link/core) get inlined automatically
+// Bundle @ctx-link/core inline, keep npm deps external
+const externalDeps = [
+  "@modelcontextprotocol/sdk",
+  "@supabase/supabase-js",
+  "argon2",
+  "commander",
+  "@inquirer/prompts",
+  "nanoid",
+  "zod",
+];
+
 const entries = [
   { input: "packages/mcp-server/src/index.ts", output: "dist/mcp.js", label: "MCP server" },
   { input: "packages/cli/src/index.ts", output: "dist/cli.js", label: "CLI" },
@@ -38,7 +47,7 @@ for (const { input, output, label } of entries) {
   const result = Bun.spawnSync([
     "bun", "build", input,
     "--target=bun",
-    "--packages=external",
+    ...externalDeps.flatMap(d => ["--external", d]),
     "--outfile", output,
   ], { cwd: root, stderr: "pipe", stdout: "pipe" });
 
