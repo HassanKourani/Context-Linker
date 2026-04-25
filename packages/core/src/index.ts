@@ -9,4 +9,5 @@ export * from "./questions.js";
 export * from "./session-actions.js";
 export * from "./exclusions.js";
 export * from "./consolidate.js";
+export * from "./feed.js";
 export { getSupabase } from "./supabase.js";
