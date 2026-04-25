@@ -57,6 +57,7 @@ import {
   countOpenQuestions,
   getQuestion,
   getSupabase,
+  unlinkSessionFromBundle,
 } from "@ctx-link/core";
 
 // Broadcast Q&A events to active MCP sessions via their channel ports
@@ -107,9 +108,11 @@ async function broadcastAnswer(bundleId: string, question: any, fromSessionId: s
   }
 }
 
+const CTX_LINK_PORT = parseInt(process.env.CTX_LINK_PORT || "5174", 10);
+
 const server = Bun.serve({
   hostname: "127.0.0.1",
-  port: 5174,
+  port: CTX_LINK_PORT,
   async fetch(req) {
     const url = new URL(req.url);
 
@@ -1103,75 +1106,7 @@ const server = Bun.serve({
     if (url.pathname === "/api/unlink-session" && req.method === "POST") {
       try {
         const { session_id, bundle_id } = await req.json();
-        const mode = resolveBundleMode(bundle_id);
-
-        // Resolve whether session_id is a local active session or a cloud session
-        let localSessionId: string | null = null;
-        let cloudSessionId: string | null = null;
-
-        const directSession = loadActiveSession(session_id);
-        if (directSession) {
-          // session_id is a local active session
-          localSessionId = session_id;
-          cloudSessionId = directSession.cloud_session_id ?? null;
-        } else {
-          // session_id might be a cloud session ID
-          cloudSessionId = session_id;
-          // Check if any active session maps to this cloud session
-          const match = listActiveSessions().find((s) =>
-            s.cloud_session_id === session_id ||
-            (s.cloud_copies ?? []).some((c) => c.cloud_session_id === session_id)
-          );
-          if (match) localSessionId = match.session_id;
-        }
-
-        // Remove entry refs from the bundle
-        if (mode === "local") {
-          // Try removing by local session ID
-          if (localSessionId) {
-            localRemoveSessionRefsFromBundle(bundle_id, localSessionId);
-          }
-          // Also try by cloud session ID (cloud sessions push with their cloud ID as session_id)
-          if (cloudSessionId) {
-            localRemoveSessionRefsFromBundle(bundle_id, cloudSessionId);
-          }
-          // Also try matching by entry IDs from the cloud session
-          // (in case the entry_refs.session_id doesn't match either ID)
-          if (cloudSessionId) {
-            try {
-              const cloudEntries = await getCloudSessionEntries(cloudSessionId);
-              if (cloudEntries.length > 0) {
-                localRemoveEntryRefsFromBundleByIds(bundle_id, cloudEntries.map(e => e.id));
-              }
-            } catch {}
-          }
-        } else {
-          // Cloud bundle: remove entry refs from Supabase
-          if (cloudSessionId) {
-            const removed = await removeSessionEntriesFromBundle(bundle_id, cloudSessionId);
-            console.log("[unlink-cloud] removed", removed, "entry refs for cloud session", cloudSessionId, "from bundle", bundle_id);
-          } else {
-            console.log("[unlink-cloud] no cloudSessionId resolved, session_id:", session_id);
-          }
-          // Also try with local session entries if they were synced
-          if (localSessionId) {
-            const localEntries = getSessionEntries(localSessionId);
-            for (const e of localEntries) {
-              try { await removeEntryFromBundle(bundle_id, e.id); } catch {}
-            }
-          }
-        }
-
-        // Disconnect the session from the bundle (try all known IDs)
-        if (localSessionId) disconnectSessionFromBundle(localSessionId, bundle_id);
-        if (cloudSessionId && cloudSessionId !== localSessionId) {
-          disconnectSessionFromBundle(cloudSessionId, bundle_id);
-        }
-        disconnectCloudSessionFromBundle(session_id, bundle_id);
-        if (localSessionId && localSessionId !== session_id) {
-          disconnectCloudSessionFromBundle(localSessionId, bundle_id);
-        }
-
+        await unlinkSessionFromBundle(session_id, bundle_id);
         return Response.json({ ok: true }, { headers: corsHeaders });
       } catch (err: any) {
         return Response.json(

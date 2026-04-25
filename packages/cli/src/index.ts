@@ -40,6 +40,7 @@ import {
   getBundleTeamId,
   connectSessionToBundle,
   connectCloudSessionToBundle,
+  unlinkSessionFromBundle,
   listAllLocalBundleDetails,
   isLocalBundle,
   askQuestion,
@@ -238,12 +239,45 @@ program
     "Start the ctx-link web dashboard.\n" +
     "Launches the API + UI server on port 5174 and opens the browser.\n" +
     "Requires 'bun run build:ui' to have been run at least once.\n\n" +
-    "Example:\n" +
+    "Examples:\n" +
     "  $ ctxl ui\n" +
-    "  $ ctxl ui --no-open"
+    "  $ ctxl ui --port 3000\n" +
+    "  $ ctxl ui --stop"
   )
   .option("--no-open", "don't open the browser automatically")
+  .option("--stop", "stop the running UI server")
+  .option("--port <port>", "port to run on (default: 5174)", "5174")
   .action(async (opts) => {
+    const port = parseInt(opts.port, 10);
+
+    // Handle --stop: find the ctx-link UI server process and kill it
+    if (opts.stop) {
+      try {
+        const pids = execSync("pgrep -f 'ctx-link.*server\\.(ts|js)|server\\.(ts|js).*ctx-link'", { encoding: "utf8" }).trim();
+        if (pids) {
+          for (const pid of pids.split("\n")) {
+            try { process.kill(parseInt(pid), "SIGTERM"); } catch {}
+          }
+          console.log("ctx-link UI server stopped.");
+          return;
+        }
+      } catch {}
+
+      // Fallback: try the default and custom port
+      for (const p of [port, 5174]) {
+        try {
+          const res = await fetch(`http://127.0.0.1:${p}/api/teams`, { signal: AbortSignal.timeout(1000) });
+          if (res.ok) {
+            execSync(`lsof -ti:${p} | xargs kill`, { stdio: "ignore" });
+            console.log(`ctx-link UI server on port ${p} stopped.`);
+            return;
+          }
+        } catch {}
+      }
+
+      console.log("ctx-link UI server is not running.");
+      return;
+    }
     const { resolve } = await import("node:path");
 
     // Find server — works in both bundled (dist/) and dev (monorepo) mode
@@ -270,18 +304,19 @@ program
     // Check if already running
     let alreadyRunning = false;
     try {
-      const res = await fetch("http://127.0.0.1:5174/api/teams", {
+      const res = await fetch(`http://127.0.0.1:${port}/api/teams`, {
         signal: AbortSignal.timeout(1000),
       });
       if (res.ok) alreadyRunning = true;
     } catch {}
 
     if (alreadyRunning) {
-      console.log("ctx-link UI already running at http://localhost:5174");
+      console.log(`ctx-link UI already running at http://localhost:${port}`);
     } else {
       console.log("Starting ctx-link UI server...");
       const proc = Bun.spawn(["bun", serverPath], {
         stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, CTX_LINK_PORT: String(port) },
       });
       proc.unref();
 
@@ -289,20 +324,20 @@ program
       for (let i = 0; i < 10; i++) {
         await new Promise((r) => setTimeout(r, 300));
         try {
-          const res = await fetch("http://127.0.0.1:5174/api/teams", {
+          const res = await fetch(`http://127.0.0.1:${port}/api/teams`, {
             signal: AbortSignal.timeout(500),
           });
           if (res.ok) break;
         } catch {}
       }
-      console.log("ctx-link UI server running at http://localhost:5174");
+      console.log(`ctx-link UI server running at http://localhost:${port}`);
     }
 
     if (opts.open !== false) {
       const { platform } = await import("node:os");
       const openCmd = platform() === "darwin" ? "open" : platform() === "win32" ? "start" : "xdg-open";
       try {
-        execSync(`${openCmd} http://localhost:5174`, { stdio: "ignore" });
+        execSync(`${openCmd} http://localhost:${port}`, { stdio: "ignore" });
       } catch {}
     }
   });
@@ -658,10 +693,8 @@ program
       });
     }
 
-    session.bundles = session.bundles.filter((b) => b.bundle_id !== bundleId);
-    saveActiveSession(session);
-    console.log(`Disconnected from bundle ${bundleId}.`);
-    console.log(`Session now has ${session.bundles.length} bundle(s).`);
+    await unlinkSessionFromBundle(sessionId, bundleId!);
+    console.log(`Disconnected from bundle ${bundleId} and removed entry refs.`);
   });
 
 // ==================== BUNDLES ====================
@@ -733,7 +766,20 @@ program
     cfg.bundle = r.bundle_id;
     saveProjectConfig(cfg);
 
-    console.log(`\nBundle created (mode: ${mode}).`);
+    // Auto-connect active session to the new bundle
+    const sessionId = getActiveSessionId();
+    if (sessionId) {
+      const session = loadActiveSession(sessionId);
+      if (session && !session.bundles.some((b) => b.bundle_id === r.bundle_id)) {
+        session.bundles.push({ bundle_id: r.bundle_id, mode });
+        saveActiveSession(session);
+        console.log(`\nBundle created and session connected (mode: ${mode}).`);
+      } else {
+        console.log(`\nBundle created (mode: ${mode}).`);
+      }
+    } else {
+      console.log(`\nBundle created (mode: ${mode}).`);
+    }
     console.log(`  ID:    ${r.bundle_id}`);
     console.log(`  Name:  ${r.name}`);
     console.log("");
@@ -826,7 +872,33 @@ program
     cfg.mode = mode;
     cfg.bundle = r.bundle_id;
     saveProjectConfig(cfg);
-    console.log(`Joined bundle ${r.name} (${r.bundle_id}) as project '${projectName}' (mode: ${mode}).`);
+
+    // Auto-connect active session to the bundle
+    const sessionId = getActiveSessionId();
+    if (sessionId) {
+      const session = loadActiveSession(sessionId);
+      if (session && !session.bundles.some((b) => b.bundle_id === r.bundle_id)) {
+        session.bundles.push({ bundle_id: r.bundle_id, mode });
+        saveActiveSession(session);
+
+        // For local bundles, add session entries as refs
+        if (isLocalBundle(r.bundle_id)) {
+          const entries = getSessionEntries(session.session_id);
+          if (entries.length > 0) {
+            try {
+              const entryIds = entries.map(e => e.id);
+              localAddEntriesToBundle(r.bundle_id, entryIds, session.session_id);
+            } catch {}
+          }
+        }
+
+        console.log(`Joined bundle ${r.name} (${r.bundle_id}) as project '${projectName}' (mode: ${mode}). Session connected.`);
+      } else {
+        console.log(`Joined bundle ${r.name} (${r.bundle_id}) as project '${projectName}' (mode: ${mode}).`);
+      }
+    } else {
+      console.log(`Joined bundle ${r.name} (${r.bundle_id}) as project '${projectName}' (mode: ${mode}).`);
+    }
   });
 
 program

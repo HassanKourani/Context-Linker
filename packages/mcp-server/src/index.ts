@@ -62,6 +62,7 @@ import {
   resolveQuestion,
   listBundleQuestions,
   type Question,
+  unlinkSessionFromBundle,
 } from "@ctx-link/core";
 import { z } from "zod";
 import { startChannelListener, broadcastToBundle, type ChannelMessage } from "./channel.js";
@@ -1011,9 +1012,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const a = z.object({ bundle_id: z.string() }).parse(args);
         const session = getSession();
         if (!session) return fail("No active session.");
-        session.bundles = session.bundles.filter((b) => b.bundle_id !== a.bundle_id);
-        saveActiveSession(session);
-        return ok({ disconnected: true, bundle_id: a.bundle_id, total_bundles: session.bundles.length });
+        await unlinkSessionFromBundle(session.session_id, a.bundle_id);
+        const updated = loadActiveSession(session.session_id);
+        return ok({ disconnected: true, bundle_id: a.bundle_id, total_bundles: updated?.bundles.length ?? 0 });
       }
 
       case "session_info": {
