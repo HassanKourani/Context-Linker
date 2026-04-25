@@ -50,7 +50,6 @@ import {
   deleteCloudSessionEntry,
   removeEntryFromBundle,
   localRemoveEntryFromBundle,
-  pullEntries,
   pushBundleToCloud,
   getBundleTeamId,
   syncSessionToCloud,
@@ -124,7 +123,7 @@ Run 'ctxl <command> --help' for details on any command.
 
 // Detect if running from source (dev) or published (prod)
 const isDev = import.meta.path.endsWith(".ts");
-let cliVersion = "0.1.3";
+let cliVersion = "0.1.4";
 try {
   // In dev, read version from root package.json
   if (isDev) {
@@ -913,7 +912,7 @@ program
 
     const r = await createBundle(name, mode, teamId);
     const cfg = loadProjectConfig() ?? {
-      mode: "off" as const,
+      mode: mode,
       bundle: null,
       project_name: detectProjectName(),
       auto_push_on: ["commit"],
@@ -1020,7 +1019,7 @@ program
     const projectName = detectProjectName();
     const r = await joinBundle(bundleId, token ?? "", projectName, mode);
     const cfg = loadProjectConfig() ?? {
-      mode: "off" as const,
+      mode: mode,
       bundle: null,
       project_name: projectName,
       auto_push_on: ["commit"],
@@ -1545,7 +1544,7 @@ program
   .command("leave")
   .description(
     "Disconnect this project from its bundle. The bundle still exists for others.\n" +
-    "Sets mode to 'off'. Rejoin anytime with 'ctxl join'."
+    "Rejoin anytime with 'ctxl join'."
   )
   .action(() => {
     const cfg = loadProjectConfig();
@@ -1555,9 +1554,8 @@ program
     }
     const oldBundle = cfg.bundle;
     cfg.bundle = null;
-    cfg.mode = "off";
     saveProjectConfig(cfg);
-    console.log(`Left bundle ${oldBundle}. Mode set to off.`);
+    console.log(`Left bundle ${oldBundle}.`);
   });
 
 program
@@ -1592,7 +1590,6 @@ program
     await deleteBundle(bundleId, mode);
     if (cfg && cfg.bundle === bundleId) {
       cfg.bundle = null;
-      cfg.mode = "off";
       saveProjectConfig(cfg);
     }
     console.log(`Deleted bundle ${bundleId}.`);
@@ -1857,7 +1854,7 @@ program
       entryId = await select({
         message: "Which entry to delete?",
         choices: entries.map((e) => ({
-          name: `[${e.type}] ${e.summary.slice(0, 80)}`,
+          name: `[${e.event_type}] ${e.summary.slice(0, 80)}`,
           value: e.id,
           description: `${e.id}  ${e.created_at}`,
         })),
@@ -1900,7 +1897,7 @@ program
     if (rows.length === 0) { console.log("No entries."); return; }
 
     for (const r of rows) {
-      console.log(`\n[${r.type}] ${r.project_name}  ${r.created_at}`);
+      console.log(`\n[${r.event_type}] ${r.project_name}  ${r.created_at}`);
       console.log(`  ID: ${r.id}`);
       console.log(`  ${r.summary}`);
     }
@@ -1928,7 +1925,7 @@ program
       entryId = await select({
         message: "Which entry to remove?",
         choices: rows.map((r) => ({
-          name: `[${r.type}] ${r.project_name}: ${r.summary.slice(0, 60)}`,
+          name: `[${r.event_type}] ${r.project_name}: ${r.summary.slice(0, 60)}`,
           value: r.id,
           description: r.id,
         })),

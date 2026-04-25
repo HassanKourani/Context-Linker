@@ -15,9 +15,9 @@ if [[ ! -f "$CONFIG" ]]; then
   exit 0  # no ctx-link in this repo, no-op
 fi
 
-# Check mode — only push if local or cloud
-MODE=$(bun -e "try{process.stdout.write(JSON.parse(require('fs').readFileSync('$CONFIG','utf8')).mode??'off')}catch{process.stdout.write('off')}" 2>/dev/null)
-if [[ "$MODE" == "off" ]]; then
+# Check for active session — skip if none
+SESSION_FILE=".ctx-link-active-session"
+if [[ ! -f "$SESSION_FILE" ]] || [[ ! -s "$SESSION_FILE" ]]; then
   exit 0
 fi
 
