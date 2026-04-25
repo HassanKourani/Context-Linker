@@ -58,6 +58,9 @@ import {
   getQuestion,
   getSupabase,
   unlinkSessionFromBundle,
+  deleteSession,
+  pushSessionToBundle,
+  pushBundleToCloud,
 } from "@ctx-link/core";
 
 // Broadcast Q&A events to active MCP sessions via their channel ports
@@ -574,20 +577,11 @@ const server = Bun.serve({
     }
 
     // ── POST /api/bundles/:id/push-to-cloud ─────────────────────────────────
-    // Migrates a local bundle to cloud under a team.
-    // Creates a cloud bundle, pushes connected sessions, migrates entry refs.
     {
       const match = url.pathname.match(/^\/api\/bundles\/([^/]+)\/push-to-cloud$/);
       if (match && req.method === "POST") {
         try {
           const bundleId = match[1];
-          if (!isLocalBundle(bundleId)) {
-            return Response.json(
-              { error: "Bundle is already in the cloud." },
-              { status: 400, headers: corsHeaders }
-            );
-          }
-
           const { team_id } = await req.json();
           if (!team_id) {
             return Response.json(
@@ -595,64 +589,9 @@ const server = Bun.serve({
               { status: 400, headers: corsHeaders }
             );
           }
-
-          // Get local bundle name
-          const status = await bundleStatus(bundleId, "local", true);
-
-          // Create cloud bundle under the team
-          const newBundle = await createBundle(status.name, "cloud", team_id);
-          const newBundleId = newBundle.bundle_id;
-
-          let entriesMigrated = 0;
-
-          // Migrate entries from connected active sessions
-          const activeSessions = listActiveSessions();
-          const connectedActive = activeSessions.filter(
-            (s) => s.bundles.some((b) => b.bundle_id === bundleId)
-          );
-
-          for (const session of connectedActive) {
-            const entries = getSessionEntries(session.session_id);
-            if (entries.length === 0) continue;
-
-            // Ensure cloud copy exists for this team
-            const copies = session.cloud_copies ?? [];
-            let copy = copies.find((c) => c.team_id === team_id)
-              ?? (session.cloud_session_id && session.team_id === team_id
-                ? { cloud_session_id: session.cloud_session_id, team_id }
-                : null);
-
-            if (!copy) {
-              const result = await copySessionToCloud(session.session_id, team_id);
-              if (!session.cloud_copies) session.cloud_copies = [];
-              session.cloud_copies.push({ cloud_session_id: result.cloud_session_id, team_id });
-              if (!session.cloud_session_id) {
-                session.cloud_session_id = result.cloud_session_id;
-                session.team_id = team_id;
-              }
-              saveActiveSession(session);
-              copy = { cloud_session_id: result.cloud_session_id, team_id };
-            } else {
-              await syncSessionToCloud(session.session_id, copy.cloud_session_id);
-            }
-
-            const cloudEntries = await getCloudSessionEntries(copy.cloud_session_id);
-            const cloudIds = cloudEntries.map((e) => e.id);
-            if (cloudIds.length > 0) {
-              const result = await addEntriesToBundle(newBundleId, cloudIds);
-              entriesMigrated += result.added;
-            }
-
-            // Swap connection: disconnect from old local bundle, connect to new cloud bundle
-            disconnectSessionFromBundle(session.session_id, bundleId);
-            connectSessionToBundle(session.session_id, newBundleId, "cloud");
-          }
-
-          // Delete the old local bundle
-          await deleteBundle(bundleId, "local");
-
+          const result = await pushBundleToCloud(bundleId, team_id);
           return Response.json(
-            { ok: true, new_bundle_id: newBundleId, entries_migrated: entriesMigrated },
+            { ok: true, ...result },
             { headers: corsHeaders }
           );
         } catch (err: any) {
@@ -733,106 +672,11 @@ const server = Bun.serve({
         try {
           const sessionId = match[1];
           const { bundle_id, entry_ids } = await req.json();
-          const mode = resolveBundleMode(bundle_id);
-
-          // Check if this is a local active session or a cloud session
-          const localSession = loadActiveSession(sessionId);
-
-          if (localSession) {
-            // Local active session
-            // Ensure session is connected to this bundle
-            try {
-              connectSessionToBundle(sessionId, bundle_id, mode);
-            } catch {
-              // Already connected — that's fine
-            }
-
-            const allEntries = getSessionEntries(sessionId);
-            const ids = entry_ids ? entry_ids as string[] : allEntries.map((e) => e.id);
-
-            if (mode === "local") {
-              const result = localAddEntriesToBundle(bundle_id, ids, sessionId);
-              return Response.json(
-                { ok: true, pushed: result.added, skipped: result.skipped, total: ids.length },
-                { headers: corsHeaders }
-              );
-            }
-
-            // Cloud bundle — auto-push session to cloud if needed, then add entries
-            const bundleTeamId = await getBundleTeamId(bundle_id);
-            if (!bundleTeamId) {
-              return Response.json(
-                { error: "Could not determine the bundle's team." },
-                { status: 400, headers: corsHeaders }
-              );
-            }
-
-            const copies = localSession.cloud_copies ?? [];
-            let copy = copies.find((c) => c.team_id === bundleTeamId)
-              ?? (localSession.cloud_session_id && localSession.team_id === bundleTeamId
-                ? { cloud_session_id: localSession.cloud_session_id, team_id: bundleTeamId }
-                : null);
-
-            if (!copy) {
-              const result = await copySessionToCloud(sessionId, bundleTeamId);
-              if (!localSession.cloud_copies) localSession.cloud_copies = [];
-              localSession.cloud_copies.push({ cloud_session_id: result.cloud_session_id, team_id: bundleTeamId });
-              if (!localSession.cloud_session_id) {
-                localSession.cloud_session_id = result.cloud_session_id;
-                localSession.team_id = bundleTeamId;
-              }
-              saveActiveSession(localSession);
-              copy = { cloud_session_id: result.cloud_session_id, team_id: bundleTeamId };
-            } else {
-              // Sync any new local entries to the existing cloud copy
-              await syncSessionToCloud(sessionId, copy.cloud_session_id);
-            }
-
-            // Now add the cloud entry IDs to the bundle
-            // Local and cloud entries have different IDs (cloud gets new UUIDs),
-            // so map local IDs → cloud IDs by matching on created_at + summary.
-            const cloudEntries = await getCloudSessionEntries(copy.cloud_session_id);
-            let cloudIds: string[];
-            if (entry_ids) {
-              const selectedLocal = allEntries.filter((e) => ids.includes(e.id));
-              const selectedKeys = new Set(
-                selectedLocal.map((e) => `${new Date(e.created_at).getTime()}|${e.summary}`)
-              );
-              cloudIds = cloudEntries
-                .filter((e) => selectedKeys.has(`${new Date(e.created_at).getTime()}|${e.summary}`))
-                .map((e) => e.id);
-            } else {
-              cloudIds = cloudEntries.map((e) => e.id);
-            }
-
-            if (cloudIds.length > 0) {
-              await addEntriesToBundle(bundle_id, cloudIds);
-            }
-            return Response.json(
-              { ok: true, pushed: cloudIds.length, skipped: 0, total: cloudIds.length },
-              { headers: corsHeaders }
-            );
-          }
-
-          // Cloud session — push entries to bundle
-          const cloudEntries = await getCloudSessionEntries(sessionId);
-          const ids = entry_ids ? entry_ids as string[] : cloudEntries.map((e) => e.id);
-
-          if (mode === "local") {
-            const result = localAddEntriesToBundle(bundle_id, ids, sessionId);
-            return Response.json(
-              { ok: true, pushed: result.added, skipped: result.skipped, total: ids.length },
-              { headers: corsHeaders }
-            );
-          } else {
-            if (ids.length > 0) {
-              await addEntriesToBundle(bundle_id, ids);
-            }
-            return Response.json(
-              { ok: true, pushed: ids.length, skipped: 0, total: ids.length },
-              { headers: corsHeaders }
-            );
-          }
+          const result = await pushSessionToBundle(sessionId, bundle_id, entry_ids);
+          return Response.json(
+            { ok: true, ...result },
+            { headers: corsHeaders }
+          );
         } catch (err: any) {
           return Response.json(
             { error: err.message ?? String(err) },
@@ -1054,44 +898,7 @@ const server = Bun.serve({
       const match = url.pathname.match(/^\/api\/sessions\/([^/]+)$/);
       if (match && req.method === "DELETE") {
         try {
-          const sessionId = match[1];
-
-          const localSession = loadActiveSession(sessionId);
-
-          if (localSession) {
-            // Deleting a local active session — also delete all cloud copies
-            for (const c of (localSession.cloud_copies ?? [])) {
-              try { await deleteCloudSession(c.cloud_session_id); } catch {}
-            }
-            // Legacy fallback
-            if (localSession.cloud_session_id) {
-              try { await deleteCloudSession(localSession.cloud_session_id); } catch {}
-            }
-            deleteActiveSession(sessionId);
-          } else {
-            // sessionId is a cloud session ID — only delete from Supabase, keep local
-            try { await deleteCloudSession(sessionId); } catch {}
-
-            // Remove from cloud_copies on any local session that had this cloud copy
-            const allSessions = listActiveSessions();
-            const linked = allSessions.find((s) =>
-              s.cloud_session_id === sessionId ||
-              (s.cloud_copies ?? []).some((c) => c.cloud_session_id === sessionId)
-            );
-            if (linked) {
-              linked.cloud_copies = (linked.cloud_copies ?? []).filter(
-                (c) => c.cloud_session_id !== sessionId
-              );
-              if (linked.cloud_session_id === sessionId) {
-                // Promote next copy or clear
-                const next = linked.cloud_copies[0] ?? null;
-                linked.cloud_session_id = next?.cloud_session_id ?? null;
-                linked.team_id = next?.team_id ?? null;
-              }
-              saveActiveSession(linked);
-            }
-          }
-
+          await deleteSession(match[1]);
           return Response.json({ ok: true }, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(

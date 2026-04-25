@@ -32,15 +32,11 @@ import {
   pushSessionEntry,
   getSessionEntries,
   getUnpushedSessionEntries,
-  addEntriesToBundle,
   localAddEntriesToBundle,
   copySessionToCloud,
-  syncSessionToCloud,
-  getCloudSessionEntries,
-  getBundleTeamId,
   connectSessionToBundle,
-  connectCloudSessionToBundle,
   unlinkSessionFromBundle,
+  pushSessionToBundle,
   listAllLocalBundleDetails,
   isLocalBundle,
   askQuestion,
@@ -628,31 +624,10 @@ program
     }
     const mode = opts.mode ?? (isLocalBundle(bundleId) ? "local" : "cloud");
 
-    // Don't add duplicates
-    if (session.bundles.some((b) => b.bundle_id === bundleId)) {
-      console.log(`Already connected to bundle ${bundleId}.`);
-      return;
-    }
-
-    session.bundles.push({ bundle_id: bundleId, mode });
-    saveActiveSession(session);
-
-    // For local bundles, add session entries as refs
-    if (isLocalBundle(bundleId)) {
-      const entries = getSessionEntries(session.session_id);
-      if (entries.length > 0) {
-        try {
-          const entryIds = entries.map(e => e.id);
-          localAddEntriesToBundle(bundleId, entryIds, session.session_id);
-          console.log(`Pushed ${entries.length} session entries to bundle.`);
-        } catch {
-          // Non-fatal
-        }
-      }
-    }
+    const updated = connectSessionToBundle(sessionId, bundleId, mode);
 
     console.log(`Connected session ${sessionId.slice(0, 8)}... to bundle ${bundleId}`);
-    console.log(`Session now has ${session.bundles.length} bundle(s).`);
+    console.log(`Session now has ${updated.bundles.length} bundle(s).`);
   });
 
 program
@@ -982,12 +957,11 @@ program
     }
 
     for (const b of session.bundles) {
-      if (isLocalBundle(b.bundle_id)) {
-        const r = localAddEntriesToBundle(b.bundle_id, entryIds, session.session_id);
-        console.log(`[${b.bundle_id}] added ${r.added}, skipped ${r.skipped} (already in bundle)`);
-      } else {
-        const r = await addEntriesToBundle(b.bundle_id, entryIds);
-        console.log(`[${b.bundle_id}] added ${r.added}, skipped ${r.skipped} (already in bundle)`);
+      try {
+        const r = await pushSessionToBundle(session.session_id, b.bundle_id, entryIds);
+        console.log(`[${b.bundle_id}] added ${r.pushed}, skipped ${r.skipped} (already in bundle)`);
+      } catch (err: any) {
+        console.error(`[${b.bundle_id}] error: ${err.message}`);
       }
     }
   });
@@ -1069,58 +1043,9 @@ program
       }
     }
 
-    // Push entries
-    if (isLocalBundle(bundleId)) {
-      connectSessionToBundle(session.session_id, bundleId, "local");
-      const r = localAddEntriesToBundle(bundleId, entryIds, session.session_id);
-      console.log(`Pushed to ${bundleId}: added ${r.added}, skipped ${r.skipped} (already in bundle)`);
-      console.log(`Total entries: ${entryIds.length}`);
-    } else {
-      // Cloud bundle — auto-push session to cloud if needed, then map IDs
-      const bundleTeamId = await getBundleTeamId(bundleId);
-      if (!bundleTeamId) {
-        console.error("Could not determine the bundle's team.");
-        process.exit(1);
-      }
-
-      const copies = session.cloud_copies ?? [];
-      let copy = copies.find((c) => c.team_id === bundleTeamId)
-        ?? (session.cloud_session_id && session.team_id === bundleTeamId
-          ? { cloud_session_id: session.cloud_session_id, team_id: bundleTeamId }
-          : null);
-
-      if (!copy) {
-        console.log("Auto-pushing session to cloud...");
-        const result = await copySessionToCloud(session.session_id, bundleTeamId);
-        if (!session.cloud_copies) session.cloud_copies = [];
-        session.cloud_copies.push({ cloud_session_id: result.cloud_session_id, team_id: bundleTeamId });
-        if (!session.cloud_session_id) {
-          session.cloud_session_id = result.cloud_session_id;
-          session.team_id = bundleTeamId;
-        }
-        saveActiveSession(session);
-        copy = { cloud_session_id: result.cloud_session_id, team_id: bundleTeamId };
-        console.log(`  Cloud session: ${result.cloud_session_id} (${result.entries_copied} entries copied)`);
-      } else {
-        await syncSessionToCloud(session.session_id, copy.cloud_session_id);
-      }
-
-      const cloudEntries = await getCloudSessionEntries(copy.cloud_session_id);
-      const cloudIds = cloudEntries.map((e) => e.id);
-
-      if (cloudIds.length === 0) {
-        console.log("No cloud entries to push.");
-        return;
-      }
-
-      // Link session to bundle
-      connectSessionToBundle(session.session_id, bundleId, "cloud");
-      connectCloudSessionToBundle(copy.cloud_session_id, bundleId, "cloud");
-
-      const r = await addEntriesToBundle(bundleId, cloudIds);
-      console.log(`Pushed to ${bundleId}: added ${r.added}, skipped ${r.skipped} (already in bundle)`);
-      console.log(`Total entries: ${cloudIds.length}`);
-    }
+    const r = await pushSessionToBundle(session.session_id, bundleId);
+    console.log(`Pushed to ${bundleId}: added ${r.pushed}, skipped ${r.skipped} (already in bundle)`);
+    console.log(`Total entries: ${r.total}`);
   });
 
 program
