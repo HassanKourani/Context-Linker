@@ -23,6 +23,7 @@ type PanelView =
   | { kind: "bundle"; bundleId: string; filterProject: string | null }
   | { kind: "session"; sessionId: string; projectName: string; sessionName?: string | null }
   | { kind: "questions"; bundleId: string; bundleName: string }
+  | { kind: "feed"; teamId: string; teamName: string }
   | null;
 
 interface UIState {
@@ -63,6 +64,7 @@ interface UIState {
   openBundlePanel: (bundleId: string, filterProject?: string) => void;
   openSessionPanel: (sessionId: string, projectName: string, sessionName?: string | null) => void;
   openQuestionsPanel: (bundleId: string, bundleName: string) => void;
+  openFeedPanel: (teamId: string, teamName: string) => void;
   closePanel: () => void;
   setPanelTab: (tab: "entries" | "rewinds") => void;
   setFilterProject: (project: string | null) => void;
@@ -126,6 +128,14 @@ export const useUIStore = create<UIState>((set, get) => ({
   openQuestionsPanel: (bundleId, bundleName) =>
     set({
       panel: { kind: "questions", bundleId, bundleName },
+      panelTab: "entries",
+      selectedBundleId: null,
+      filterProject: null,
+    }),
+
+  openFeedPanel: (teamId, teamName) =>
+    set({
+      panel: { kind: "feed", teamId, teamName },
       panelTab: "entries",
       selectedBundleId: null,
       filterProject: null,

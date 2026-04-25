@@ -9,6 +9,7 @@ import type {
   RewindLogRow,
   TeamInfo,
   CreateTeamResult,
+  FeedEvent,
 } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -253,4 +254,8 @@ export function resolveQuestionApi(bundleId: string, questionId: string) {
     `/api/bundles/${bundleId}/questions/${questionId}/resolve`,
     {},
   );
+}
+
+export function fetchTeamFeed(teamId: string, limit = 50, offset = 0): Promise<FeedEvent[]> {
+  return apiGet<FeedEvent[]>(`/api/teams/${teamId}/feed?limit=${limit}&offset=${offset}`);
 }
