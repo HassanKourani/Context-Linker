@@ -72,6 +72,7 @@ import {
 } from "@ctx-link/core";
 import { z } from "zod";
 import { startChannelListener, broadcastToBundle, type ChannelMessage } from "./channel.js";
+import { startAutoSync, type AutoSyncHandle } from "./auto-sync.js";
 
 /**
  * Each MCP server instance is 1:1 with a Claude Code instance.
@@ -83,6 +84,7 @@ import { startChannelListener, broadcastToBundle, type ChannelMessage } from "./
  * (so a second instance overwriting it doesn't affect us).
  */
 let ownSessionId: string | null = null;
+let autoSyncHandle: AutoSyncHandle | null = null;
 
 /** Get the active session for this MCP server instance. */
 function getSession(): ActiveSession | null {
@@ -808,6 +810,11 @@ const CTX_LINK_AUTO_LOG: Record<string, (a: Record<string, any>) => string | nul
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args } = req.params;
 
+  // Notify auto-sync of activity on any tool call (Claude is working)
+  if (autoSyncHandle) {
+    autoSyncHandle.recordActivity();
+  }
+
   const result = await (async () => {
   try {
     switch (name) {
@@ -1506,6 +1513,17 @@ startUiServer();
 // Auto-start session — no manual session_start needed
 const bootSession = await ensureSession();
 
+// Start auto-sync for cloud bundles
+if (bootSession) {
+  const hasCloudBundles = bootSession.bundles.some(b => b.mode === "cloud");
+  if (hasCloudBundles) {
+    autoSyncHandle = startAutoSync(
+      bootSession.session_id,
+      (msg) => process.stderr.write(`[auto-sync] ${msg}\n`),
+    );
+  }
+}
+
 // Start Q&A channel listener for cross-session notifications
 let channelHandle: { port: number; close: () => void } | null = null;
 
@@ -1539,8 +1557,8 @@ if (bootSession) {
 }
 
 // Clean shutdown
-process.on("SIGINT", () => { channelHandle?.close(); process.exit(0); });
-process.on("SIGTERM", () => { channelHandle?.close(); process.exit(0); });
+process.on("SIGINT", () => { autoSyncHandle?.stop(); channelHandle?.close(); process.exit(0); });
+process.on("SIGTERM", () => { autoSyncHandle?.stop(); channelHandle?.close(); process.exit(0); });
 
 // Stderr only, stdio is the MCP wire.
 process.stderr.write("ctx-link MCP server ready\n");
