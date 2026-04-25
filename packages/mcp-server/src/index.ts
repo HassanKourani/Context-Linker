@@ -1524,6 +1524,27 @@ if (bootSession) {
   }
 }
 
+// Auto-pull from cloud bundles on session start
+if (bootSession) {
+  const cloudBundles = bootSession.bundles.filter(b => b.mode === "cloud");
+  for (const b of cloudBundles) {
+    try {
+      const rows = await pullEntries({
+        bundle_id: b.bundle_id,
+        exclude_project: bootSession.project_name,
+        mode: "cloud",
+        limit: 20,
+        skipAuth: true,
+      });
+      if (rows.length > 0) {
+        process.stderr.write(`[auto-sync] Auto-pulled ${rows.length} entries from bundle ${b.bundle_id}\n`);
+      }
+    } catch (err: any) {
+      process.stderr.write(`[auto-sync] Auto-pull from ${b.bundle_id} failed: ${err.message}\n`);
+    }
+  }
+}
+
 // Start Q&A channel listener for cross-session notifications
 let channelHandle: { port: number; close: () => void } | null = null;
 
