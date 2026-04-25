@@ -106,6 +106,21 @@ export async function addEntriesToBundle(
   const { error } = await sb.from("bundle_entry_refs").insert(rows);
   if (error) throw new Error(`addEntriesToBundle failed: ${error.message}`);
 
+  // Fire feed event (non-blocking)
+  if (newIds.length > 0) {
+    try {
+      const { getBundleTeamId } = await import("./bundles.js");
+      const teamId = await getBundleTeamId(bundleId);
+      if (teamId) {
+        const { writeFeedEvent } = await import("./feed.js");
+        writeFeedEvent(teamId, "entry_pushed", {
+          bundle_id: bundleId,
+          entry_count: newIds.length,
+        }).catch(() => {});
+      }
+    } catch {}
+  }
+
   return { added: newIds.length, skipped: existingIds.size };
 }
 
