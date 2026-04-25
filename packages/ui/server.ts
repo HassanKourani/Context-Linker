@@ -17,9 +17,11 @@ import {
   addEntriesToBundle,
   removeEntryFromBundle,
   removeSessionEntriesFromBundle,
+  includeEntryInBundle,
   localAddEntriesToBundle,
   localRemoveEntryFromBundle,
   localRemoveSessionRefsFromBundle,
+  localIncludeEntryInBundle,
   localRemoveEntryRefsFromBundleByIds,
   createTeam,
   joinTeam,
@@ -374,9 +376,9 @@ const server = Bun.serve({
           const entryId = match[2];
           const mode = resolveBundleMode(bundleId);
           if (mode === "local") {
-            localRemoveEntryFromBundle(bundleId, entryId);
+            localRemoveEntryFromBundle(bundleId, entryId, { exclude: true });
           } else {
-            await removeEntryFromBundle(bundleId, entryId);
+            await removeEntryFromBundle(bundleId, entryId, { exclude: true });
           }
           return Response.json({ ok: true }, { headers: corsHeaders });
         } catch (err: any) {
@@ -384,6 +386,25 @@ const server = Bun.serve({
             { error: err.message ?? String(err) },
             { status: 500, headers: corsHeaders }
           );
+        }
+      }
+    }
+
+    // ── POST /api/bundles/:id/include-entry — re-include a previously excluded entry
+    {
+      const includeMatch = url.pathname.match(/^\/api\/bundles\/([^/]+)\/include-entry$/);
+      if (includeMatch && req.method === "POST") {
+        try {
+          const bundleId = includeMatch[1];
+          const { entry_id } = await req.json() as { entry_id: string };
+          if (isLocalBundle(bundleId)) {
+            localIncludeEntryInBundle(bundleId, entry_id);
+          } else {
+            await includeEntryInBundle(bundleId, entry_id);
+          }
+          return Response.json({ included: true }, { headers: corsHeaders });
+        } catch (err: any) {
+          return Response.json({ error: err.message }, { status: 500, headers: corsHeaders });
         }
       }
     }
