@@ -21,6 +21,7 @@ import {
   getActiveSessionId,
   setActiveSessionId,
   listActiveSessions,
+  resolveClaudeSessionId,
   renderEntriesForClaude,
   rewindProject,
   restoreRewound,
@@ -578,7 +579,7 @@ program
     "Shows: project name, mode, active bundle ID, auto-push settings."
   )
   .action(() => {
-    const sessionId = getActiveSessionId();
+    const sessionId = resolveCallerSessionId();
     const session = sessionId ? loadActiveSession(sessionId) : null;
 
     console.log(`Project:  ${session?.project_name ?? detectProjectName()}`);
@@ -667,7 +668,7 @@ program
     console.log(`  ✓ Bundle "${result.name}" created`);
 
     // 5. Connect session
-    const sessionId = getActiveSessionId();
+    const sessionId = resolveCallerSessionId();
     if (sessionId) {
       connectSessionToBundle(sessionId, result.bundle_id, mode);
       console.log(`  ✓ Session connected`);
@@ -869,7 +870,7 @@ program
   .option("--summary <text>", "explicit summary (use with --diff)")
   .option("--session-id <id>", "target session ID (defaults to active session)")
   .action(async (opts) => {
-    const sessionId = opts.sessionId ?? getActiveSessionId();
+    const sessionId = resolveCallerSessionId(opts.sessionId);
     if (!sessionId) {
       console.error("No active session.");
       process.exit(1);
@@ -927,7 +928,7 @@ program
   )
   .option("--all", "show all entries (including already pushed)", false)
   .action((opts) => {
-    const sessionId = getActiveSessionId();
+    const sessionId = resolveCallerSessionId();
     if (!sessionId) {
       console.error("No active session.");
       process.exit(1);
@@ -959,7 +960,7 @@ program
   )
   .option("--team <team_id>", "team ID (prompted if not given)")
   .action(async (opts) => {
-    const sessionId = getActiveSessionId();
+    const sessionId = resolveCallerSessionId();
     if (!sessionId) {
       console.error("No active session.");
       process.exit(1);
@@ -1017,7 +1018,7 @@ program
     if (!bundleId) {
       bundleId = await promptForBundle("Which bundle to connect to?");
     }
-    const sessionId = getActiveSessionId();
+    const sessionId = resolveCallerSessionId();
     if (!sessionId) {
       console.error("No active session. This command must be run inside a Claude Code session.");
       process.exit(1);
@@ -1044,7 +1045,7 @@ program
   )
   .argument("[bundle_id]", "bundle ID (prompted if not given)")
   .action(async (bundleIdArg?: string) => {
-    const sessionId = getActiveSessionId();
+    const sessionId = resolveCallerSessionId();
     if (!sessionId) {
       console.error("No active session.");
       process.exit(1);
@@ -1148,7 +1149,7 @@ program
     saveProjectConfig(cfg);
 
     // Auto-connect active session to the new bundle
-    const sessionId = getActiveSessionId();
+    const sessionId = resolveCallerSessionId();
     if (sessionId) {
       const session = loadActiveSession(sessionId);
       if (session && !session.bundles.some((b) => b.bundle_id === r.bundle_id)) {
@@ -1270,7 +1271,7 @@ program
     saveProjectConfig(cfg);
 
     // Auto-connect active session to the bundle
-    const sessionId = getActiveSessionId();
+    const sessionId = resolveCallerSessionId();
     if (sessionId) {
       const session = loadActiveSession(sessionId);
       if (session && !session.bundles.some((b) => b.bundle_id === r.bundle_id)) {
@@ -1349,7 +1350,7 @@ program
   )
   .option("--message <text>", "log a new entry before pushing")
   .action(async (opts) => {
-    const sessionId = getActiveSessionId();
+    const sessionId = resolveCallerSessionId();
     const session = sessionId ? loadActiveSession(sessionId) : null;
 
     if (!session || session.bundles.length === 0) {
@@ -1398,7 +1399,7 @@ program
   )
   .option("--bundle <id>", "bundle ID (skip interactive selection)")
   .action(async (opts) => {
-    const sessionId = getActiveSessionId();
+    const sessionId = resolveCallerSessionId();
     if (!sessionId) {
       console.error("No active session.");
       process.exit(1);
@@ -1484,7 +1485,7 @@ program
   .option("--limit <n>", "max entries to return", "20")
   .option("--include-self", "include your own project's entries", false)
   .action(async (bundleId: string | undefined, opts) => {
-    const sessionId = getActiveSessionId();
+    const sessionId = resolveCallerSessionId();
     const session = sessionId ? loadActiveSession(sessionId) : null;
 
     // If a specific bundle_id is given, pull just from that
@@ -1557,7 +1558,7 @@ program
     // Resolve project
     let projectName: string = opts.project;
     if (!projectName) {
-      const sessionId = getActiveSessionId();
+      const sessionId = resolveCallerSessionId();
       const session = sessionId ? loadActiveSession(sessionId) : null;
       const defaultProject = session?.project_name;
       projectName = await input({
@@ -1695,7 +1696,7 @@ program
     // Resolve project
     let projectName: string = opts.project;
     if (!projectName) {
-      const sessionId = getActiveSessionId();
+      const sessionId = resolveCallerSessionId();
       const session = sessionId ? loadActiveSession(sessionId) : null;
       const defaultProject = session?.project_name;
       projectName = await input({
@@ -1907,7 +1908,7 @@ program
   .option("--target <project>", "Direct the question to a specific project")
   .option("--context <text>", "What prompted this question")
   .action(async (opts) => {
-    const sessionId = getActiveSessionId();
+    const sessionId = resolveCallerSessionId();
     const session = sessionId ? loadActiveSession(sessionId) : null;
     const projectName = session?.project_name ?? detectProjectName();
 
@@ -1952,7 +1953,7 @@ program
   .option("--question-id <id>", "Question ID to answer")
   .option("--answer <text>", "Your answer")
   .action(async (opts) => {
-    const sessionId = getActiveSessionId();
+    const sessionId = resolveCallerSessionId();
     const session = sessionId ? loadActiveSession(sessionId) : null;
     const projectName = session?.project_name ?? detectProjectName();
 
@@ -2054,7 +2055,7 @@ program
   )
   .argument("[name]", "new name (prompted if not given)")
   .action(async (nameArg?: string) => {
-    const sessionId = getActiveSessionId();
+    const sessionId = resolveCallerSessionId();
     if (!sessionId) { console.error("No active session."); process.exit(1); }
     const session = loadActiveSession(sessionId);
     if (!session) { console.error(`Session ${sessionId} not found.`); process.exit(1); }
@@ -2119,7 +2120,7 @@ program
   )
   .argument("[entry_id]", "entry to delete (prompted if not given)")
   .action(async (entryIdArg?: string) => {
-    const sessionId = getActiveSessionId();
+    const sessionId = resolveCallerSessionId();
     if (!sessionId) { console.error("No active session."); process.exit(1); }
     const session = loadActiveSession(sessionId);
     if (!session) { console.error(`Session ${sessionId} not found.`); process.exit(1); }
@@ -2350,6 +2351,33 @@ program
 
 // ==================== HELPERS ====================
 
+/**
+ * Resolve which ctx-link session this CLI invocation belongs to.
+ *
+ * Order:
+ *  1. --session-id flag (passed by hooks). The caller has explicit identity.
+ *  2. Process-tree walk → Claude Code session UUID. When Claude Code runs
+ *     `ctxl …` via its Bash tool, the calling Claude window's PID is one or
+ *     two levels up the process tree. The active-session record is keyed
+ *     by that UUID, so it's a deterministic lookup. This is the only path
+ *     that disambiguates multiple Claude Code instances sharing a project
+ *     directory.
+ *  3. Per-cwd marker file (`.ctx-link-active-session`). Used only when the
+ *     CLI is invoked manually outside of Claude Code (e.g. from a plain
+ *     shell), where there's no upstream Claude window to identify.
+ */
+function resolveCallerSessionId(explicitId?: string): string | null {
+  if (explicitId) return explicitId;
+
+  const claudeUUID = resolveClaudeSessionId();
+  if (claudeUUID) {
+    const session = loadActiveSession(claudeUUID);
+    if (session) return claudeUUID;
+  }
+
+  return getActiveSessionId();
+}
+
 function detectProjectName(): string {
   const pkgPath = `${process.cwd()}/package.json`;
   if (existsSync(pkgPath)) {
@@ -2362,7 +2390,7 @@ function detectProjectName(): string {
 }
 
 function assertSessionConnectedTo(bundleId: string): void {
-  const sessionId = getActiveSessionId();
+  const sessionId = resolveCallerSessionId();
   const session = sessionId ? loadActiveSession(sessionId) : null;
   if (!session) {
     console.error("No active session. Run 'ctxl session-start' first.");
@@ -2377,7 +2405,7 @@ function assertSessionConnectedTo(bundleId: string): void {
 /** Prompt user to pick a bundle from their connected session bundles or all known bundles. */
 async function promptForBundle(message: string): Promise<string> {
   // First try: connected session bundles
-  const sessionId = getActiveSessionId();
+  const sessionId = resolveCallerSessionId();
   const session = sessionId ? loadActiveSession(sessionId) : null;
   const knownBundles = listLocalBundles();
   const bundleNameMap = new Map(knownBundles.map(b => [b.bundle_id, b.name]));
