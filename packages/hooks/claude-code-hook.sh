@@ -55,73 +55,45 @@ function getHeadSha(d) {
 
 const entriesToAdd = [];
 
-switch (tool_name) {
-  case "Write": {
-    const p = tool_input?.file_path || "";
-    const rel = path.relative(dir, p);
-    entriesToAdd.push({
-      summary: "Created " + rel,
-      files: [rel],
-      event_type: "auto",
-    });
-    break;
-  }
-  case "Edit": {
-    const p = tool_input?.file_path || "";
-    const rel = path.relative(dir, p);
-    const old_str = (tool_input?.old_string || "").slice(0, 100);
-    const new_str = (tool_input?.new_string || "").slice(0, 100);
-    let summary = "Edited " + rel;
-    if (old_str && new_str) {
-      summary += ": " + JSON.stringify(old_str) + " -> " + JSON.stringify(new_str);
-    }
-    entriesToAdd.push({
-      summary,
-      files: [rel],
-      event_type: "auto",
-    });
-    break;
-  }
-  case "Bash": {
-    const cmd = (tool_input?.command || "").trim();
+// Only auto-log natural batch points: git commits and PR creation.
+// File edits aren't logged here — Claude calls session_log itself with a
+// handoff-quality summary (covering interface details, not the diff).
+if (tool_name !== "Bash") process.exit(0);
 
-    // Check for git commit
-    if (/git\s+commit/.test(cmd)) {
-      let commitSummary = "Git commit";
-      let files = [];
-      try {
-        const msg = execSync("git log -1 --pretty=format:%s", { cwd: dir, encoding: "utf8" }).trim();
-        const changed = execSync("git diff HEAD~1 --name-only", { cwd: dir, encoding: "utf8" }).trim();
-        files = changed.split("\n").filter(Boolean);
-        commitSummary = "Committed: " + msg;
-      } catch {}
+const cmd = (tool_input?.command || "").trim();
 
-      entriesToAdd.push({
-        summary: commitSummary,
-        files,
-        event_type: "commit",
-        trigger_ref: getHeadSha(dir),
-      });
-    }
+if (/git\s+commit/.test(cmd)) {
+  let commitMsg = "";
+  let files = [];
+  try {
+    commitMsg = execSync("git log -1 --pretty=format:%s", { cwd: dir, encoding: "utf8" }).trim();
+    const changed = execSync("git diff HEAD~1 --name-only", { cwd: dir, encoding: "utf8" }).trim();
+    files = changed.split("\n").filter(Boolean);
+  } catch {}
 
-    // Check for PR creation
-    if (/gh\s+pr\s+create/.test(cmd)) {
-      let prSummary = "Created pull request";
-      const output = (tool_output?.stdout || tool_output || "").toString();
-      const urlMatch = output.match(/https:\/\/github\.com\/[^\s]+/);
-      if (urlMatch) prSummary = "Created PR: " + urlMatch[0];
-      const titleMatch = cmd.match(/--title\s+["']([^"']+)["']/);
-      if (titleMatch) prSummary += " -- " + titleMatch[1];
+  entriesToAdd.push({
+    summary: commitMsg ? "Committed: " + commitMsg + " (pending agent handoff details)" : "Committed (pending agent handoff details)",
+    files,
+    event_type: "commit",
+    trigger_ref: getHeadSha(dir),
+    pending_enrichment: true,
+  });
+}
 
-      entriesToAdd.push({
-        summary: prSummary,
-        files: [],
-        event_type: "pr_open",
-      });
-    }
+if (/gh\s+pr\s+create/.test(cmd)) {
+  let prSummary = "Created pull request (pending agent handoff details)";
+  const output = (tool_output?.stdout || tool_output || "").toString();
+  const urlMatch = output.match(/https:\/\/github\.com\/[^\s]+/);
+  const titleMatch = cmd.match(/--title\s+["']([^"']+)["']/);
+  if (titleMatch) prSummary = "Created PR: " + titleMatch[1] + " (pending agent handoff details)";
+  if (urlMatch) prSummary += " — " + urlMatch[0];
 
-    break;
-  }
+  entriesToAdd.push({
+    summary: prSummary,
+    files: [],
+    event_type: "pr_open",
+    pending_enrichment: true,
+  });
 }
 
 if (entriesToAdd.length === 0) process.exit(0);
@@ -145,6 +117,7 @@ for (const e of entriesToAdd) {
     decisions: [],
     pushed_at: null,
     superseded_at: null,
+    pending_enrichment: e.pending_enrichment || false,
   });
 }
 

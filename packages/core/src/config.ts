@@ -413,6 +413,7 @@ export interface SessionEntry {
   decisions: Array<{ decision: string; rationale?: string; affects: string[] }>;
   pushed_at: string | null; // null = not yet pushed, ISO string = when consolidated
   superseded_at: string | null;  // soft-delete for rewind
+  pending_enrichment?: boolean; // commit/PR stub awaiting agent-written handoff details
 }
 
 export function pushSessionEntry(sessionId: string, entry: Omit<SessionEntry, "id" | "created_at" | "pushed_at" | "superseded_at">): SessionEntry {
@@ -467,6 +468,39 @@ export function deleteSessionEntry(sessionId: string, entryId: string): void {
   const entries: SessionEntry[] = JSON.parse(readFileSync(path, "utf8"));
   const filtered = entries.filter((e) => e.id !== entryId);
   writeFileSync(path, JSON.stringify(filtered, null, 2));
+}
+
+/** Most recent commit/PR stub still awaiting an agent-written handoff. */
+export function getPendingEnrichmentStub(sessionId: string): SessionEntry | null {
+  const entries = getSessionEntries(sessionId);
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (entries[i].pending_enrichment) return entries[i];
+  }
+  return null;
+}
+
+/** Merge an agent-written summary into a pending commit/PR stub and clear the flag. */
+export function enrichSessionEntry(
+  sessionId: string,
+  entryId: string,
+  fields: { summary: string; files_touched?: string[]; decisions?: SessionEntry["decisions"] },
+): SessionEntry | null {
+  const path = sessionEntriesPath(sessionId);
+  if (!existsSync(path)) return null;
+  const entries: SessionEntry[] = JSON.parse(readFileSync(path, "utf8"));
+  const target = entries.find((e) => e.id === entryId);
+  if (!target) return null;
+  target.summary = fields.summary;
+  if (fields.files_touched && fields.files_touched.length > 0) {
+    const merged = new Set([...target.files_touched, ...fields.files_touched]);
+    target.files_touched = [...merged];
+  }
+  if (fields.decisions && fields.decisions.length > 0) {
+    target.decisions = [...target.decisions, ...fields.decisions];
+  }
+  delete target.pending_enrichment;
+  writeFileSync(path, JSON.stringify(entries, null, 2));
+  return target;
 }
 
 export function storeBundleToken(
