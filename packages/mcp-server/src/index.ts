@@ -85,9 +85,12 @@ import { startAutoSync, type AutoSyncHandle } from "./auto-sync.js";
  * We store the session ID in memory so multiple Claude instances
  * in the same project don't share/overwrite each other's sessions.
  *
- * Set during session_start tool call, OR cached from the marker file
- * on first getSession() call. Once cached, never re-reads the marker
- * (so a second instance overwriting it doesn't affect us).
+ * Resolved on first getSession() call by walking the process tree to the
+ * Claude Code parent and reading its session UUID — that UUID is what the
+ * SessionStart hook keys the active-session record by.
+ *
+ * CLAUDE_CODE_SSE_PORT is *not* a per-instance identifier (it's shared
+ * across all Claude Code windows on a machine), so it can't be used here.
  */
 let ownSessionId: string | null = null;
 let autoSyncHandle: AutoSyncHandle | null = null;
@@ -95,19 +98,47 @@ let hasShownWelcome = false;
 let cachedClaudeSessionId: string | null | undefined = undefined; // undefined = not yet resolved
 let lastNameSyncAt = 0;
 
+/**
+ * Resolve THIS MCP server's owning ctx-link session_id.
+ *
+ * Strategy, in order:
+ *  1. Process-tree walk → Claude session UUID. The SessionStart hook stores
+ *     the active-session record under that UUID, so it's a direct lookup.
+ *     This is the only resolver that's safe when multiple Claude Code
+ *     instances share a project directory.
+ *  2. SSE port + cwd. Cheap fallback when the process-tree walk fails (e.g.
+ *     hook disabled). Ambiguous in same-cwd multi-instance setups, so only
+ *     used when (1) doesn't yield a hit.
+ *  3. Per-cwd marker file. Last resort, retained for older session files
+ *     that predate (1) and (2).
+ */
+function resolveOwnSessionId(): string | null {
+  // (1) Claude session UUID via process tree
+  if (cachedClaudeSessionId === undefined) {
+    cachedClaudeSessionId = resolveClaudeSessionId();
+  }
+  if (cachedClaudeSessionId) {
+    const session = loadActiveSession(cachedClaudeSessionId);
+    if (session && session.project_path === process.cwd()) {
+      return cachedClaudeSessionId;
+    }
+  }
+
+  // (2) SSE port + cwd
+  const instanceId = process.env.CLAUDE_CODE_SSE_PORT;
+  if (instanceId) {
+    const found = findSessionByInstanceId(instanceId, process.cwd());
+    if (found) return found.session_id;
+  }
+
+  // (3) Marker file
+  return getActiveSessionId();
+}
+
 /** Get the active session for this MCP server instance. */
 function getSession(): ActiveSession | null {
   if (!ownSessionId) {
-    // Prefer instance-based lookup (multi-terminal safe), fall back to marker file
-    const instanceId = process.env.CLAUDE_CODE_SSE_PORT;
-    if (instanceId) {
-      const found = findSessionByInstanceId(instanceId, process.cwd());
-      if (found) ownSessionId = found.session_id;
-    }
-    if (!ownSessionId) {
-      const fromMarker = getActiveSessionId();
-      if (fromMarker) ownSessionId = fromMarker;
-    }
+    ownSessionId = resolveOwnSessionId();
   }
   if (!ownSessionId) return null;
   const session = loadActiveSession(ownSessionId);
@@ -155,13 +186,11 @@ async function ensureSession(): Promise<ActiveSession | null> {
   // If we already created a session (guard against double-call), return it.
   if (ownSessionId) return loadActiveSession(ownSessionId);
 
-  // CLAUDE_CODE_SSE_PORT is unique per Claude Code instance and stable across
-  // MCP server restarts within that instance. Use it to reconnect to an
-  // existing session instead of creating a duplicate.
-  const instanceId = process.env.CLAUDE_CODE_SSE_PORT ?? null;
-
-  if (instanceId) {
-    const existing = findSessionByInstanceId(instanceId, process.cwd());
+  // Try to find this Claude Code instance's existing session (set up by the
+  // SessionStart hook, or carried over from a prior MCP boot).
+  const resolved = resolveOwnSessionId();
+  if (resolved) {
+    const existing = loadActiveSession(resolved);
     if (existing) {
       ownSessionId = existing.session_id;
       setActiveSessionId(existing.session_id);
@@ -169,9 +198,14 @@ async function ensureSession(): Promise<ActiveSession | null> {
     }
   }
 
-  // No existing session for this Claude instance — create a new one.
+  // No existing session for this Claude instance — create a new one. Key it
+  // by the Claude session UUID when available so subsequent boots can find
+  // it via process-tree resolution (multi-instance safe).
   try {
-    const sessionId = crypto.randomUUID();
+    const claudeSessionId = cachedClaudeSessionId === undefined
+      ? (cachedClaudeSessionId = resolveClaudeSessionId())
+      : cachedClaudeSessionId;
+    const sessionId = claudeSessionId ?? crypto.randomUUID();
     ownSessionId = sessionId;
 
     const { existsSync, readFileSync } = await import("node:fs");
@@ -203,10 +237,6 @@ async function ensureSession(): Promise<ActiveSession | null> {
       mode: projectCfg?.mode ?? "local",
     });
 
-    // Resolve Claude Code conversation UUID for name sync
-    const claudeSessionId = resolveClaudeSessionId();
-    cachedClaudeSessionId = claudeSessionId;
-
     // Try to get Claude's session name as the default
     let sessionName: string | null = null;
     if (claudeSessionId) {
@@ -223,7 +253,7 @@ async function ensureSession(): Promise<ActiveSession | null> {
       cloud_session_id: null,
       team_id: null,
       cloud_copies: [],
-      claude_instance_id: instanceId,
+      claude_instance_id: process.env.CLAUDE_CODE_SSE_PORT ?? null,
       claude_session_id: claudeSessionId,
       ...(sessionName ? { name: sessionName, name_auto: true } : {}),
     };

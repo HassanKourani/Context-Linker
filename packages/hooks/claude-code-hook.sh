@@ -10,13 +10,9 @@
 
 set -euo pipefail
 
-# Only proceed if there's an active ctx-link session
-# Check both: SSE port (multi-terminal safe) and marker file (fallback)
-if [[ -z "${CLAUDE_CODE_SSE_PORT:-}" ]] && [[ ! -f "$PWD/.ctx-link-active-session" ]]; then
-  exit 0
-fi
-
-# Capture stdin before backgrounding
+# Capture stdin before backgrounding (we need session_id from input regardless
+# of whether a marker file exists — CLAUDE_CODE_SSE_PORT is shared across
+# Claude Code instances on the machine, so it can't be used to distinguish).
 INPUT=$(cat)
 
 # Write JS to a temp file to avoid bash quoting issues
@@ -28,26 +24,17 @@ const crypto = require("crypto");
 const { execSync } = require("child_process");
 
 const input = JSON.parse(fs.readFileSync(0, "utf8"));
-const { tool_name, tool_input, tool_output, cwd } = input;
+const { tool_name, tool_input, tool_output, cwd, session_id: claudeSessionId } = input;
 const dir = cwd || process.cwd();
 
-// Resolve session ID: prefer CLAUDE_CODE_SSE_PORT (multi-terminal safe),
-// fall back to marker file
+// Resolve session ID: prefer Claude's per-instance session_id (from hook
+// input — uniquely identifies the Claude Code window). The SessionStart
+// hook keys ctx-link active sessions by exactly this UUID.
+// Fall back to the per-cwd marker file only if input.session_id is missing.
 let sessionId = null;
-const ssePort = process.env.CLAUDE_CODE_SSE_PORT;
-if (ssePort) {
-  const sessionsDir = path.join(process.env.HOME, ".ctx-link", "active-sessions");
-  if (fs.existsSync(sessionsDir)) {
-    for (const f of fs.readdirSync(sessionsDir).filter(f => f.endsWith(".json"))) {
-      try {
-        const s = JSON.parse(fs.readFileSync(path.join(sessionsDir, f), "utf8"));
-        if (s.claude_instance_id === ssePort && s.project_path === dir) {
-          sessionId = s.session_id;
-          break;
-        }
-      } catch {}
-    }
-  }
+if (claudeSessionId) {
+  const sessionFile = path.join(process.env.HOME, ".ctx-link", "active-sessions", claudeSessionId + ".json");
+  if (fs.existsSync(sessionFile)) sessionId = claudeSessionId;
 }
 if (!sessionId) {
   const marker = path.join(dir, ".ctx-link-active-session");
