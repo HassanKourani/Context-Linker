@@ -17,11 +17,8 @@ import {
   rewindProject,
   restoreRewound,
   listRewinds,
-  getActiveSessionId,
   loadActiveSession,
   saveActiveSession,
-  setActiveSessionId,
-  findSessionByInstanceId,
   resolveClaudeSessionId,
   getClaudeSessionName,
   loadGlobalConfig,
@@ -82,67 +79,47 @@ import { startAutoSync, type AutoSyncHandle } from "./auto-sync.js";
 
 /**
  * Each MCP server instance is 1:1 with a Claude Code instance.
- * We store the session ID in memory so multiple Claude instances
- * in the same project don't share/overwrite each other's sessions.
  *
- * Resolved on first getSession() call by walking the process tree to the
- * Claude Code parent and reading its session UUID — that UUID is what the
- * SessionStart hook keys the active-session record by.
- *
- * CLAUDE_CODE_SSE_PORT is *not* a per-instance identifier (it's shared
- * across all Claude Code windows on a machine), so it can't be used here.
+ * Session resolution: walk the process tree to the Claude Code parent on
+ * EVERY tool call and read its session UUID — that UUID is what the
+ * SessionStart hook keys the active-session record by. We never trust a
+ * cached ID and never read the per-cwd marker file (it's overwritten when
+ * a second Claude Code instance starts in the same project, so it can't
+ * disambiguate). CLAUDE_CODE_SSE_PORT is shared machine-wide and is also
+ * not usable as an instance identifier.
  */
-let ownSessionId: string | null = null;
 let autoSyncHandle: AutoSyncHandle | null = null;
 let hasShownWelcome = false;
-let cachedClaudeSessionId: string | null | undefined = undefined; // undefined = not yet resolved
 let lastNameSyncAt = 0;
 
+const debugLog = (msg: string) => {
+  if (process.env.CTX_LINK_DEBUG) process.stderr.write(`[ctx-link] ${msg}\n`);
+};
+
 /**
- * Resolve THIS MCP server's owning ctx-link session_id.
+ * Resolve THIS MCP server's owning Claude Code session UUID via the process
+ * tree. Always called fresh — no caching across tool calls.
  *
- * Strategy, in order:
- *  1. Process-tree walk → Claude session UUID. The SessionStart hook stores
- *     the active-session record under that UUID, so it's a direct lookup.
- *     This is the only resolver that's safe when multiple Claude Code
- *     instances share a project directory.
- *  2. SSE port + cwd. Cheap fallback when the process-tree walk fails (e.g.
- *     hook disabled). Ambiguous in same-cwd multi-instance setups, so only
- *     used when (1) doesn't yield a hit.
- *  3. Per-cwd marker file. Last resort, retained for older session files
- *     that predate (1) and (2).
+ * Returns null if Claude Code can't be located in the process tree (e.g.
+ * MCP was launched outside Claude Code, or the parent's session record
+ * was never created).
  */
-function resolveOwnSessionId(): string | null {
-  // (1) Claude session UUID via process tree
-  if (cachedClaudeSessionId === undefined) {
-    cachedClaudeSessionId = resolveClaudeSessionId();
-  }
-  if (cachedClaudeSessionId) {
-    const session = loadActiveSession(cachedClaudeSessionId);
-    if (session && session.project_path === process.cwd()) {
-      return cachedClaudeSessionId;
-    }
-  }
-
-  // (2) SSE port + cwd
-  const instanceId = process.env.CLAUDE_CODE_SSE_PORT;
-  if (instanceId) {
-    const found = findSessionByInstanceId(instanceId, process.cwd());
-    if (found) return found.session_id;
-  }
-
-  // (3) Marker file
-  return getActiveSessionId();
+function resolveOwnClaudeSessionId(): string | null {
+  const id = resolveClaudeSessionId();
+  debugLog(`resolveOwnClaudeSessionId: ppid=${process.ppid} → ${id ?? "<null>"}`);
+  return id;
 }
 
 /** Get the active session for this MCP server instance. */
 function getSession(): ActiveSession | null {
-  if (!ownSessionId) {
-    ownSessionId = resolveOwnSessionId();
+  const claudeSessionId = resolveOwnClaudeSessionId();
+  if (!claudeSessionId) return null;
+  const session = loadActiveSession(claudeSessionId);
+  if (!session) {
+    debugLog(`getSession: no active-session record for ${claudeSessionId}`);
+    return null;
   }
-  if (!ownSessionId) return null;
-  const session = loadActiveSession(ownSessionId);
-  if (session) syncClaudeSessionName(session);
+  syncClaudeSessionName(session);
   return session;
 }
 
@@ -157,17 +134,12 @@ function syncClaudeSessionName(session: ActiveSession): void {
   if (now - lastNameSyncAt < 10_000) return;
   lastNameSyncAt = now;
 
-  // Resolve Claude session ID once
-  if (cachedClaudeSessionId === undefined) {
-    cachedClaudeSessionId = resolveClaudeSessionId();
-    if (cachedClaudeSessionId && !session.claude_session_id) {
-      session.claude_session_id = cachedClaudeSessionId;
-      saveActiveSession(session);
-    }
-  }
-
-  const claudeId = session.claude_session_id ?? cachedClaudeSessionId;
+  const claudeId = session.claude_session_id ?? resolveClaudeSessionId();
   if (!claudeId) return;
+  if (!session.claude_session_id) {
+    session.claude_session_id = claudeId;
+    saveActiveSession(session);
+  }
 
   // Only auto-sync if name was never set or was auto-synced previously
   if (session.name && !session.name_auto) return;
@@ -181,33 +153,21 @@ function syncClaudeSessionName(session: ActiveSession): void {
   saveActiveSession(session);
 }
 
-/** Auto-create a fresh session on MCP server boot. */
+/** Auto-create the active-session record for THIS Claude Code instance on MCP boot. */
 async function ensureSession(): Promise<ActiveSession | null> {
-  // If we already created a session (guard against double-call), return it.
-  if (ownSessionId) return loadActiveSession(ownSessionId);
-
-  // Try to find this Claude Code instance's existing session (set up by the
-  // SessionStart hook, or carried over from a prior MCP boot).
-  const resolved = resolveOwnSessionId();
-  if (resolved) {
-    const existing = loadActiveSession(resolved);
-    if (existing) {
-      ownSessionId = existing.session_id;
-      setActiveSessionId(existing.session_id);
-      return existing;
-    }
+  const claudeSessionId = resolveOwnClaudeSessionId();
+  if (!claudeSessionId) {
+    debugLog("ensureSession: process tree did not reach a Claude Code session — skipping auto-create");
+    return null;
   }
 
-  // No existing session for this Claude instance — create a new one. Key it
-  // by the Claude session UUID when available so subsequent boots can find
-  // it via process-tree resolution (multi-instance safe).
-  try {
-    const claudeSessionId = cachedClaudeSessionId === undefined
-      ? (cachedClaudeSessionId = resolveClaudeSessionId())
-      : cachedClaudeSessionId;
-    const sessionId = claudeSessionId ?? crypto.randomUUID();
-    ownSessionId = sessionId;
+  const existing = loadActiveSession(claudeSessionId);
+  if (existing) return existing;
 
+  // First boot under this Claude Code instance — create the record. Key it
+  // by the Claude UUID so every subsequent tool call (which re-resolves
+  // via the process tree) finds it directly.
+  try {
     const { existsSync, readFileSync } = await import("node:fs");
     let projectName = process.cwd().split("/").pop() ?? "unknown";
     const pkgPath = `${process.cwd()}/package.json`;
@@ -237,14 +197,10 @@ async function ensureSession(): Promise<ActiveSession | null> {
       mode: projectCfg?.mode ?? "local",
     });
 
-    // Try to get Claude's session name as the default
-    let sessionName: string | null = null;
-    if (claudeSessionId) {
-      sessionName = getClaudeSessionName(claudeSessionId, process.cwd());
-    }
+    const sessionName = getClaudeSessionName(claudeSessionId, process.cwd());
 
     const session: ActiveSession = {
-      session_id: sessionId,
+      session_id: claudeSessionId,
       project_name: projectName,
       project_path: process.cwd(),
       bundles: [],
@@ -259,10 +215,9 @@ async function ensureSession(): Promise<ActiveSession | null> {
     };
 
     saveActiveSession(session);
-    setActiveSessionId(sessionId);
     return session;
-  } catch {
-    // Non-fatal — session_start tool still works as fallback
+  } catch (err) {
+    debugLog(`ensureSession: create failed: ${(err as Error).message}`);
     return null;
   }
 }
@@ -1312,100 +1267,30 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
 
       case "session_start": {
-        const a = z.object({ session_id: z.string().optional() }).parse(args);
+        // The active session is identified by the calling Claude Code
+        // window's session UUID, resolved from the process tree on every
+        // tool call. session_start is now a no-op for arbitrary IDs — it
+        // just refreshes branch/instance metadata for the resolved session
+        // (or creates one if the SessionStart hook didn't fire yet).
+        z.object({ session_id: z.string().optional() }).parse(args);
+        const claudeSessionId = resolveOwnClaudeSessionId();
+        if (!claudeSessionId) return fail("Could not identify Claude Code session from the process tree. Ensure ctx-link is launched by Claude Code.");
 
-        // If no specific ID, return the auto-started session
-        if (!a.session_id) {
-          const autoSession = getSession();
-          if (autoSession) {
-            try {
-              const { execSync } = await import("node:child_process");
-              autoSession.branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf8" }).trim();
-            } catch {}
-            autoSession.claude_instance_id = process.env.CLAUDE_CODE_SSE_PORT ?? null;
-            saveActiveSession(autoSession);
-            return ok({ resumed: true, session_id: autoSession.session_id, project_name: autoSession.project_name });
-          }
-        }
-
-        const sessionId = a.session_id ?? crypto.randomUUID();
-
-        // Bind this MCP server instance to this session ID
-        ownSessionId = sessionId;
-
-        // Check if session already exists (resume)
-        const existing = loadActiveSession(sessionId);
+        const existing = loadActiveSession(claudeSessionId);
         if (existing) {
-          // Update branch, instance ID, and Claude session ID
           try {
             const { execSync } = await import("node:child_process");
             existing.branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf8" }).trim();
           } catch {}
           existing.claude_instance_id = process.env.CLAUDE_CODE_SSE_PORT ?? null;
-          if (!existing.claude_session_id) {
-            existing.claude_session_id = cachedClaudeSessionId ?? resolveClaudeSessionId();
-            if (cachedClaudeSessionId === undefined) cachedClaudeSessionId = existing.claude_session_id;
-          }
+          if (!existing.claude_session_id) existing.claude_session_id = claudeSessionId;
           saveActiveSession(existing);
-          setActiveSessionId(sessionId);
-          return ok({ resumed: true, session_id: sessionId, project_name: existing.project_name });
+          return ok({ resumed: true, session_id: claudeSessionId, project_name: existing.project_name });
         }
 
-        // Detect project name from package.json or directory name
-        const { existsSync, readFileSync } = await import("node:fs");
-        let projectName = process.cwd().split("/").pop() ?? "unknown";
-        const pkgPath = `${process.cwd()}/package.json`;
-        if (existsSync(pkgPath)) {
-          try {
-            const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-            if (pkg.name) projectName = pkg.name;
-          } catch {}
-        }
-
-        let branch: string | null = null;
-        try {
-          const { execSync } = await import("node:child_process");
-          branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf8" }).trim();
-        } catch {}
-
-        const globalCfg = loadGlobalConfig();
-        const projectCfg = loadProjectConfig();
-
-        // Log to session history
-        logSession({
-          project_name: projectName,
-          project_path: process.cwd(),
-          machine_id: globalCfg.machine_id,
-          started_at: new Date().toISOString(),
-          branch,
-          bundle: null,
-          mode: projectCfg?.mode ?? "local",
-        });
-
-        // Create active session record
-        const claudeSessionId = cachedClaudeSessionId ?? resolveClaudeSessionId();
-        if (cachedClaudeSessionId === undefined) cachedClaudeSessionId = claudeSessionId;
-        let sessionName: string | null = null;
-        if (claudeSessionId) {
-          sessionName = getClaudeSessionName(claudeSessionId, process.cwd());
-        }
-        saveActiveSession({
-          session_id: sessionId,
-          project_name: projectName,
-          project_path: process.cwd(),
-          bundles: [],
-          started_at: new Date().toISOString(),
-          branch,
-          cloud_session_id: null,
-          team_id: null,
-          cloud_copies: [],
-          claude_instance_id: process.env.CLAUDE_CODE_SSE_PORT ?? null,
-          claude_session_id: claudeSessionId,
-          ...(sessionName ? { name: sessionName, name_auto: true } : {}),
-        });
-
-        setActiveSessionId(sessionId);
-        return ok({ created: true, session_id: sessionId, project_name: projectName, branch });
+        const created = await ensureSession();
+        if (!created) return fail("Failed to create active session record.");
+        return ok({ created: true, session_id: created.session_id, project_name: created.project_name, branch: created.branch });
       }
 
       case "team_create": {
@@ -1722,6 +1607,27 @@ await server.connect(transport);
 
 // Auto-start UI server (non-blocking)
 startUiServer();
+
+// Boot diagnostics — written to a per-PID log so two MCP servers don't
+// stomp each other and the user can verify which Claude Code window each
+// MCP is bound to. Reset on each boot.
+try {
+  const { mkdirSync, appendFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { homedir } = await import("node:os");
+  const dir = join(homedir(), ".ctx-link", "mcp-logs");
+  mkdirSync(dir, { recursive: true });
+  const logPath = join(dir, `${process.pid}.log`);
+  const claudeId = resolveClaudeSessionId();
+  const lines = [
+    `--- ctx-link MCP boot ${new Date().toISOString()} ---`,
+    `pid=${process.pid} ppid=${process.ppid} cwd=${process.cwd()}`,
+    `CLAUDE_CODE_SSE_PORT=${process.env.CLAUDE_CODE_SSE_PORT ?? "<unset>"}`,
+    `resolveClaudeSessionId() → ${claudeId ?? "<null>"}`,
+    "",
+  ].join("\n");
+  appendFileSync(logPath, lines);
+} catch {}
 
 // Auto-start session — no manual session_start needed
 const bootSession = await ensureSession();
