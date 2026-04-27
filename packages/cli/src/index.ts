@@ -357,17 +357,6 @@ program
       }
     }
 
-    // Check if already configured
-    if (!opts.force && settings.mcpServers?.["ctx-link"]) {
-      const hasHooks = JSON.stringify(settings.hooks ?? {}).includes("ctxl");
-      if (hasHooks) {
-        console.log(`ctx-link is already configured in ${scope} settings.`);
-        console.log(`  ${settingsPath}`);
-        console.log(`\nRun with --force to overwrite.`);
-        return;
-      }
-    }
-
     // Find the ctx-link binary path
     let ctxLinkBin: string;
     try {
@@ -402,13 +391,30 @@ program
       ctxlBin = "ctxl";
     }
 
-    // --- MCP Server ---
-    if (!settings.mcpServers) settings.mcpServers = {};
-    settings.mcpServers["ctx-link"] = {
-      command: ctxLinkBin,
-    };
+    // --- MCP Server (registered via `claude mcp add`, not settings.json) ---
+    // Claude Code reads MCP servers from ~/.claude.json, not ~/.claude/settings.json.
+    // Use the official `claude` CLI so we don't have to track schema changes.
+    let mcpRegistered = false;
+    let mcpManualCommand = "";
+    try {
+      execSync("which claude", { encoding: "utf8" });
+      const mcpScope = opts.project ? "project" : "user";
+      // Remove any prior registration so --force re-registers cleanly
+      try {
+        execSync(`claude mcp remove --scope ${mcpScope} ctx-link`, { stdio: "ignore" });
+      } catch {
+        // not previously registered — fine
+      }
+      execSync(`claude mcp add --scope ${mcpScope} ctx-link "${ctxLinkBin}"`, { stdio: "ignore" });
+      mcpRegistered = true;
+    } catch {
+      const isWin = process.platform === "win32";
+      mcpManualCommand = isWin
+        ? `claude mcp add --scope ${opts.project ? "project" : "user"} ctx-link (Get-Command ctx-link).Source`
+        : `claude mcp add --scope ${opts.project ? "project" : "user"} ctx-link "$(which ctx-link)"`;
+    }
 
-    // --- Hooks ---
+    // --- Hooks (always written to settings.json) ---
     if (!settings.hooks) settings.hooks = {};
 
     // SessionStart hook: auto-create session with Claude's session ID
@@ -447,13 +453,25 @@ program
     settings.hooks.SessionStart.push(sessionStartHook);
     settings.hooks.PostToolUse.push(postToolUseHook);
 
+    // Strip any legacy mcpServers["ctx-link"] entry — it lives in ~/.claude.json now
+    if (settings.mcpServers?.["ctx-link"]) {
+      delete settings.mcpServers["ctx-link"];
+      if (Object.keys(settings.mcpServers).length === 0) delete settings.mcpServers;
+    }
+
     // Write
     mkdirSync(dirname(settingsPath), { recursive: true });
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
 
     console.log(`ctx-link configured in ${scope} Claude Code settings:`);
     console.log(`  ${settingsPath}\n`);
-    console.log(`  ✓ MCP server (ctx-link tools for Claude)`);
+    if (mcpRegistered) {
+      console.log(`  ✓ MCP server registered via 'claude mcp add'`);
+    } else {
+      console.log(`  ✗ MCP server NOT registered ('claude' CLI not found on PATH)`);
+      console.log(`     Run this manually after installing Claude Code:`);
+      console.log(`     ${mcpManualCommand}`);
+    }
     console.log(`  ✓ SessionStart hook (auto-create session)`);
     console.log(`  ✓ PostToolUse hook (auto-log edits, commits, PRs)\n`);
     console.log(`Restart Claude Code to activate. Run /mcp to verify.`);

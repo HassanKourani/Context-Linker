@@ -49,8 +49,22 @@ bun add -g ctx-link
 
 ### 2. Add MCP to Claude Code
 
+Register the MCP server with Claude Code:
+
+**macOS / Linux:**
 ```bash
-ctxl setup            # adds to global Claude Code settings
+claude mcp add --scope user ctx-link "$(which ctx-link)"
+```
+
+**Windows (PowerShell):**
+```powershell
+claude mcp add --scope user ctx-link (Get-Command ctx-link).Source
+```
+
+Then install the session hooks:
+
+```bash
+ctxl setup            # adds session hooks to global Claude Code settings
 # or
 ctxl setup --project  # adds to current project only
 ```
@@ -392,8 +406,9 @@ Run `ctxl join-team` and enter the team name + password.
 
 ### Claude Code doesn't see ctx-link MCP server
 - Run `/mcp` in Claude Code to check status.
-- Run `ctxl setup` to add the MCP config.
 - Make sure `ctx-link` is in your PATH (`which ctx-link`).
+- Register the MCP server: `claude mcp add --scope user ctx-link "$(which ctx-link)"` (macOS/Linux) or `claude mcp add --scope user ctx-link (Get-Command ctx-link).Source` (PowerShell).
+- Run `ctxl setup` to install the session hooks.
 - Restart Claude Code after setup.
 
 ### Dashboard not loading
