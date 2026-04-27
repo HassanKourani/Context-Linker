@@ -1,6 +1,6 @@
 {
   "name": "ctx-link",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "description": "Connect Claude Code sessions across projects via shared context bundles",
   "type": "module",
   "license": "MIT",
