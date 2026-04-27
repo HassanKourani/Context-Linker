@@ -182,8 +182,13 @@ const server = new Server(
       "- bundle_create: Create a new bundle.\n" +
       "- bundle_list: List all bundles.\n" +
       "Proactive behavior: call context_pull at session start if bundles are connected.\n" +
-      "**IMPORTANT: Call session_log after meaningful work (code changes, decisions, architecture choices).** " +
-      "**Break work into separate entries — one entry per logical change, not everything in one entry.**",
+      "**IMPORTANT: Call session_log after meaningful work.** Log entries are what OTHER Claude sessions see.\n" +
+      "Write entries that help another developer (or AI) understand what you did and why:\n" +
+      "- After code changes: describe WHAT changed, WHY, and list files touched. Include a brief diff summary (e.g., 'Added auth middleware to routes.ts — validates JWT, returns 401 on failure').\n" +
+      "- After commits: include the commit message and key files changed.\n" +
+      "- After decisions: explain the decision, alternatives considered, and rationale.\n" +
+      "- After PRs: include PR title, URL, and what it accomplishes.\n" +
+      "**One entry per logical change, not everything in one entry.** Bad: 'Did a bunch of stuff'. Good: 'Added POST /api/users endpoint with validation — returns 201 on success, 400 on invalid email'.",
   }
 );
 
