@@ -98,9 +98,16 @@ let lastNameSyncAt = 0;
 /** Get the active session for this MCP server instance. */
 function getSession(): ActiveSession | null {
   if (!ownSessionId) {
-    // Read from marker file — don't cache null (hook may not have fired yet)
-    const fromMarker = getActiveSessionId();
-    if (fromMarker) ownSessionId = fromMarker;
+    // Prefer instance-based lookup (multi-terminal safe), fall back to marker file
+    const instanceId = process.env.CLAUDE_CODE_SSE_PORT;
+    if (instanceId) {
+      const found = findSessionByInstanceId(instanceId, process.cwd());
+      if (found) ownSessionId = found.session_id;
+    }
+    if (!ownSessionId) {
+      const fromMarker = getActiveSessionId();
+      if (fromMarker) ownSessionId = fromMarker;
+    }
   }
   if (!ownSessionId) return null;
   const session = loadActiveSession(ownSessionId);
@@ -1031,6 +1038,11 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
         // If bundle_id is provided, pull from that specific bundle
         if (a.bundle_id) {
+          const session2 = getSession();
+          const isConnected = session2?.bundles.some((b) => b.bundle_id === a.bundle_id);
+          if (!isConnected) {
+            return fail(`Not connected to bundle ${a.bundle_id}. Use session_connect first.`);
+          }
           const mode = isLocalBundle(a.bundle_id) ? "local" : "cloud";
           const rows = await pullEntries({
             bundle_id: a.bundle_id,

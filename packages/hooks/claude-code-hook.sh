@@ -11,7 +11,10 @@
 set -euo pipefail
 
 # Only proceed if there's an active ctx-link session
-[[ -f "$PWD/.ctx-link-active-session" ]] || exit 0
+# Check both: SSE port (multi-terminal safe) and marker file (fallback)
+if [[ -z "${CLAUDE_CODE_SSE_PORT:-}" ]] && [[ ! -f "$PWD/.ctx-link-active-session" ]]; then
+  exit 0
+fi
 
 # Capture stdin before backgrounding
 INPUT=$(cat)
@@ -28,10 +31,28 @@ const input = JSON.parse(fs.readFileSync(0, "utf8"));
 const { tool_name, tool_input, tool_output, cwd } = input;
 const dir = cwd || process.cwd();
 
-// Read ctx-link session ID from marker file
-const marker = path.join(dir, ".ctx-link-active-session");
-if (!fs.existsSync(marker)) process.exit(0);
-const sessionId = fs.readFileSync(marker, "utf8").trim();
+// Resolve session ID: prefer CLAUDE_CODE_SSE_PORT (multi-terminal safe),
+// fall back to marker file
+let sessionId = null;
+const ssePort = process.env.CLAUDE_CODE_SSE_PORT;
+if (ssePort) {
+  const sessionsDir = path.join(process.env.HOME, ".ctx-link", "active-sessions");
+  if (fs.existsSync(sessionsDir)) {
+    for (const f of fs.readdirSync(sessionsDir).filter(f => f.endsWith(".json"))) {
+      try {
+        const s = JSON.parse(fs.readFileSync(path.join(sessionsDir, f), "utf8"));
+        if (s.claude_instance_id === ssePort && s.project_path === dir) {
+          sessionId = s.session_id;
+          break;
+        }
+      } catch {}
+    }
+  }
+}
+if (!sessionId) {
+  const marker = path.join(dir, ".ctx-link-active-session");
+  if (fs.existsSync(marker)) sessionId = fs.readFileSync(marker, "utf8").trim();
+}
 if (!sessionId) process.exit(0);
 
 // Detect project name

@@ -15,9 +15,32 @@ if [[ ! -f "$CONFIG" ]]; then
   exit 0  # no ctx-link in this repo, no-op
 fi
 
-# Check for active session — skip if none
-SESSION_FILE=".ctx-link-active-session"
-if [[ ! -f "$SESSION_FILE" ]] || [[ ! -s "$SESSION_FILE" ]]; then
+# Resolve session ID: prefer CLAUDE_CODE_SSE_PORT (multi-terminal safe),
+# fall back to marker file
+SESSION_ID=""
+if [[ -n "${CLAUDE_CODE_SSE_PORT:-}" ]]; then
+  SESSIONS_DIR="$HOME/.ctx-link/active-sessions"
+  if [[ -d "$SESSIONS_DIR" ]]; then
+    SESSION_ID=$(bun -e "
+      const fs = require('fs'), path = require('path');
+      const dir = '$SESSIONS_DIR', port = '$CLAUDE_CODE_SSE_PORT', proj = '$PWD';
+      for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.json'))) {
+        try {
+          const s = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+          if (s.claude_instance_id === port && s.project_path === proj) { console.log(s.session_id); break; }
+        } catch {}
+      }
+    " 2>/dev/null || true)
+  fi
+fi
+if [[ -z "$SESSION_ID" ]]; then
+  SESSION_FILE=".ctx-link-active-session"
+  if [[ ! -f "$SESSION_FILE" ]] || [[ ! -s "$SESSION_FILE" ]]; then
+    exit 0
+  fi
+  SESSION_ID=$(cat "$SESSION_FILE")
+fi
+if [[ -z "$SESSION_ID" ]]; then
   exit 0
 fi
 
@@ -39,7 +62,7 @@ SHA=$(git rev-parse HEAD)
 SHORT_SHA=$(git rev-parse --short HEAD)
 
 echo "ctx-link: logging commit $SHORT_SHA to session"
-ctxl session-log --event commit --ref "$SHA" --diff || {
+ctxl session-log --event commit --ref "$SHA" --diff --session-id "$SESSION_ID" || {
   echo "ctx-link: session-log failed (non-fatal)" >&2
   exit 0
 }
