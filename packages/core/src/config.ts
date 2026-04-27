@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { z } from "zod";
@@ -159,6 +160,7 @@ export function loadSessionLog(): SessionLogEntry[] {
 export interface ActiveSession {
   session_id: string;
   name?: string | null;
+  name_auto?: boolean;  // true = name was auto-synced from Claude, false/undefined = manually set
   project_name: string;
   project_path: string;
   bundles: Array<{ bundle_id: string; mode: "local" | "cloud" }>;
@@ -168,6 +170,8 @@ export interface ActiveSession {
   team_id: string | null;           // DEPRECATED: team of first cloud copy
   cloud_copies: Array<{ cloud_session_id: string; team_id: string }>;  // all cloud copies
   channel_port?: number | null;  // HTTP port for cross-session Q&A notifications
+  claude_instance_id?: string | null;  // CLAUDE_CODE_SSE_PORT — stable per Claude Code instance
+  claude_session_id?: string | null;  // Claude Code conversation UUID (for name sync)
 }
 
 function activeSessionsDir(): string {
@@ -223,6 +227,81 @@ export function listActiveSessions(): ActiveSession[] {
   if (!existsSync(dir)) return [];
   const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
   return files.map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")));
+}
+
+/** Find an existing active session by Claude instance ID + project path */
+export function findSessionByInstanceId(
+  instanceId: string,
+  projectPath: string
+): ActiveSession | null {
+  const dir = activeSessionsDir();
+  if (!existsSync(dir)) return null;
+  const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
+  for (const f of files) {
+    try {
+      const session: ActiveSession = JSON.parse(readFileSync(join(dir, f), "utf8"));
+      if (session.claude_instance_id === instanceId && session.project_path === projectPath) {
+        return session;
+      }
+    } catch {}
+  }
+  return null;
+}
+
+/**
+ * Resolve the Claude Code conversation UUID by walking up the process tree.
+ * Reads ~/.claude/sessions/{pid}.json to find the sessionId.
+ */
+export function resolveClaudeSessionId(): string | null {
+  const sessionsDir = join(homedir(), ".claude", "sessions");
+  if (!existsSync(sessionsDir)) return null;
+
+  // Walk up process tree: MCP server → (possibly bun/node) → Claude Code
+  let pid: number | undefined;
+  try {
+    // process.ppid is available in Node/Bun
+    pid = process.ppid;
+  } catch {
+    return null;
+  }
+
+  for (let i = 0; i < 5 && pid && pid > 1; i++) {
+    const sessionFile = join(sessionsDir, `${pid}.json`);
+    if (existsSync(sessionFile)) {
+      try {
+        const data = JSON.parse(readFileSync(sessionFile, "utf8"));
+        return data.sessionId ?? null;
+      } catch {
+        return null;
+      }
+    }
+    // Move to parent
+    try {
+      const ppid = execSync(`ps -p ${pid} -o ppid=`, { encoding: "utf8" }).trim();
+      pid = parseInt(ppid, 10);
+    } catch {
+      break;
+    }
+  }
+  return null;
+}
+
+/**
+ * Get the Claude Code session name (summary) from sessions-index.json.
+ * Returns null if the index doesn't exist or the session isn't found.
+ */
+export function getClaudeSessionName(claudeSessionId: string, projectPath: string): string | null {
+  // Claude stores projects keyed by path with / → -
+  const projectKey = projectPath.replace(/\//g, "-");
+  const indexPath = join(homedir(), ".claude", "projects", projectKey, "sessions-index.json");
+  if (!existsSync(indexPath)) return null;
+  try {
+    const index = JSON.parse(readFileSync(indexPath, "utf8"));
+    const entry = index.entries?.find((e: { sessionId: string }) => e.sessionId === claudeSessionId);
+    return entry?.summary ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** Connect an active session to a bundle (adds to its bundles array) */

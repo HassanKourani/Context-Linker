@@ -86,7 +86,6 @@ switch (tool_name) {
         const changed = execSync("git diff HEAD~1 --name-only", { cwd: dir, encoding: "utf8" }).trim();
         files = changed.split("\n").filter(Boolean);
         commitSummary = "Committed: " + msg;
-        if (files.length > 0) commitSummary += "\nFiles: " + files.join(", ");
       } catch {}
 
       entriesToAdd.push({

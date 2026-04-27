@@ -22,6 +22,8 @@ import {
   saveActiveSession,
   setActiveSessionId,
   findSessionByInstanceId,
+  resolveClaudeSessionId,
+  getClaudeSessionName,
   loadGlobalConfig,
   loadProjectConfig,
   logSession,
@@ -90,6 +92,8 @@ import { startAutoSync, type AutoSyncHandle } from "./auto-sync.js";
 let ownSessionId: string | null = null;
 let autoSyncHandle: AutoSyncHandle | null = null;
 let hasShownWelcome = false;
+let cachedClaudeSessionId: string | null | undefined = undefined; // undefined = not yet resolved
+let lastNameSyncAt = 0;
 
 /** Get the active session for this MCP server instance. */
 function getSession(): ActiveSession | null {
@@ -99,7 +103,44 @@ function getSession(): ActiveSession | null {
     if (fromMarker) ownSessionId = fromMarker;
   }
   if (!ownSessionId) return null;
-  return loadActiveSession(ownSessionId);
+  const session = loadActiveSession(ownSessionId);
+  if (session) syncClaudeSessionName(session);
+  return session;
+}
+
+/**
+ * Sync the ctx-link session name from Claude Code's session name.
+ * Only updates if:
+ *  - The name was auto-synced (name_auto=true) or never set
+ *  - At most once every 10 seconds (avoid hammering the filesystem)
+ */
+function syncClaudeSessionName(session: ActiveSession): void {
+  const now = Date.now();
+  if (now - lastNameSyncAt < 10_000) return;
+  lastNameSyncAt = now;
+
+  // Resolve Claude session ID once
+  if (cachedClaudeSessionId === undefined) {
+    cachedClaudeSessionId = resolveClaudeSessionId();
+    if (cachedClaudeSessionId && !session.claude_session_id) {
+      session.claude_session_id = cachedClaudeSessionId;
+      saveActiveSession(session);
+    }
+  }
+
+  const claudeId = session.claude_session_id ?? cachedClaudeSessionId;
+  if (!claudeId) return;
+
+  // Only auto-sync if name was never set or was auto-synced previously
+  if (session.name && !session.name_auto) return;
+
+  const claudeName = getClaudeSessionName(claudeId, session.project_path);
+  if (!claudeName) return;
+  if (claudeName === session.name) return;
+
+  session.name = claudeName;
+  session.name_auto = true;
+  saveActiveSession(session);
 }
 
 /** Auto-create a fresh session on MCP server boot. */
@@ -155,6 +196,16 @@ async function ensureSession(): Promise<ActiveSession | null> {
       mode: projectCfg?.mode ?? "local",
     });
 
+    // Resolve Claude Code conversation UUID for name sync
+    const claudeSessionId = resolveClaudeSessionId();
+    cachedClaudeSessionId = claudeSessionId;
+
+    // Try to get Claude's session name as the default
+    let sessionName: string | null = null;
+    if (claudeSessionId) {
+      sessionName = getClaudeSessionName(claudeSessionId, process.cwd());
+    }
+
     const session: ActiveSession = {
       session_id: sessionId,
       project_name: projectName,
@@ -166,6 +217,8 @@ async function ensureSession(): Promise<ActiveSession | null> {
       team_id: null,
       cloud_copies: [],
       claude_instance_id: instanceId,
+      claude_session_id: claudeSessionId,
+      ...(sessionName ? { name: sessionName, name_auto: true } : {}),
     };
 
     saveActiveSession(session);
@@ -196,21 +249,29 @@ const server = new Server(
       "- bundle_create: Create a new bundle.\n" +
       "- bundle_list: List all bundles.\n" +
       "Proactive behavior: call context_pull at session start if bundles are connected.\n\n" +
-      "**IMPORTANT: Call session_log after every meaningful piece of work.** These entries are what OTHER Claude sessions in other repos see. " +
-      "Write from the consumer's perspective — what does someone working in a different repo need to know to USE what you built?\n\n" +
-      "**Think: 'If I were the frontend agent, what would I need to integrate with this?'**\n\n" +
+      "**IMPORTANT: Call session_log after every meaningful piece of work.** Entries are read by other Claude sessions — both in OTHER repos and in the SAME repo (different sessions). " +
+      "Write entries that give the reader what they need without reading your code.\n\n" +
+      "**For cross-repo consumers** (e.g., frontend reading backend entries): what do they need to integrate?\n" +
+      "- Endpoints: method, path, request body shape, response shape, status codes\n" +
+      "- Schema changes: table/column names, types, constraints, indexes\n" +
+      "- Auth changes: what's required, token format, error responses\n" +
+      "- Config/env: new env vars, defaults, what needs to be set where\n" +
+      "- Breaking changes: what stopped working, what the migration path is\n\n" +
+      "**For same-repo sessions** (e.g., next session continuing your work): what do they need to understand?\n" +
+      "- Decisions: what you chose, what alternatives you considered, why\n" +
+      "- Architecture: how components connect, what depends on what\n" +
+      "- Side effects: what else this change touches, what might break\n" +
+      "- WIP state: what's done, what's left, known issues\n" +
+      "- Bug fixes: what the bug was, root cause, what the fix does, how to verify\n\n" +
       "Examples of GOOD entries:\n" +
-      "- API: 'Added POST /api/users — body: { email: string, name: string, role?: \"admin\" | \"user\" }, returns 201 { id, email, name, role, created_at }. Validates email format, returns 400 on duplicate.'\n" +
-      "- Schema: 'Added users table — columns: id (uuid pk), email (unique), name (text), role (text default \"user\"), created_at (timestamptz). Has index on email.'\n" +
-      "- Auth: 'Auth middleware now requires Bearer token on all /api/* routes. Token is JWT with { user_id, role } payload. 401 if missing/invalid, 403 if role insufficient.'\n" +
-      "- Config: 'Moved API base URL to env var API_BASE_URL (default: http://localhost:3000). Frontend needs to set this in .env.'\n" +
-      "- Decision: 'Chose WebSocket over polling for real-time updates. Endpoint: ws://host/ws. Messages: { type: \"update\", entity: string, id: string, data: object }.'\n\n" +
-      "Examples of BAD entries (no value to other sessions):\n" +
-      "- 'Edited routes.ts' — what changed? what endpoint? what payload?\n" +
-      "- 'Did a bunch of stuff' — useless\n" +
-      "- 'Fixed a bug' — what bug? what was the fix? does it affect the API contract?\n" +
-      "- 'Created pull request' — what does the PR do?\n\n" +
-      "**One entry per logical change.** Include: endpoints, payloads, response shapes, env vars, breaking changes, anything the other repo needs to integrate.",
+      "- 'Added POST /api/users — body: { email: string, name: string, role?: \"admin\" | \"user\" }, returns 201 { id, email, name, role, created_at }. Validates email format, returns 400 { error: \"Email already exists\" } on duplicate.'\n" +
+      "- 'Refactored auth to use middleware pattern. All /api/* routes now check Bearer token (JWT with { user_id, role }). Added to: routes/api.ts, middleware/auth.ts. Tests in auth.test.ts. Decision: middleware over per-route checks because 12 routes share the same logic.'\n" +
+      "- 'Fixed race condition in session sync — two concurrent pushes could duplicate entries. Root cause: no upsert, just insert. Fix: switched to upsert on (bundle_id, entry_id). Affects: entries.ts:addEntriesToBundle.'\n\n" +
+      "Examples of BAD entries (no value):\n" +
+      "- 'Edited routes.ts' — what changed?\n" +
+      "- 'Fixed a bug' — what bug? what was the root cause?\n" +
+      "- 'Created pull request' — what does the PR accomplish?\n\n" +
+      "**One entry per logical change.** Ask yourself: if another session reads only this entry, can they understand what happened and act on it?",
   }
 );
 
@@ -1233,12 +1294,16 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         // Check if session already exists (resume)
         const existing = loadActiveSession(sessionId);
         if (existing) {
-          // Update branch and instance ID, re-set marker
+          // Update branch, instance ID, and Claude session ID
           try {
             const { execSync } = await import("node:child_process");
             existing.branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf8" }).trim();
           } catch {}
           existing.claude_instance_id = process.env.CLAUDE_CODE_SSE_PORT ?? null;
+          if (!existing.claude_session_id) {
+            existing.claude_session_id = cachedClaudeSessionId ?? resolveClaudeSessionId();
+            if (cachedClaudeSessionId === undefined) cachedClaudeSessionId = existing.claude_session_id;
+          }
           saveActiveSession(existing);
           setActiveSessionId(sessionId);
           return ok({ resumed: true, session_id: sessionId, project_name: existing.project_name });
@@ -1276,6 +1341,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         });
 
         // Create active session record
+        const claudeSessionId = cachedClaudeSessionId ?? resolveClaudeSessionId();
+        if (cachedClaudeSessionId === undefined) cachedClaudeSessionId = claudeSessionId;
+        let sessionName: string | null = null;
+        if (claudeSessionId) {
+          sessionName = getClaudeSessionName(claudeSessionId, process.cwd());
+        }
         saveActiveSession({
           session_id: sessionId,
           project_name: projectName,
@@ -1287,6 +1358,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           team_id: null,
           cloud_copies: [],
           claude_instance_id: process.env.CLAUDE_CODE_SSE_PORT ?? null,
+          claude_session_id: claudeSessionId,
+          ...(sessionName ? { name: sessionName, name_auto: true } : {}),
         });
 
         setActiveSessionId(sessionId);
@@ -1310,6 +1383,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const session = getSession();
         if (!session) return fail("No active session.");
         const trimmed = a.name.trim() || null;
+        // Mark as manually renamed so auto-sync doesn't overwrite
+        session.name_auto = false;
+        saveActiveSession(session);
         renameActiveSession(session.session_id, trimmed);
         // Also rename all cloud copies
         for (const c of (session.cloud_copies ?? [])) {
