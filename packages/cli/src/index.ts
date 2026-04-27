@@ -724,11 +724,16 @@ program
     }
     const sessionId = opts.sessionId;
 
+    const claudeInstanceId = process.env.CLAUDE_CODE_SSE_PORT ?? null;
+
     // Check if this session already exists (e.g. /resume)
     const existing = loadActiveSession(sessionId);
     if (existing) {
-      // Session exists — just update the marker file and branch
+      // Session exists — refresh branch + bind to this Claude instance so
+      // findSessionByInstanceId() can disambiguate when multiple Claude
+      // instances share a project directory.
       existing.branch = branch;
+      existing.claude_instance_id = claudeInstanceId;
       saveActiveSession(existing);
       setActiveSessionId(sessionId);
       return;
@@ -756,6 +761,7 @@ program
       cloud_session_id: null,
       team_id: null,
       cloud_copies: [],
+      claude_instance_id: claudeInstanceId,
     });
 
     // Write marker file so MCP server and hooks can find the session
