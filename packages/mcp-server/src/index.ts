@@ -1431,6 +1431,11 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       case "bundle_entries": {
         const a = z.object({ bundle_id: z.string(), limit: z.number().default(50) }).parse(args);
+        const session = getSession();
+        const isConnected = session?.bundles.some((b) => b.bundle_id === a.bundle_id);
+        if (!isConnected) {
+          return fail(`Not connected to bundle ${a.bundle_id}. Use session_connect first.`);
+        }
         const mode = isLocalBundle(a.bundle_id) ? "local" : "cloud";
         const rows = await pullEntries({
           bundle_id: a.bundle_id,

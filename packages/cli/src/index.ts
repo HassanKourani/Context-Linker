@@ -1489,6 +1489,7 @@ program
 
     // If a specific bundle_id is given, pull just from that
     if (bundleId) {
+      assertSessionConnectedTo(bundleId);
       const mode = isLocalBundle(bundleId) ? "local" : "cloud";
       const rows = await pullEntries({
         bundle_id: bundleId,
@@ -2160,6 +2161,7 @@ program
   .option("--limit <n>", "max entries to show", "50")
   .action(async (bundleIdArg?: string, opts?: { limit: string }) => {
     const bundleId = bundleIdArg ?? await promptForBundle("Which bundle?");
+    assertSessionConnectedTo(bundleId);
     const limit = parseInt(opts?.limit ?? "50", 10);
     const mode = isLocalBundle(bundleId) ? "local" : "cloud";
 
@@ -2192,6 +2194,7 @@ program
   .option("--entry <id>", "entry ID")
   .action(async (opts: { bundle?: string; entry?: string }) => {
     const bundleId = opts.bundle ?? await promptForBundle("Which bundle?");
+    assertSessionConnectedTo(bundleId);
     let entryId = opts.entry;
 
     if (!entryId) {
@@ -2356,6 +2359,19 @@ function detectProjectName(): string {
     } catch {}
   }
   return process.cwd().split("/").pop() ?? "unknown";
+}
+
+function assertSessionConnectedTo(bundleId: string): void {
+  const sessionId = getActiveSessionId();
+  const session = sessionId ? loadActiveSession(sessionId) : null;
+  if (!session) {
+    console.error("No active session. Run 'ctxl session-start' first.");
+    process.exit(1);
+  }
+  if (!session.bundles.some((b) => b.bundle_id === bundleId)) {
+    console.error(`Session is not connected to bundle ${bundleId}. Run 'ctxl connect ${bundleId}' first.`);
+    process.exit(1);
+  }
 }
 
 /** Prompt user to pick a bundle from their connected session bundles or all known bundles. */
