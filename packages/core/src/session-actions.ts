@@ -8,9 +8,14 @@ import {
   saveActiveSession,
   deleteActiveSession,
   getSessionEntries,
+  deleteSessionEntry,
+  renameActiveSession,
   connectSessionToBundle,
   disconnectSessionFromBundle,
   disconnectCloudSessionFromBundle,
+  getCloudSessionBundleConnections,
+  resolveClaudeSessionId,
+  getActiveSessionId,
 } from "./config.js";
 import {
   addEntriesToBundle,
@@ -20,16 +25,39 @@ import {
 import {
   isLocalBundle,
   localAddEntriesToBundle,
+  localRemoveEntryFromBundle,
   localRemoveSessionRefsFromBundle,
   localRemoveEntryRefsFromBundleByIds,
+  localRewindProject,
+  localRestoreRewound,
+  localListRewinds,
 } from "./local-store.js";
 import {
   copySessionToCloud,
   syncSessionToCloud,
   getCloudSessionEntries,
   deleteCloudSession,
+  deleteCloudSessionEntry,
+  renameCloudSession,
+  listTeamSessions,
 } from "./cloud-sessions.js";
-import { createBundle, deleteBundle, bundleStatus, getBundleTeamId } from "./bundles.js";
+import {
+  createBundle,
+  deleteBundle,
+  bundleStatus,
+  getBundleTeamId,
+} from "./bundles.js";
+import {
+  rewindProject,
+  restoreRewound,
+  listRewinds,
+  type RewindInput,
+  type RestoreInput,
+  type RewindResult,
+  type RestoreResult,
+  type RewindLogRow,
+} from "./rewind.js";
+import { listMyTeams } from "./teams.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -319,4 +347,197 @@ export async function pushBundleToCloud(
   await deleteBundle(bundleId, "local");
 
   return { new_bundle_id: newBundleId, entries_migrated: entriesMigrated };
+}
+
+// ─── Pull entries from all connected sessions into a bundle ─────────────────
+
+export type PullFromSessionsResult = {
+  pushed: number;
+  skipped: number;
+};
+
+/**
+ * Pull entries from every session connected to a bundle into that bundle.
+ *
+ * For each active session connected to the bundle:
+ *  - Local bundle  → add session entries as local refs.
+ *  - Cloud bundle  → ensure a cloud copy of the session exists in the
+ *                    bundle's team, then add the cloud entries as refs.
+ *
+ * For cloud bundles, also pull entries from any cloud-only sessions
+ * (i.e. sessions that exist on Supabase but have no local active record)
+ * that are connected to the bundle.
+ *
+ * Idempotent: re-running adds nothing new, returns 0/0.
+ */
+export async function pullEntriesFromConnectedSessions(
+  bundleId: string,
+): Promise<PullFromSessionsResult> {
+  const mode = isLocalBundle(bundleId) ? "local" : "cloud";
+  let pushed = 0;
+  let skipped = 0;
+
+  const connectedActive = listActiveSessions().filter(
+    (s) => s.bundles.some((b) => b.bundle_id === bundleId),
+  );
+
+  for (const session of connectedActive) {
+    const entries = getSessionEntries(session.session_id);
+    if (entries.length === 0) continue;
+    const entryIds = entries.map((e) => e.id);
+
+    if (mode === "local") {
+      const r = localAddEntriesToBundle(bundleId, entryIds, session.session_id);
+      pushed += r.added;
+      skipped += r.skipped;
+      continue;
+    }
+
+    const bundleTeamId = await getBundleTeamId(bundleId);
+    if (!bundleTeamId) continue;
+
+    const copy = await ensureCloudCopy(session.session_id, bundleTeamId);
+    const cloudEntries = await getCloudSessionEntries(copy.cloud_session_id);
+    const cloudIds = cloudEntries.map((e) => e.id);
+    if (cloudIds.length > 0) {
+      const r = await addEntriesToBundle(bundleId, cloudIds);
+      pushed += r.added;
+      skipped += r.skipped;
+    }
+  }
+
+  if (mode === "cloud") {
+    const teams = listMyTeams();
+    for (const team of teams) {
+      const cloudSessions = await listTeamSessions(team.team_id);
+      for (const cs of cloudSessions) {
+        const bundles = getCloudSessionBundleConnections(cs.id);
+        if (!bundles.some((b) => b.bundle_id === bundleId)) continue;
+        const cloudEntries = await getCloudSessionEntries(cs.id);
+        const cloudIds = cloudEntries.map((e) => e.id);
+        if (cloudIds.length > 0) {
+          const r = await addEntriesToBundle(bundleId, cloudIds);
+          pushed += r.added;
+          skipped += r.skipped;
+        }
+      }
+    }
+  }
+
+  return { pushed, skipped };
+}
+
+// ─── Session rename / delete-entry with cloud cascade ───────────────────────
+
+/**
+ * Rename a local session and cascade the new name to all of its cloud
+ * copies (and the legacy `cloud_session_id` field, if set).
+ *
+ * Cloud rename failures are swallowed — the local rename is the source
+ * of truth and we don't want a transient Supabase error to block it.
+ */
+export async function renameSessionAndCloudCopies(
+  sessionId: string,
+  name: string | null,
+): Promise<void> {
+  const session = loadActiveSession(sessionId);
+  if (!session) throw new Error(`Active session ${sessionId} not found.`);
+
+  renameActiveSession(sessionId, name);
+
+  for (const c of (session.cloud_copies ?? [])) {
+    try { await renameCloudSession(c.cloud_session_id, name); } catch {}
+  }
+  if (session.cloud_session_id) {
+    try { await renameCloudSession(session.cloud_session_id, name); } catch {}
+  }
+}
+
+/**
+ * Delete a single entry from a local session and cascade the deletion to
+ * the matching entry in every cloud copy. Cloud deletion is best-effort.
+ */
+export async function deleteSessionEntryAndCopies(
+  sessionId: string,
+  entryId: string,
+): Promise<void> {
+  const session = loadActiveSession(sessionId);
+  if (!session) throw new Error(`Active session ${sessionId} not found.`);
+
+  deleteSessionEntry(sessionId, entryId);
+
+  if ((session.cloud_copies?.length ?? 0) > 0 || session.cloud_session_id) {
+    try { await deleteCloudSessionEntry(entryId); } catch {}
+  }
+}
+
+// ─── Bundle mode-aware wrappers ─────────────────────────────────────────────
+
+/**
+ * Remove a single entry-ref from a bundle, dispatching to the local or
+ * cloud implementation based on the bundle's storage mode.
+ */
+export async function bundleRemoveEntryRef(
+  bundleId: string,
+  entryId: string,
+  options?: { exclude?: boolean; machineId?: string },
+): Promise<void> {
+  if (isLocalBundle(bundleId)) {
+    localRemoveEntryFromBundle(bundleId, entryId, { exclude: options?.exclude });
+    return;
+  }
+  await removeEntryFromBundle(bundleId, entryId, {
+    exclude: options?.exclude,
+    machineId: options?.machineId,
+  });
+}
+
+/** Rewind entries in a bundle. Dispatches to the local or cloud rewind based on storage mode. */
+export async function bundleRewind(input: RewindInput): Promise<RewindResult> {
+  return isLocalBundle(input.bundle_id)
+    ? localRewindProject(input)
+    : await rewindProject(input);
+}
+
+/** Restore previously-rewound entries. Dispatches by storage mode. */
+export async function bundleRestore(input: RestoreInput): Promise<RestoreResult> {
+  return isLocalBundle(input.bundle_id)
+    ? localRestoreRewound(input)
+    : await restoreRewound(input);
+}
+
+/** List rewind history for a bundle. Dispatches by storage mode. */
+export async function bundleListRewinds(
+  bundleId: string,
+  projectName?: string,
+  limit?: number,
+): Promise<RewindLogRow[]> {
+  return isLocalBundle(bundleId)
+    ? localListRewinds(bundleId, projectName, limit)
+    : await listRewinds(bundleId, projectName, limit);
+}
+
+// ─── Caller resolution (CLI / generic) ──────────────────────────────────────
+
+/**
+ * Resolve which session a CLI invocation belongs to.
+ *
+ * Order:
+ *  1. Explicit ID (e.g. --session-id flag).
+ *  2. Process-tree walk → Claude Code session UUID. When the CLI is run
+ *     by Claude Code's Bash tool, the calling Claude window is one or
+ *     two levels up. The active-session record is keyed by that UUID.
+ *  3. Per-cwd marker file. Used only outside of Claude Code (plain
+ *     shell), where there's no upstream window to identify.
+ */
+export function resolveCallerSessionId(explicitId?: string): string | null {
+  if (explicitId) return explicitId;
+
+  const claudeUUID = resolveClaudeSessionId();
+  if (claudeUUID) {
+    const session = loadActiveSession(claudeUUID);
+    if (session) return claudeUUID;
+  }
+
+  return getActiveSessionId();
 }

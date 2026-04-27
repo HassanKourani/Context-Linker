@@ -15,11 +15,9 @@ import {
   isLocalBundle,
   pullEntries,
   addEntriesToBundle,
-  removeEntryFromBundle,
   removeSessionEntriesFromBundle,
   includeEntryInBundle,
   localAddEntriesToBundle,
-  localRemoveEntryFromBundle,
   localRemoveSessionRefsFromBundle,
   localIncludeEntryInBundle,
   localRemoveEntryRefsFromBundleByIds,
@@ -27,7 +25,6 @@ import {
   joinTeam,
   getSessionEntries,
   pushSessionEntry,
-  deleteSessionEntry,
   connectSessionToBundle,
   disconnectSessionFromBundle,
   deleteActiveSession,
@@ -35,22 +32,14 @@ import {
   copySessionToCloud,
   listTeamSessions,
   deleteCloudSession,
-  deleteCloudSessionEntry,
   getCloudSessionEntries,
   getCloudSession,
   getBundleTeamId,
-  rewindProject,
-  restoreRewound,
-  listRewinds,
-  localRewindProject,
-  localRestoreRewound,
-  localListRewinds,
   connectCloudSessionToBundle,
   disconnectCloudSessionFromBundle,
   getCloudSessionBundleConnections,
   syncSessionToCloud,
   saveActiveSession,
-  renameActiveSession,
   renameCloudSession,
   listBundleQuestions,
   askQuestion,
@@ -63,6 +52,13 @@ import {
   deleteSession,
   pushSessionToBundle,
   pushBundleToCloud,
+  pullEntriesFromConnectedSessions,
+  renameSessionAndCloudCopies,
+  deleteSessionEntryAndCopies,
+  bundleRewind,
+  bundleRestore,
+  bundleListRewinds,
+  bundleRemoveEntryRef,
   readFeedEvents,
 } from "@ctx-link/core";
 
@@ -391,12 +387,7 @@ const server = Bun.serve({
         try {
           const bundleId = match[1];
           const entryId = match[2];
-          const mode = resolveBundleMode(bundleId);
-          if (mode === "local") {
-            localRemoveEntryFromBundle(bundleId, entryId, { exclude: true });
-          } else {
-            await removeEntryFromBundle(bundleId, entryId, { exclude: true });
-          }
+          await bundleRemoveEntryRef(bundleId, entryId, { exclude: true });
           return Response.json({ ok: true }, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
@@ -461,11 +452,14 @@ const server = Bun.serve({
         try {
           const bundleId = match[1];
           const { project_name, strategy, reason, dry_run, force } = await req.json();
-          const mode = resolveBundleMode(bundleId);
-
-          const result = mode === "local"
-            ? localRewindProject({ bundle_id: bundleId, project_name, strategy, reason, dry_run, force })
-            : await rewindProject({ bundle_id: bundleId, project_name, strategy, reason, dry_run, force });
+          const result = await bundleRewind({
+            bundle_id: bundleId,
+            project_name,
+            strategy,
+            reason,
+            dry_run,
+            force,
+          });
           return Response.json(result, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
@@ -483,11 +477,12 @@ const server = Bun.serve({
         try {
           const bundleId = match[1];
           const { project_name, entry_ids, rewind_log_id } = await req.json();
-          const mode = resolveBundleMode(bundleId);
-
-          const result = mode === "local"
-            ? localRestoreRewound({ bundle_id: bundleId, project_name, entry_ids, rewind_log_id })
-            : await restoreRewound({ bundle_id: bundleId, project_name, entry_ids, rewind_log_id });
+          const result = await bundleRestore({
+            bundle_id: bundleId,
+            project_name,
+            entry_ids,
+            rewind_log_id,
+          });
           return Response.json(result, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
@@ -506,10 +501,7 @@ const server = Bun.serve({
           const bundleId = match[1];
           const project_name = url.searchParams.get("project_name") || undefined;
           const limit = parseInt(url.searchParams.get("limit") || "20");
-          const mode = resolveBundleMode(bundleId);
-          const rewinds = mode === "local"
-            ? localListRewinds(bundleId, project_name, limit)
-            : await listRewinds(bundleId, project_name, limit);
+          const rewinds = await bundleListRewinds(bundleId, project_name, limit);
           return Response.json(rewinds, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(
@@ -527,82 +519,9 @@ const server = Bun.serve({
       if (match && req.method === "POST") {
         try {
           const bundleId = match[1];
-          const mode = resolveBundleMode(bundleId);
-          let totalPushed = 0;
-          let totalSkipped = 0;
-
-          // Collect active sessions connected to this bundle
-          const activeSessions = listActiveSessions();
-          const connectedActive = activeSessions.filter(
-            (s) => s.bundles.some((b) => b.bundle_id === bundleId)
-          );
-
-          for (const session of connectedActive) {
-            const entries = getSessionEntries(session.session_id);
-            if (entries.length === 0) continue;
-            const entryIds = entries.map((e) => e.id);
-
-            if (mode === "local") {
-              const result = localAddEntriesToBundle(bundleId, entryIds, session.session_id);
-              totalPushed += result.added;
-              totalSkipped += result.skipped;
-            } else {
-              // Cloud bundle — ensure cloud copy exists, sync, then add
-              const bundleTeamId = await getBundleTeamId(bundleId);
-              if (!bundleTeamId) continue;
-
-              const copies = session.cloud_copies ?? [];
-              let copy = copies.find((c) => c.team_id === bundleTeamId)
-                ?? (session.cloud_session_id && session.team_id === bundleTeamId
-                  ? { cloud_session_id: session.cloud_session_id, team_id: bundleTeamId }
-                  : null);
-
-              if (!copy) {
-                const result = await copySessionToCloud(session.session_id, bundleTeamId);
-                if (!session.cloud_copies) session.cloud_copies = [];
-                session.cloud_copies.push({ cloud_session_id: result.cloud_session_id, team_id: bundleTeamId });
-                if (!session.cloud_session_id) {
-                  session.cloud_session_id = result.cloud_session_id;
-                  session.team_id = bundleTeamId;
-                }
-                saveActiveSession(session);
-                copy = { cloud_session_id: result.cloud_session_id, team_id: bundleTeamId };
-              } else {
-                await syncSessionToCloud(session.session_id, copy.cloud_session_id);
-              }
-
-              const cloudEntries = await getCloudSessionEntries(copy.cloud_session_id);
-              const cloudIds = cloudEntries.map((e) => e.id);
-              if (cloudIds.length > 0) {
-                const result = await addEntriesToBundle(bundleId, cloudIds);
-                totalPushed += result.added;
-                totalSkipped += result.skipped;
-              }
-            }
-          }
-
-          // Also pull from cloud sessions connected to this bundle
-          if (mode === "cloud") {
-            const teams = listMyTeams();
-            for (const team of teams) {
-              const cloudSessions = await listTeamSessions(team.team_id);
-              for (const cs of cloudSessions) {
-                const bundles = getCloudSessionBundleConnections(cs.id);
-                if (!bundles.some((b) => b.bundle_id === bundleId)) continue;
-
-                const cloudEntries = await getCloudSessionEntries(cs.id);
-                const cloudIds = cloudEntries.map((e) => e.id);
-                if (cloudIds.length > 0) {
-                  const result = await addEntriesToBundle(bundleId, cloudIds);
-                  totalPushed += result.added;
-                  totalSkipped += result.skipped;
-                }
-              }
-            }
-          }
-
+          const { pushed, skipped } = await pullEntriesFromConnectedSessions(bundleId);
           return Response.json(
-            { ok: true, pushed: totalPushed, skipped: totalSkipped },
+            { ok: true, pushed, skipped },
             { headers: corsHeaders }
           );
         } catch (err: any) {
@@ -883,19 +802,10 @@ const server = Bun.serve({
           const { name } = await req.json();
           const trimmed = typeof name === "string" && name.trim() ? name.trim() : null;
 
-          // Rename local active session
-          const localSession = loadActiveSession(sessionId);
-          if (localSession) {
-            renameActiveSession(sessionId, trimmed);
-            // Also rename all cloud copies
-            for (const c of (localSession.cloud_copies ?? [])) {
-              try { await renameCloudSession(c.cloud_session_id, trimmed); } catch {}
-            }
-            if (localSession.cloud_session_id) {
-              try { await renameCloudSession(localSession.cloud_session_id, trimmed); } catch {}
-            }
+          if (loadActiveSession(sessionId)) {
+            await renameSessionAndCloudCopies(sessionId, trimmed);
           } else {
-            // sessionId is a cloud session — rename directly
+            // sessionId is a cloud-only session (no local active record)
             await renameCloudSession(sessionId, trimmed);
           }
 
@@ -916,11 +826,7 @@ const server = Bun.serve({
         try {
           const sessionId = match[1];
           const entryId = match[2];
-          deleteSessionEntry(sessionId, entryId);
-          const session = loadActiveSession(sessionId);
-          if (session?.cloud_copies?.length || session?.cloud_session_id) {
-            try { await deleteCloudSessionEntry(entryId); } catch {}
-          }
+          await deleteSessionEntryAndCopies(sessionId, entryId);
           return Response.json({ ok: true }, { headers: corsHeaders });
         } catch (err: any) {
           return Response.json(

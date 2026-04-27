@@ -14,9 +14,13 @@ import {
   listAllLocalBundleDetails,
   pullEntries,
   renderEntriesForClaude,
-  rewindProject,
-  restoreRewound,
-  listRewinds,
+  bundleRewind,
+  bundleRestore,
+  bundleListRewinds,
+  bundleRemoveEntryRef,
+  pullEntriesFromConnectedSessions,
+  renameSessionAndCloudCopies,
+  deleteSessionEntryAndCopies,
   loadActiveSession,
   saveActiveSession,
   resolveClaudeSessionId,
@@ -25,33 +29,22 @@ import {
   loadProjectConfig,
   logSession,
   deleteActiveSession,
-  renameActiveSession,
   pushSessionEntry,
   getSessionEntries,
   getUnpushedSessionEntries,
-  deleteSessionEntry,
-  addEntriesToBundle,
-  localAddEntriesToBundle,
-  removeEntryFromBundle,
+  getPendingEnrichmentStub,
+  enrichSessionEntry,
   includeEntryInBundle,
-  localRemoveEntryFromBundle,
   localIncludeEntryInBundle,
   localRemoveSessionRefsFromBundle,
   removeSessionEntriesFromBundle,
-  copySessionToCloud,
-  syncSessionToCloud,
-  getCloudSessionEntries,
-  getCloudSessionBundleConnections,
   getBundleTeamId,
   connectSessionToBundle,
   connectCloudSessionToBundle,
   disconnectSessionFromBundle,
   disconnectCloudSessionFromBundle,
   deleteCloudSession,
-  deleteCloudSessionEntry,
-  renameCloudSession,
   listActiveSessions,
-  listTeamSessions,
   createTeam,
   joinTeam,
   listMyTeams,
@@ -477,18 +470,26 @@ const tools = [
   {
     name: "session_log",
     description:
-      "Log a context entry to the current session (local only, NOT pushed to bundles). " +
-      "PROACTIVE USE: You SHOULD call this after every meaningful interaction — code changes, decisions, " +
-      "API modifications, architecture choices, file creations, configuration updates. " +
-      "Keep summaries state-focused: describe WHAT EXISTS now, not what changed from before. " +
-      "NOTE: ctx-link tool calls are auto-logged, so this is mainly for YOUR work (code edits, decisions, etc.). " +
-      "These entries accumulate locally and get consolidated when the user triggers context_push.",
+      "Log a HANDOFF entry to the current session — written for another agent who will integrate against your work without reading the code.\n\n" +
+      "WHEN TO CALL: at intent boundaries — after `git commit`, after `gh pr create`, after finishing a logical unit of work. " +
+      "ONE entry per logical unit. Consolidate all related edits into a single call. Do NOT log per file edit.\n\n" +
+      "WHAT TO INCLUDE (when relevant):\n" +
+      "  • Function / endpoint / hook names with signatures (e.g. `getUser(id: string): Promise<User>`)\n" +
+      "  • Request and response payload shapes as inline objects (e.g. `{ id: string, status: 'open'|'closed' }`)\n" +
+      "  • Error format: status codes, error keys, throw types\n" +
+      "  • Where the new code is consumed from / what it depends on\n" +
+      "  • Configuration, env vars, feature flags introduced (with default values)\n" +
+      "  • Decisions with one-line rationale\n\n" +
+      "WHAT TO AVOID: diffs, before/after snippets, prose recaps of WHAT you changed, restated commit messages, code blocks longer than a signature or shape. " +
+      "Describe what NOW EXISTS and HOW TO USE IT, not what you did.\n\n" +
+      "ACCEPTANCE TEST: could another agent integrate against this entry without reading the code? If no, it's too thin.\n\n" +
+      "PENDING STUBS: if a commit/PR happened, a stub entry exists with `pending_enrichment: true`. Calling session_log will MERGE into that stub (one final entry per commit, not two).",
     inputSchema: {
       type: "object",
       properties: {
         summary: {
           type: "string",
-          description: "What happened / what exists now. State-focused, 1-2 sentences.",
+          description: "Handoff details — interface, payload shapes, errors, dependencies. Multi-paragraph is fine when warranted; aim for 'no-questions-asked' completeness without dumping diffs.",
         },
         files_touched: {
           type: "array",
@@ -1078,7 +1079,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       case "context_rewind": {
         const a = ContextRewindArgs.parse(args);
-        const r = await rewindProject({
+        const r = await bundleRewind({
           bundle_id: a.bundle_id,
           project_name: a.project_name,
           strategy: a.strategy as RewindStrategy,
@@ -1092,7 +1093,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       case "context_restore": {
         const a = ContextRestoreArgs.parse(args);
-        const r = await restoreRewound({
+        const r = await bundleRestore({
           bundle_id: a.bundle_id,
           project_name: a.project_name,
           entry_ids: a.entry_ids,
@@ -1174,6 +1175,27 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const a = SessionLogArgs.parse(args);
         const session = getSession();
         if (!session) return fail("No active session. Open Claude Code in a project first.");
+
+        // If a commit/PR stub is awaiting enrichment, merge into it instead
+        // of creating a second entry — gives one clean record per commit.
+        const stub = getPendingEnrichmentStub(session.session_id);
+        if (stub) {
+          const merged = enrichSessionEntry(session.session_id, stub.id, {
+            summary: a.summary,
+            files_touched: a.files_touched,
+            decisions: a.decisions,
+          });
+          if (merged) {
+            return ok({
+              logged: true,
+              enriched: true,
+              entry_id: merged.id,
+              session_id: session.session_id,
+              note: `Merged into pending ${stub.event_type} stub.`,
+            });
+          }
+        }
+
         const entry = pushSessionEntry(session.session_id, {
           project_name: session.project_name,
           event_type: a.event_type,
@@ -1197,12 +1219,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       case "bundle_remove_entry": {
         const a = BundleRemoveEntryArgs.parse(args);
-        if (isLocalBundle(a.bundle_id)) {
-          localRemoveEntryFromBundle(a.bundle_id, a.entry_id, { exclude: true });
-        } else {
-          const cfg = loadGlobalConfig();
-          await removeEntryFromBundle(a.bundle_id, a.entry_id, { exclude: true, machineId: cfg.machine_id });
-        }
+        const cfg = loadGlobalConfig();
+        await bundleRemoveEntryRef(a.bundle_id, a.entry_id, { exclude: true, machineId: cfg.machine_id });
         return ok({ removed: true, excluded: true });
       }
 
@@ -1230,7 +1248,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       case "rewind_history": {
         const a = RewindHistoryArgs.parse(args);
-        const r = await listRewinds(a.bundle_id, a.project_name, a.limit ?? 20);
+        const r = await bundleListRewinds(a.bundle_id, a.project_name, a.limit ?? 20);
         return ok(r);
       }
 
@@ -1313,14 +1331,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         // Mark as manually renamed so auto-sync doesn't overwrite
         session.name_auto = false;
         saveActiveSession(session);
-        renameActiveSession(session.session_id, trimmed);
-        // Also rename all cloud copies
-        for (const c of (session.cloud_copies ?? [])) {
-          try { await renameCloudSession(c.cloud_session_id, trimmed); } catch {}
-        }
-        if (session.cloud_session_id) {
-          try { await renameCloudSession(session.cloud_session_id, trimmed); } catch {}
-        }
+        await renameSessionAndCloudCopies(session.session_id, trimmed);
         return ok({ renamed: true, name: trimmed });
       }
 
@@ -1336,11 +1347,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const a = z.object({ entry_id: z.string() }).parse(args);
         const session = getSession();
         if (!session) return fail("No active session.");
-        deleteSessionEntry(session.session_id, a.entry_id);
-        // Also delete cloud copy of the entry
-        if (session.cloud_copies?.length || session.cloud_session_id) {
-          try { await deleteCloudSessionEntry(a.entry_id); } catch {}
-        }
+        await deleteSessionEntryAndCopies(session.session_id, a.entry_id);
         return ok({ deleted: true, entry_id: a.entry_id });
       }
 
@@ -1382,79 +1389,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       case "bundle_pull_from_sessions": {
         const a = z.object({ bundle_id: z.string() }).parse(args);
-        const mode = isLocalBundle(a.bundle_id) ? "local" : "cloud";
-        let totalPushed = 0;
-        let totalSkipped = 0;
-
-        // Pull from active sessions connected to this bundle
-        const activeSessions = listActiveSessions();
-        const connectedActive = activeSessions.filter(
-          (s) => s.bundles.some((b) => b.bundle_id === a.bundle_id)
-        );
-
-        for (const session of connectedActive) {
-          const entries = getSessionEntries(session.session_id);
-          if (entries.length === 0) continue;
-          const entryIds = entries.map((e) => e.id);
-
-          if (mode === "local") {
-            const result = localAddEntriesToBundle(a.bundle_id, entryIds, session.session_id);
-            totalPushed += result.added;
-            totalSkipped += result.skipped;
-          } else {
-            const bundleTeamId = await getBundleTeamId(a.bundle_id);
-            if (!bundleTeamId) continue;
-
-            const copies = session.cloud_copies ?? [];
-            let copy = copies.find((c) => c.team_id === bundleTeamId)
-              ?? (session.cloud_session_id && session.team_id === bundleTeamId
-                ? { cloud_session_id: session.cloud_session_id, team_id: bundleTeamId }
-                : null);
-
-            if (!copy) {
-              const result = await copySessionToCloud(session.session_id, bundleTeamId);
-              if (!session.cloud_copies) session.cloud_copies = [];
-              session.cloud_copies.push({ cloud_session_id: result.cloud_session_id, team_id: bundleTeamId });
-              if (!session.cloud_session_id) {
-                session.cloud_session_id = result.cloud_session_id;
-                session.team_id = bundleTeamId;
-              }
-              saveActiveSession(session);
-              copy = { cloud_session_id: result.cloud_session_id, team_id: bundleTeamId };
-            } else {
-              await syncSessionToCloud(session.session_id, copy.cloud_session_id);
-            }
-
-            const cloudEntries = await getCloudSessionEntries(copy.cloud_session_id);
-            const cloudIds = cloudEntries.map((e) => e.id);
-            if (cloudIds.length > 0) {
-              const result = await addEntriesToBundle(a.bundle_id, cloudIds);
-              totalPushed += result.added;
-              totalSkipped += result.skipped;
-            }
-          }
-        }
-
-        // Also pull from cloud sessions connected to this bundle
-        if (mode === "cloud") {
-          const teams = listMyTeams();
-          for (const team of teams) {
-            const cloudSessions = await listTeamSessions(team.team_id);
-            for (const cs of cloudSessions) {
-              const bundles = getCloudSessionBundleConnections(cs.id);
-              if (!bundles.some((b) => b.bundle_id === a.bundle_id)) continue;
-              const cloudEntries = await getCloudSessionEntries(cs.id);
-              const cloudIds = cloudEntries.map((e) => e.id);
-              if (cloudIds.length > 0) {
-                const result = await addEntriesToBundle(a.bundle_id, cloudIds);
-                totalPushed += result.added;
-                totalSkipped += result.skipped;
-              }
-            }
-          }
-        }
-
-        return ok({ pushed: totalPushed, skipped: totalSkipped });
+        const r = await pullEntriesFromConnectedSessions(a.bundle_id);
+        return ok({ pushed: r.pushed, skipped: r.skipped });
       }
 
       case "bundle_push_to_cloud": {
@@ -1561,6 +1497,28 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         }
       }
     }
+  }
+
+  // Pending-enrichment reminder: nudge the agent to enrich any commit/PR stub
+  // before moving on. Self-triggers without an extra LLM call.
+  try {
+    const session = getSession();
+    if (session) {
+      const stub = getPendingEnrichmentStub(session.session_id);
+      if (stub) {
+        const which = stub.event_type === "pr_open" ? "PR" : "commit";
+        const ref = stub.trigger_ref ? ` (${stub.trigger_ref.slice(0, 7)})` : "";
+        const reminder =
+          `[ctx-link] Pending handoff: a ${which}${ref} was logged as a stub. ` +
+          `Call \`session_log\` now with handoff details — function/endpoint signatures, payload shapes, error format, dependencies. ` +
+          `Your call will MERGE into the stub (one clean entry per ${which}). Avoid diffs; describe what now exists and how to use it.`;
+        if (Array.isArray(result?.content)) {
+          (result.content as any[]).unshift({ type: "text", text: reminder });
+        }
+      }
+    }
+  } catch {
+    // never let the reminder break the actual response
   }
 
   return result;

@@ -21,11 +21,15 @@ import {
   getActiveSessionId,
   setActiveSessionId,
   listActiveSessions,
-  resolveClaudeSessionId,
   renderEntriesForClaude,
-  rewindProject,
-  restoreRewound,
-  listRewinds,
+  bundleRewind,
+  bundleRestore,
+  bundleListRewinds,
+  bundleRemoveEntryRef,
+  pullEntriesFromConnectedSessions,
+  renameSessionAndCloudCopies,
+  deleteSessionEntryAndCopies,
+  resolveCallerSessionId,
   createTeam,
   joinTeam,
   listMyTeams,
@@ -44,20 +48,8 @@ import {
   answerQuestion,
   resolveQuestion,
   listBundleQuestions,
-  renameActiveSession,
-  renameCloudSession,
   deleteSession,
-  deleteSessionEntry,
-  deleteCloudSessionEntry,
-  removeEntryFromBundle,
-  localRemoveEntryFromBundle,
   pushBundleToCloud,
-  getBundleTeamId,
-  syncSessionToCloud,
-  getCloudSessionEntries,
-  addEntriesToBundle,
-  listTeamSessions,
-  getCloudSessionBundleConnections,
   isJoinCode,
   resolveJoinCode,
   regenerateJoinCode,
@@ -427,9 +419,11 @@ program
       ],
     };
 
-    // PostToolUse hook: auto-log edits, commits, PRs
+    // PostToolUse hook: auto-log commits and PRs only (Bash matcher).
+    // File edits are intentionally not auto-logged — Claude calls session_log
+    // itself with a richer handoff summary at intent boundaries.
     const postToolUseHook = {
-      matcher: "Write|Edit|Bash",
+      matcher: "Bash",
       hooks: [
         {
           type: "command",
@@ -1643,7 +1637,7 @@ program
     }
 
     const dryRun = !opts.apply;
-    const r = await rewindProject({
+    const r = await bundleRewind({
       bundle_id: bundleId,
       project_name: projectName,
       strategy,
@@ -1668,7 +1662,7 @@ program
     if (dryRun && r.affected_count > 0) {
       const shouldApply = await confirm({ message: "Apply the rewind?", default: false });
       if (shouldApply) {
-        const applied = await rewindProject({
+        const applied = await bundleRewind({
           bundle_id: bundleId,
           project_name: projectName,
           strategy,
@@ -1739,7 +1733,7 @@ program
       });
       if (method === "from_log") {
         // Show recent rewinds for this bundle/project
-        const rewinds = await listRewinds(bundleId, projectName, 10);
+        const rewinds = await bundleListRewinds(bundleId, projectName, 10);
         if (rewinds.length === 0) {
           console.error("No rewinds found for this bundle/project.");
           process.exit(1);
@@ -1757,7 +1751,7 @@ program
       }
     }
 
-    const r = await restoreRewound({
+    const r = await bundleRestore({
       bundle_id: bundleId,
       project_name: projectName,
       entry_ids: entryIds,
@@ -1784,7 +1778,7 @@ program
     if (!bundleId) {
       bundleId = await promptForBundle("Which bundle?");
     }
-    const rows = await listRewinds(bundleId, opts.project, Number(opts.limit));
+    const rows = await bundleListRewinds(bundleId, opts.project, Number(opts.limit));
     if (rows.length === 0) {
       console.log("No rewinds recorded.");
       return;
@@ -2081,13 +2075,7 @@ program
     const name = nameArg ?? await input({ message: "New name (empty to clear):" });
     const trimmed = name.trim() || null;
 
-    renameActiveSession(sessionId, trimmed);
-    for (const c of (session.cloud_copies ?? [])) {
-      try { await renameCloudSession(c.cloud_session_id, trimmed); } catch {}
-    }
-    if (session.cloud_session_id) {
-      try { await renameCloudSession(session.cloud_session_id, trimmed); } catch {}
-    }
+    await renameSessionAndCloudCopies(sessionId, trimmed);
 
     console.log(trimmed ? `Renamed to "${trimmed}".` : "Name cleared.");
   });
@@ -2158,10 +2146,7 @@ program
       });
     }
 
-    deleteSessionEntry(sessionId, entryId);
-    if (session.cloud_copies?.length || session.cloud_session_id) {
-      try { await deleteCloudSessionEntry(entryId); } catch {}
-    }
+    await deleteSessionEntryAndCopies(sessionId, entryId);
     console.log(`Deleted entry ${entryId.slice(0, 8)}...`);
   });
 
@@ -2231,11 +2216,7 @@ program
       });
     }
 
-    if (isLocalBundle(bundleId)) {
-      localRemoveEntryFromBundle(bundleId, entryId);
-    } else {
-      await removeEntryFromBundle(bundleId, entryId);
-    }
+    await bundleRemoveEntryRef(bundleId, entryId);
     console.log(`Removed entry ${entryId.slice(0, 8)}... from bundle.`);
   });
 
@@ -2250,77 +2231,8 @@ program
   .argument("[bundle_id]", "bundle ID (prompted if not given)")
   .action(async (bundleIdArg?: string) => {
     const bundleId = bundleIdArg ?? await promptForBundle("Which bundle?");
-    const mode = isLocalBundle(bundleId) ? "local" : "cloud";
-    let totalPushed = 0;
-    let totalSkipped = 0;
-
-    const activeSessions = listActiveSessions();
-    const connectedActive = activeSessions.filter(
-      (s) => s.bundles.some((b) => b.bundle_id === bundleId)
-    );
-
-    for (const session of connectedActive) {
-      const entries = getSessionEntries(session.session_id);
-      if (entries.length === 0) continue;
-      const entryIds = entries.map((e) => e.id);
-
-      if (mode === "local") {
-        const result = localAddEntriesToBundle(bundleId, entryIds, session.session_id);
-        totalPushed += result.added;
-        totalSkipped += result.skipped;
-      } else {
-        const bundleTeamId = await getBundleTeamId(bundleId);
-        if (!bundleTeamId) continue;
-
-        const copies = session.cloud_copies ?? [];
-        let copy = copies.find((c) => c.team_id === bundleTeamId)
-          ?? (session.cloud_session_id && session.team_id === bundleTeamId
-            ? { cloud_session_id: session.cloud_session_id, team_id: bundleTeamId }
-            : null);
-
-        if (!copy) {
-          const result = await copySessionToCloud(session.session_id, bundleTeamId);
-          if (!session.cloud_copies) session.cloud_copies = [];
-          session.cloud_copies.push({ cloud_session_id: result.cloud_session_id, team_id: bundleTeamId });
-          if (!session.cloud_session_id) {
-            session.cloud_session_id = result.cloud_session_id;
-            session.team_id = bundleTeamId;
-          }
-          saveActiveSession(session);
-          copy = { cloud_session_id: result.cloud_session_id, team_id: bundleTeamId };
-        } else {
-          await syncSessionToCloud(session.session_id, copy.cloud_session_id);
-        }
-
-        const cloudEntries = await getCloudSessionEntries(copy.cloud_session_id);
-        const cloudIds = cloudEntries.map((e) => e.id);
-        if (cloudIds.length > 0) {
-          const result = await addEntriesToBundle(bundleId, cloudIds);
-          totalPushed += result.added;
-          totalSkipped += result.skipped;
-        }
-      }
-    }
-
-    if (mode === "cloud") {
-      const teams = listMyTeams();
-      for (const team of teams) {
-        const cloudSessions = await listTeamSessions(team.team_id);
-        for (const cs of cloudSessions) {
-          const bundles = getCloudSessionBundleConnections(cs.id);
-          if (!bundles.some((b) => b.bundle_id === bundleId)) continue;
-          const cloudEntries = await getCloudSessionEntries(cs.id);
-          const cloudIds = cloudEntries.map((e) => e.id);
-          if (cloudIds.length > 0) {
-            const result = await addEntriesToBundle(bundleId, cloudIds);
-            totalPushed += result.added;
-            totalSkipped += result.skipped;
-          }
-        }
-      }
-    }
-
-    console.log(`Pulled from sessions: ${totalPushed} added, ${totalSkipped} skipped.`);
+    const { pushed, skipped } = await pullEntriesFromConnectedSessions(bundleId);
+    console.log(`Pulled from sessions: ${pushed} added, ${skipped} skipped.`);
   });
 
 program
@@ -2368,33 +2280,8 @@ program
   });
 
 // ==================== HELPERS ====================
-
-/**
- * Resolve which ctx-link session this CLI invocation belongs to.
- *
- * Order:
- *  1. --session-id flag (passed by hooks). The caller has explicit identity.
- *  2. Process-tree walk → Claude Code session UUID. When Claude Code runs
- *     `ctxl …` via its Bash tool, the calling Claude window's PID is one or
- *     two levels up the process tree. The active-session record is keyed
- *     by that UUID, so it's a deterministic lookup. This is the only path
- *     that disambiguates multiple Claude Code instances sharing a project
- *     directory.
- *  3. Per-cwd marker file (`.ctx-link-active-session`). Used only when the
- *     CLI is invoked manually outside of Claude Code (e.g. from a plain
- *     shell), where there's no upstream Claude window to identify.
- */
-function resolveCallerSessionId(explicitId?: string): string | null {
-  if (explicitId) return explicitId;
-
-  const claudeUUID = resolveClaudeSessionId();
-  if (claudeUUID) {
-    const session = loadActiveSession(claudeUUID);
-    if (session) return claudeUUID;
-  }
-
-  return getActiveSessionId();
-}
+// `resolveCallerSessionId` lives in @ctx-link/core (session-actions.ts) and is
+// imported above. Layer-local helpers below.
 
 function detectProjectName(): string {
   const pkgPath = `${process.cwd()}/package.json`;
