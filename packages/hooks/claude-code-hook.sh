@@ -80,17 +80,13 @@ switch (tool_name) {
     // Check for git commit
     if (/git\s+commit/.test(cmd)) {
       let commitSummary = "Git commit";
-      try {
-        const msg = execSync("git log -1 --pretty=format:%s", { cwd: dir, encoding: "utf8" }).trim();
-        const diff = execSync("git diff HEAD~1 --stat --no-color", { cwd: dir, encoding: "utf8" }).trim();
-        commitSummary = "Committed: " + msg;
-        if (diff) commitSummary += "\n" + diff;
-      } catch {}
-
       let files = [];
       try {
+        const msg = execSync("git log -1 --pretty=format:%s", { cwd: dir, encoding: "utf8" }).trim();
         const changed = execSync("git diff HEAD~1 --name-only", { cwd: dir, encoding: "utf8" }).trim();
         files = changed.split("\n").filter(Boolean);
+        commitSummary = "Committed: " + msg;
+        if (files.length > 0) commitSummary += "\nFiles: " + files.join(", ");
       } catch {}
 
       entriesToAdd.push({

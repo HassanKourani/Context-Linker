@@ -21,6 +21,7 @@ import {
   loadActiveSession,
   saveActiveSession,
   setActiveSessionId,
+  findSessionByInstanceId,
   loadGlobalConfig,
   loadProjectConfig,
   logSession,
@@ -106,9 +107,21 @@ async function ensureSession(): Promise<ActiveSession | null> {
   // If we already created a session (guard against double-call), return it.
   if (ownSessionId) return loadActiveSession(ownSessionId);
 
-  // Always create a new session — each MCP instance is a new Claude Code chat.
-  // The marker file may contain a stale session ID from a previous chat;
-  // don't inherit it. The user can explicitly resume via session_start.
+  // CLAUDE_CODE_SSE_PORT is unique per Claude Code instance and stable across
+  // MCP server restarts within that instance. Use it to reconnect to an
+  // existing session instead of creating a duplicate.
+  const instanceId = process.env.CLAUDE_CODE_SSE_PORT ?? null;
+
+  if (instanceId) {
+    const existing = findSessionByInstanceId(instanceId, process.cwd());
+    if (existing) {
+      ownSessionId = existing.session_id;
+      setActiveSessionId(existing.session_id);
+      return existing;
+    }
+  }
+
+  // No existing session for this Claude instance — create a new one.
   try {
     const sessionId = crypto.randomUUID();
     ownSessionId = sessionId;
@@ -152,6 +165,7 @@ async function ensureSession(): Promise<ActiveSession | null> {
       cloud_session_id: null,
       team_id: null,
       cloud_copies: [],
+      claude_instance_id: instanceId,
     };
 
     saveActiveSession(session);
@@ -181,14 +195,22 @@ const server = new Server(
       "- session_connect: Connect session to a bundle.\n" +
       "- bundle_create: Create a new bundle.\n" +
       "- bundle_list: List all bundles.\n" +
-      "Proactive behavior: call context_pull at session start if bundles are connected.\n" +
-      "**IMPORTANT: Call session_log after meaningful work.** Log entries are what OTHER Claude sessions see.\n" +
-      "Write entries that help another developer (or AI) understand what you did and why:\n" +
-      "- After code changes: describe WHAT changed, WHY, and list files touched. Include a brief diff summary (e.g., 'Added auth middleware to routes.ts — validates JWT, returns 401 on failure').\n" +
-      "- After commits: include the commit message and key files changed.\n" +
-      "- After decisions: explain the decision, alternatives considered, and rationale.\n" +
-      "- After PRs: include PR title, URL, and what it accomplishes.\n" +
-      "**One entry per logical change, not everything in one entry.** Bad: 'Did a bunch of stuff'. Good: 'Added POST /api/users endpoint with validation — returns 201 on success, 400 on invalid email'.",
+      "Proactive behavior: call context_pull at session start if bundles are connected.\n\n" +
+      "**IMPORTANT: Call session_log after every meaningful piece of work.** These entries are what OTHER Claude sessions in other repos see. " +
+      "Write from the consumer's perspective — what does someone working in a different repo need to know to USE what you built?\n\n" +
+      "**Think: 'If I were the frontend agent, what would I need to integrate with this?'**\n\n" +
+      "Examples of GOOD entries:\n" +
+      "- API: 'Added POST /api/users — body: { email: string, name: string, role?: \"admin\" | \"user\" }, returns 201 { id, email, name, role, created_at }. Validates email format, returns 400 on duplicate.'\n" +
+      "- Schema: 'Added users table — columns: id (uuid pk), email (unique), name (text), role (text default \"user\"), created_at (timestamptz). Has index on email.'\n" +
+      "- Auth: 'Auth middleware now requires Bearer token on all /api/* routes. Token is JWT with { user_id, role } payload. 401 if missing/invalid, 403 if role insufficient.'\n" +
+      "- Config: 'Moved API base URL to env var API_BASE_URL (default: http://localhost:3000). Frontend needs to set this in .env.'\n" +
+      "- Decision: 'Chose WebSocket over polling for real-time updates. Endpoint: ws://host/ws. Messages: { type: \"update\", entity: string, id: string, data: object }.'\n\n" +
+      "Examples of BAD entries (no value to other sessions):\n" +
+      "- 'Edited routes.ts' — what changed? what endpoint? what payload?\n" +
+      "- 'Did a bunch of stuff' — useless\n" +
+      "- 'Fixed a bug' — what bug? what was the fix? does it affect the API contract?\n" +
+      "- 'Created pull request' — what does the PR do?\n\n" +
+      "**One entry per logical change.** Include: endpoints, payloads, response shapes, env vars, breaking changes, anything the other repo needs to integrate.",
   }
 );
 
@@ -1197,6 +1219,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
               const { execSync } = await import("node:child_process");
               autoSession.branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf8" }).trim();
             } catch {}
+            autoSession.claude_instance_id = process.env.CLAUDE_CODE_SSE_PORT ?? null;
             saveActiveSession(autoSession);
             return ok({ resumed: true, session_id: autoSession.session_id, project_name: autoSession.project_name });
           }
@@ -1210,11 +1233,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         // Check if session already exists (resume)
         const existing = loadActiveSession(sessionId);
         if (existing) {
-          // Update branch and re-set marker
+          // Update branch and instance ID, re-set marker
           try {
             const { execSync } = await import("node:child_process");
             existing.branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf8" }).trim();
           } catch {}
+          existing.claude_instance_id = process.env.CLAUDE_CODE_SSE_PORT ?? null;
           saveActiveSession(existing);
           setActiveSessionId(sessionId);
           return ok({ resumed: true, session_id: sessionId, project_name: existing.project_name });
@@ -1262,6 +1286,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           cloud_session_id: null,
           team_id: null,
           cloud_copies: [],
+          claude_instance_id: process.env.CLAUDE_CODE_SSE_PORT ?? null,
         });
 
         setActiveSessionId(sessionId);
