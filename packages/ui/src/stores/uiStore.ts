@@ -53,6 +53,10 @@ interface UIState {
   // Session row hover (for edge highlighting)
   hoveredSessionId: string | null;
 
+  // Bundle hover (for highlighting all connected sessions + edges)
+  hoveredBundleId: string | null;
+  highlightedSessionIds: Set<string>;
+
   // Edge action confirmation
   pendingEdgeAction: { sessionId: string; bundleId: string; action: "push" | "unlink" } | null;
 
@@ -80,6 +84,8 @@ interface UIState {
   clearEntrySelection: () => void;
   setHoveredEdge: (id: string | null) => void;
   setHoveredSession: (id: string | null) => void;
+  setHoveredBundle: (id: string | null) => void;
+  setHighlightedSessionIds: (ids: Set<string>) => void;
   setPendingEdgeAction: (action: { sessionId: string; bundleId: string; action: "push" | "unlink" } | null) => void;
   setPushBundleToCloudTarget: (target: { id: string; name: string } | null) => void;
   toggleHideEmptySessions: () => void;
@@ -102,6 +108,8 @@ export const useUIStore = create<UIState>((set, get) => ({
   selectedEntryIds: new Set(),
   hoveredEdgeId: null,
   hoveredSessionId: null,
+  hoveredBundleId: null,
+  highlightedSessionIds: new Set(),
   pendingEdgeAction: null,
   pushBundleToCloudTarget: null,
   hideEmptySessions: (() => {
@@ -188,6 +196,9 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   setHoveredEdge: (id) => set({ hoveredEdgeId: id }),
   setHoveredSession: (id) => set({ hoveredSessionId: id }),
+  setHoveredBundle: (id) =>
+    set(id == null ? { hoveredBundleId: null, highlightedSessionIds: new Set() } : { hoveredBundleId: id }),
+  setHighlightedSessionIds: (ids) => set({ highlightedSessionIds: ids }),
 
   setPendingEdgeAction: (action) => set({ pendingEdgeAction: action }),
 

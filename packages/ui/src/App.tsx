@@ -53,6 +53,8 @@ export function App() {
   const { data, isLoading, dataUpdatedAt } = useGraphData();
   const hoveredEdgeId = useUIStore((s) => s.hoveredEdgeId);
   const hoveredSessionId = useUIStore((s) => s.hoveredSessionId);
+  const hoveredBundleId = useUIStore((s) => s.hoveredBundleId);
+  const setHighlightedSessionIds = useUIStore((s) => s.setHighlightedSessionIds);
   const hideEmptySessions = useUIStore((s) => s.hideEmptySessions);
   const hideEmptyQuestions = useUIStore((s) => s.hideEmptyQuestions);
   const rfInstance = useRef<ReactFlowInstance | null>(null);
@@ -131,24 +133,38 @@ export function App() {
     setEdges(built.edges);
   }, [built, setNodes, setEdges, loadPositions]);
 
-  // Inject _hovered / _dimmed into edge data for color-coded highlighting
+  // Inject _hovered / _dimmed into edge data for color-coded highlighting.
+  // Also derives the set of session IDs connected to the hovered bundle so
+  // ProjectNode can light up matching session rows.
   useEffect(() => {
+    const connectedSessionIds = new Set<string>();
     setEdges((eds) =>
       eds.map((e) => {
-        const edgeSessionId = (e.data as any)?.sessionId as string | undefined;
+        const edgeData = e.data as any;
+        const edgeSessionId = edgeData?.sessionId as string | undefined;
+        const edgeBundleId = edgeData?.bundleId as string | undefined;
+
+        const matchesHoveredBundle =
+          hoveredBundleId != null && edgeBundleId === hoveredBundleId;
+        if (matchesHoveredBundle && edgeSessionId) {
+          connectedSessionIds.add(edgeSessionId);
+        }
+
         const isHovered =
           e.id === hoveredEdgeId ||
-          (hoveredSessionId != null && edgeSessionId === hoveredSessionId);
+          (hoveredSessionId != null && edgeSessionId === hoveredSessionId) ||
+          matchesHoveredBundle;
         const isDimmed =
-          hoveredSessionId != null && edgeSessionId !== hoveredSessionId;
+          (hoveredSessionId != null && edgeSessionId !== hoveredSessionId) ||
+          (hoveredBundleId != null && edgeBundleId !== hoveredBundleId);
 
-        const prev = e.data as any;
-        if (prev?._hovered === isHovered && prev?._dimmed === isDimmed) return e;
+        if (edgeData?._hovered === isHovered && edgeData?._dimmed === isDimmed) return e;
 
         return { ...e, data: { ...e.data, _hovered: isHovered, _dimmed: isDimmed } };
       })
     );
-  }, [hoveredEdgeId, hoveredSessionId, setEdges]);
+    setHighlightedSessionIds(connectedSessionIds);
+  }, [hoveredEdgeId, hoveredSessionId, hoveredBundleId, setEdges, setHighlightedSessionIds]);
 
   const openModal = useUIStore((s) => s.openModal);
   const setPendingConnectPush = useUIStore((s) => s.setPendingConnectPush);

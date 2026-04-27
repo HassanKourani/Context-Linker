@@ -191,9 +191,7 @@ function buildGroup(input: GroupInput): { nodes: Node[]; edges: Edge[] } {
           return {
             id: s.sessionId,
             name: s.name,
-            machineId: s.machineId,
             lastActiveAt: s.lastActiveAt,
-            isYou: s.machineId === machineId,
             bundleId: s.bundleId || null,
             mode: isLocal ? "local" as const : "cloud" as const,
             branch: s.branch,
