@@ -325,13 +325,15 @@ program
 program
   .command("setup")
   .description(
-    "Add ctx-link MCP server to Claude Code settings.\n" +
-    "Writes the MCP configuration so Claude Code can use ctx-link tools.\n\n" +
+    "Add ctx-link MCP server + hooks to Claude Code settings.\n" +
+    "Configures the MCP server, session auto-start hook, and activity logging hook.\n\n" +
     "Examples:\n" +
     "  $ ctxl setup            # add to global (user) settings\n" +
-    "  $ ctxl setup --project  # add to current project only"
+    "  $ ctxl setup --project  # add to current project only\n" +
+    "  $ ctxl setup --force    # overwrite existing config"
   )
   .option("--project", "add to .claude/settings.json in the current directory instead of global", false)
+  .option("--force", "overwrite existing ctx-link config", false)
   .action(async (opts) => {
     const { resolve, dirname } = await import("node:path");
     const { mkdirSync, readFileSync, writeFileSync } = await import("node:fs");
@@ -355,34 +357,105 @@ program
     }
 
     // Check if already configured
-    if (settings.mcpServers?.["ctx-link"]) {
-      console.log(`ctx-link MCP is already configured in ${scope} settings.`);
-      console.log(`  ${settingsPath}`);
-      return;
+    if (!opts.force && settings.mcpServers?.["ctx-link"]) {
+      const hasHooks = JSON.stringify(settings.hooks ?? {}).includes("ctxl");
+      if (hasHooks) {
+        console.log(`ctx-link is already configured in ${scope} settings.`);
+        console.log(`  ${settingsPath}`);
+        console.log(`\nRun with --force to overwrite.`);
+        return;
+      }
     }
 
-    // Find the ctx-link binary
+    // Find the ctx-link binary path
     let ctxLinkBin: string;
     try {
       ctxLinkBin = execSync("which ctx-link", { encoding: "utf8" }).trim();
     } catch {
-      // Fallback: resolve relative to this CLI file
       ctxLinkBin = "ctx-link";
     }
 
-    // Add MCP server config
+    // Find the hook script path (relative to the installed package)
+    let hookPath: string;
+    try {
+      // Resolve from the ctx-link binary to the hooks directory
+      const binPath = execSync("which ctx-link", { encoding: "utf8" }).trim();
+      const realBin = execSync(`readlink -f "${binPath}" 2>/dev/null || realpath "${binPath}" 2>/dev/null || echo "${binPath}"`, { encoding: "utf8" }).trim();
+      const distDir = dirname(realBin);
+      const candidate = resolve(distDir, "hooks", "claude-code-hook.sh");
+      if (existsSync(candidate)) {
+        hookPath = candidate;
+      } else {
+        // Fallback: try npm global location
+        hookPath = resolve(distDir, "..", "dist", "hooks", "claude-code-hook.sh");
+      }
+    } catch {
+      hookPath = "claude-code-hook.sh";
+    }
+
+    // Find ctxl binary path
+    let ctxlBin: string;
+    try {
+      ctxlBin = execSync("which ctxl", { encoding: "utf8" }).trim();
+    } catch {
+      ctxlBin = "ctxl";
+    }
+
+    // --- MCP Server ---
     if (!settings.mcpServers) settings.mcpServers = {};
     settings.mcpServers["ctx-link"] = {
       command: ctxLinkBin,
     };
 
+    // --- Hooks ---
+    if (!settings.hooks) settings.hooks = {};
+
+    // SessionStart hook: auto-create session with Claude's session ID
+    const sessionStartHook = {
+      hooks: [
+        {
+          type: "command",
+          command: `SESSION_ID=$(cat | bun -e "try{process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).session_id??'')}catch{process.stdout.write('')}" 2>/dev/null); [ -n "$SESSION_ID" ] && ${ctxlBin} session-start --session-id "$SESSION_ID" || true`,
+        },
+      ],
+    };
+
+    // PostToolUse hook: auto-log edits, commits, PRs
+    const postToolUseHook = {
+      matcher: "Write|Edit|Bash",
+      hooks: [
+        {
+          type: "command",
+          command: hookPath,
+        },
+      ],
+    };
+
+    // Add hooks without removing existing non-ctx-link hooks
+    const existingSessionStart: any[] = settings.hooks.SessionStart ?? [];
+    const existingPostToolUse: any[] = settings.hooks.PostToolUse ?? [];
+
+    // Remove old ctx-link hooks (to avoid duplicates on --force)
+    settings.hooks.SessionStart = existingSessionStart.filter(
+      (h: any) => !JSON.stringify(h).includes("ctxl")
+    );
+    settings.hooks.PostToolUse = existingPostToolUse.filter(
+      (h: any) => !JSON.stringify(h).includes("ctx-link") && !JSON.stringify(h).includes("claude-code-hook")
+    );
+
+    settings.hooks.SessionStart.push(sessionStartHook);
+    settings.hooks.PostToolUse.push(postToolUseHook);
+
     // Write
     mkdirSync(dirname(settingsPath), { recursive: true });
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
 
-    console.log(`ctx-link MCP added to ${scope} Claude Code settings.`);
-    console.log(`  ${settingsPath}`);
-    console.log(`\nRestart Claude Code to activate. Run /mcp to verify.`);
+    console.log(`ctx-link configured in ${scope} Claude Code settings:`);
+    console.log(`  ${settingsPath}\n`);
+    console.log(`  ✓ MCP server (ctx-link tools for Claude)`);
+    console.log(`  ✓ SessionStart hook (auto-create session)`);
+    console.log(`  ✓ PostToolUse hook (auto-log edits, commits, PRs)\n`);
+    console.log(`Restart Claude Code to activate. Run /mcp to verify.`);
   });
 
 // ==================== UI DASHBOARD ====================
