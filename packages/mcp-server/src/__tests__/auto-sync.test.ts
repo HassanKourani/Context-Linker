@@ -99,10 +99,7 @@ async function simulateDoPush(
   const session = load(sessionId);
   if (!session) return;
 
-  const cloudBundles = session.bundles.filter(
-    (b: any) => b.mode === "cloud",
-  );
-  if (cloudBundles.length === 0) return;
+  if (session.bundles.length === 0) return;
 
   const unpushed = getUnpushed(sessionId);
   if (unpushed.length === 0) return;
@@ -110,7 +107,7 @@ async function simulateDoPush(
   const consolidated = consolidate(unpushed);
   const entryIds = consolidated.map((e: any) => e.id);
 
-  for (const b of cloudBundles) {
+  for (const b of session.bundles) {
     try {
       const excluded = isLocal(b.bundle_id)
         ? localGetExcluded(b.bundle_id)
@@ -265,10 +262,8 @@ describe("auto-sync doPush logic", () => {
     expect(markPushedCalls).toHaveLength(0);
   });
 
-  test("skips push when no cloud bundles", async () => {
-    mockSession = makeSession({
-      bundles: [{ bundle_id: "b-local", mode: "local" }],
-    });
+  test("skips push when no bundles connected", async () => {
+    mockSession = makeSession({ bundles: [] });
     mockUnpushed = [makeEntry("e1")];
 
     await simulateDoPush("sess-1", () => {});
@@ -289,7 +284,7 @@ describe("auto-sync doPush logic", () => {
     expect(markPushedCalls).toHaveLength(0);
   });
 
-  test("only pushes to cloud bundles, skips local", async () => {
+  test("pushes to all connected bundles regardless of mode", async () => {
     localBundleIds = new Set(["b-local"]);
     mockSession = makeSession({
       bundles: [
@@ -302,9 +297,12 @@ describe("auto-sync doPush logic", () => {
 
     await simulateDoPush("sess-1", () => {});
 
-    expect(pushCalls).toHaveLength(2);
-    expect(pushCalls[0].bundleId).toBe("b-cloud-1");
-    expect(pushCalls[1].bundleId).toBe("b-cloud-2");
+    expect(pushCalls).toHaveLength(3);
+    expect(pushCalls.map((c) => c.bundleId)).toEqual([
+      "b-local",
+      "b-cloud-1",
+      "b-cloud-2",
+    ]);
   });
 
   test("filters out excluded entries from push", async () => {
@@ -357,6 +355,41 @@ describe("auto-sync doPush logic", () => {
     expect(pushCalls[0].bundleId).toBe("b-cloud-ok");
     // Entries still marked as pushed
     expect(markPushedCalls).toHaveLength(1);
+  });
+
+  test("pushes to local bundle", async () => {
+    localBundleIds = new Set(["b-local"]);
+    mockSession = makeSession({
+      bundles: [{ bundle_id: "b-local", mode: "local" }],
+    });
+    mockUnpushed = [makeEntry("e1"), makeEntry("e2")];
+
+    const logs: string[] = [];
+    await simulateDoPush("sess-1", (msg) => logs.push(msg));
+
+    expect(pushCalls).toHaveLength(1);
+    expect(pushCalls[0].bundleId).toBe("b-local");
+    expect(pushCalls[0].entryIds).toEqual(["e1", "e2"]);
+    expect(logs[0]).toContain("Auto-synced 2 entries");
+  });
+
+  test("pushes to mixed local + cloud bundles", async () => {
+    localBundleIds = new Set(["b-local"]);
+    mockSession = makeSession({
+      bundles: [
+        { bundle_id: "b-local", mode: "local" },
+        { bundle_id: "b-cloud", mode: "cloud" },
+      ],
+    });
+    mockUnpushed = [makeEntry("e1")];
+
+    await simulateDoPush("sess-1", () => {});
+
+    expect(pushCalls).toHaveLength(2);
+    expect(pushCalls.map((c) => c.bundleId).sort()).toEqual([
+      "b-cloud",
+      "b-local",
+    ]);
   });
 
   test("pushes to multiple cloud bundles", async () => {

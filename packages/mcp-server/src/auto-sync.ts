@@ -31,7 +31,7 @@ export interface AutoSyncOptions {
 
 /**
  * Start the auto-sync loop for a session.
- * Pushes unpushed entries to connected cloud bundles when:
+ * Pushes unpushed entries to every connected bundle (local and cloud) when:
  * 1. No hook activity for SETTLE_MS (generation settled), AND
  * 2. At least MIN_INTERVAL_MS since the last push.
  */
@@ -89,9 +89,7 @@ export function startAutoSync(
       const session = loadActiveSession(sessionId);
       if (!session) return;
 
-      // Only push to cloud bundles
-      const cloudBundles = session.bundles.filter((b) => b.mode === "cloud");
-      if (cloudBundles.length === 0) return;
+      if (session.bundles.length === 0) return;
 
       // Get unpushed entries and consolidate
       const unpushed = getUnpushedSessionEntries(sessionId);
@@ -102,7 +100,7 @@ export function startAutoSync(
 
       const pushedIds = new Set<string>();
 
-      for (const b of cloudBundles) {
+      for (const b of session.bundles) {
         try {
           // Get excluded entries for this bundle
           const excluded = isLocalBundle(b.bundle_id)
