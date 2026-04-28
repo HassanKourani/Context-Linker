@@ -54,6 +54,9 @@ import {
   resolveJoinCode,
   regenerateJoinCode,
   getBundleToken,
+  addBundleNote,
+  ROLES,
+  type Role,
   type RewindStrategy,
 } from "@ctx-link/core";
 
@@ -110,6 +113,7 @@ Bundle Entries:
   bundle-remove-entry              Remove an entry ref from a bundle
   bundle-pull-from-sessions        Pull from all connected sessions into bundle
   bundle-to-cloud [bundle_id]      Migrate a local bundle to cloud
+  note                             Add a role-tagged note to a bundle
 
 Options:
   -V, --version                    Output the version number
@@ -1951,6 +1955,46 @@ program
 
     console.log(`Question posted (${q.id}).`);
     if (opts.target) console.log(`Directed to: ${opts.target}`);
+  });
+
+program
+  .command("note")
+  .description(
+    "Add a role-tagged note to a bundle. Roles: ticket, constraint, design, decision, bug, qa, note.\n\n" +
+    "Examples:\n" +
+    "  $ ctxl note\n" +
+    "  $ ctxl note --bundle <id> --role ticket --summary 'Build the dashboard'"
+  )
+  .option("--bundle <id>", "Bundle ID")
+  .option("--role <role>", "ticket | constraint | design | decision | bug | qa | note")
+  .option("--summary <text>", "The note text")
+  .action(async (opts) => {
+    let bundleId = opts.bundle;
+    if (!bundleId) {
+      bundleId = await promptForBundle("Which bundle?");
+    }
+
+    let role = opts.role;
+    if (!role) {
+      role = await select({
+        message: "Role:",
+        choices: ROLES.map((r) => ({ name: r, value: r })),
+        default: "note",
+      });
+    }
+
+    let summary = opts.summary;
+    if (!summary) {
+      summary = await input({ message: "Note:" });
+    }
+
+    const result = await addBundleNote({
+      bundle_id: bundleId,
+      summary,
+      role: role as Role,
+    });
+    console.log(`Added ${result.role} note to bundle ${bundleId}.`);
+    console.log(`Entry id: ${result.entry_id}`);
   });
 
 program
