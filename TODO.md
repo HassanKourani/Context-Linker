@@ -77,8 +77,8 @@
 
 - [x] Added `bin` field to `packages/cli/package.json`
 - [x] Ran `bun link` — `~/.bun/bin/ctx-link` created
-- [ ] Add `~/.bun/bin` to PATH in `~/.zshrc`
-- [ ] Verify `ctx-link list` works from any directory
+- [x] Add `~/.bun/bin` to PATH in `~/.zshrc` — PATH already contains `~/.bun/bin`
+- [x] Verify `ctxl` works from any directory — `ctx-link` + `ctxl` binaries both present
 
 ## Phase 10: Real-world dogfood
 
@@ -92,7 +92,7 @@
 
 - [x] Write a proper bin entry — done (`packages/cli/package.json` has `bin` field)
 - [x] ~~Add a `bun.lockb` commit~~ — `bun.lock` tracked
-- [ ] Add basic unit tests for bundle create/join and rewind scope enforcement
+- [x] Add basic unit tests for bundle create/join and rewind scope enforcement — tests exist in `packages/core/src/__tests__/` (entries, exclusions, local-store, consolidate, questions, join-codes, feed, session-actions, config) + `packages/mcp-server/src/__tests__/auto-sync.test.ts`
 - [ ] Add an integration test that runs against a disposable Supabase
 - [ ] Improve error messages
 - [x] Add a `ctx-link delete-bundle <id>` command — done
@@ -188,8 +188,8 @@
 ### Phase U8: Local-only deployment
 
 - [x] Documented dev flow in README
-- [ ] Add a production build: `bun run build:ui` → serves from `packages/ui/dist`
-- [ ] Optional: `ctxl ui` CLI command that builds then starts a serve instance
+- [x] Add a production build: `bun run build:ui` → serves from `packages/ui/dist`
+- [x] `ctxl ui` CLI command — implemented in `packages/cli/src/index.ts` (start/stop, opens browser)
 - [ ] Optional: Electron/Tauri desktop app
 
 ### Phase U9: Deploy as a hosted web app (far-future)
@@ -205,6 +205,31 @@
 - [ ] Responsive design for tablet
 - [ ] Accessibility pass (screen reader, keyboard nav)
 - [ ] Screenshot + demo GIF for the README
+
+---
+
+## Backlog: bugs + open improvements
+
+### Bugs to investigate / fix
+
+- [x] **Direct push-to-bundle is broken** — verified working end-to-end (sandbox repro, 2026-04-28). The "delivers nothing" symptom was `ctxl pull` excluding own-project entries; refs are written correctly. No code change needed.
+- [x] **Verify auto-push-to-bundle behavior** — fixed: auto-sync now pushes to local bundles too (was filtering `mode === "cloud"` only).
+- [x] **Auto-logging coverage audit** — by design: hook auto-stubs only commits + `gh pr create`; agent is expected to call `session_log` for everything else (see `packages/hooks/claude-code-hook.sh:58-61`).
+
+### Features
+
+- [ ] **Transitive bundle linking** — allow a bundle to reference other bundles. When a session pulls from a linked bundle, recursively resolve its linked bundles too, so context flows through the entire linked-bundle graph.
+- [ ] **Manual note entries with agent roles** — add a manual-note entry type tagged with a role so agents read each note with the right intent. Each role drives different downstream behavior:
+  - **Ticket description** — read first, before any other entries, to anchor the agent in the overall goal and scope
+  - **QA** — treat as a failed QA run; the agent should reproduce the failure and fix it
+  - **Design spec** — UI requirements or design issues the agent should implement or resolve
+  - (open-ended: more roles can be added later)
+- [ ] **Optional account upgrade (machine_id → user)** — keep the current anonymous, machine_id-based join flow working as the default; signup is never forced. When a user opts in to create an account, claim their existing `machine_id` and remap their bundles, sessions, and team memberships to the new user identity so nothing is lost in the upgrade.
+
+### UI improvements
+
+- [ ] **Graph filters** — filter the React Flow graph by team, bundle, and session.
+- [ ] **Bundle hover highlighting** — when hovering a bundle node, highlight all connected edges and the session/project nodes linked to it.
 
 ---
 
