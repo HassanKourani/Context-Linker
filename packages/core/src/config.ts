@@ -222,12 +222,14 @@ export function setActiveSessionId(sessionId: string, cwd: string = process.cwd(
   writeFileSync(join(cwd, ".ctx-link-active-session"), sessionId);
 }
 
-/** List all active sessions across all projects */
+/** List all active sessions across all projects (hides synthetic notes sessions) */
 export function listActiveSessions(): ActiveSession[] {
   const dir = activeSessionsDir();
   if (!existsSync(dir)) return [];
   const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
-  return files.map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")));
+  return files
+    .map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")) as ActiveSession)
+    .filter((s) => s.kind !== "notes");
 }
 
 /** Find an existing active session by Claude instance ID + project path */

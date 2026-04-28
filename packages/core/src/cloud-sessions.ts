@@ -165,6 +165,7 @@ export async function listTeamSessions(teamId: string): Promise<CloudSession[]> 
     .from("cloud_sessions")
     .select("*")
     .eq("team_id", teamId)
+    .neq("kind", "notes")
     .order("last_active_at", { ascending: false });
 
   if (error) throw new Error(`listTeamSessions failed: ${error.message}`);

@@ -218,6 +218,14 @@ describe("Active Session CRUD", () => {
     const ids = sessions.map(s => s.session_id).sort();
     expect(ids).toEqual(["sess-a", "sess-b"]);
   });
+
+  test("listActiveSessions excludes kind='notes' sessions", () => {
+    saveActiveSession(makeSession("project-1", { project_name: "frontend" }));
+    saveActiveSession(makeSession("notes-1", { project_name: "", kind: "notes" }));
+    const ids = listActiveSessions().map(s => s.session_id);
+    expect(ids).toContain("project-1");
+    expect(ids).not.toContain("notes-1");
+  });
 });
 
 // ── Active Session ID (per-project) ──────────────────────────────────────────
