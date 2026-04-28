@@ -115,3 +115,35 @@ describe("addBundleNote (local)", () => {
     })).rejects.toThrow(/role/);
   });
 });
+
+describe("localPullEntries returns entries sorted by role priority", () => {
+  let testDir: string;
+  beforeEach(() => { testDir = setupTestDir(); });
+  afterEach(() => { cleanupTestDir(testDir); });
+
+  test("ticket comes before note", async () => {
+    const bundle = localCreateBundle("b");
+    await addBundleNote({ bundle_id: bundle.bundle_id, summary: "general", role: "note" });
+    await addBundleNote({ bundle_id: bundle.bundle_id, summary: "scope", role: "ticket" });
+
+    const rows = localPullEntries({ bundle_id: bundle.bundle_id });
+    expect(rows[0].role).toBe("ticket");
+    expect(rows[1].role).toBe("note");
+  });
+});
+
+describe("renderEntriesForClaude groups by role", () => {
+  test("renders sections in priority order", async () => {
+    const { renderEntriesForClaude } = await import("../entries.js");
+    const md = renderEntriesForClaude([
+      { id: "1", created_at: "2026-04-28T00:00:00Z", project_name: "p", event_type: "manual",
+        trigger_ref: null, summary: "general", files_touched: [], decisions: [], role: "note" },
+      { id: "2", created_at: "2026-04-28T00:01:00Z", project_name: "p", event_type: "manual",
+        trigger_ref: null, summary: "scope anchor", files_touched: [], decisions: [], role: "ticket" },
+    ]);
+
+    expect(md.indexOf("## Ticket")).toBeLessThan(md.indexOf("## Notes"));
+    expect(md).toContain("scope anchor");
+    expect(md).toContain("general");
+  });
+});

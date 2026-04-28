@@ -13,6 +13,7 @@ import { loadGlobalConfig } from "./config.js";
 import type { PullInput, EntryRow } from "./entries.js";
 import type { CreateBundleResult, JoinBundleResult, BundleStatus } from "./bundles.js";
 import type { RewindInput, RewindResult, RewindCandidate, RestoreInput, RestoreResult, RewindLogRow } from "./rewind.js";
+import { rolePriority } from "./notes.js";
 
 // ---------- Paths ----------
 
@@ -301,8 +302,12 @@ export function localPullEntries(input: PullInput): EntryRow[] {
     entries = resolveEntryRefs(refs);
   }
 
-  // Sort by created_at descending
-  entries.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  // Sort by role priority, then created_at desc within group
+  entries.sort((a, b) => {
+    const dp = rolePriority(a.role) - rolePriority(b.role);
+    if (dp !== 0) return dp;
+    return b.created_at.localeCompare(a.created_at);
+  });
 
   if (input.since) {
     entries = entries.filter((e) => e.created_at > input.since!);
