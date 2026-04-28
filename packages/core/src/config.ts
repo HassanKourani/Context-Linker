@@ -172,6 +172,7 @@ export interface ActiveSession {
   channel_port?: number | null;  // HTTP port for cross-session Q&A notifications
   claude_instance_id?: string | null;  // CLAUDE_CODE_SSE_PORT — stable per Claude Code instance
   claude_session_id?: string | null;  // Claude Code conversation UUID (for name sync)
+  kind?: "project" | "notes";  // synthetic per-bundle notes session when "notes"; default "project"
 }
 
 function activeSessionsDir(): string {
@@ -414,6 +415,7 @@ export interface SessionEntry {
   pushed_at: string | null; // null = not yet pushed, ISO string = when consolidated
   superseded_at: string | null;  // soft-delete for rewind
   pending_enrichment?: boolean; // commit/PR stub awaiting agent-written handoff details
+  role?: import("./notes.js").Role;  // role tag for bundle notes
 }
 
 export function pushSessionEntry(sessionId: string, entry: Omit<SessionEntry, "id" | "created_at" | "pushed_at" | "superseded_at">): SessionEntry {

@@ -69,6 +69,7 @@ export interface EntryRow {
   summary: string;
   files_touched: string[];
   decisions: Array<{ decision: string; rationale?: string; affects: string[] }>;
+  role?: string | null;
 }
 
 // Bundle types

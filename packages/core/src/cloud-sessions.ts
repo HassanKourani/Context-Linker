@@ -21,6 +21,7 @@ export interface CloudSession {
   branch: string | null;
   started_at: string;
   last_active_at: string;
+  kind?: "project" | "notes";  // server default "project"
 }
 
 export interface CloudSessionEntry {
@@ -33,6 +34,7 @@ export interface CloudSessionEntry {
   decisions: Array<{ decision: string; rationale?: string; affects: string[] }>;
   created_at: string;
   superseded_at: string | null;
+  role?: import("./notes.js").Role | null;
 }
 
 /**

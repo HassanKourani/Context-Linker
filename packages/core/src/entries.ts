@@ -20,6 +20,7 @@ export interface EntryRow {
   files_touched: string[];
   decisions: Array<{ decision: string; rationale?: string; affects: string[] }>;
   bundle_refs?: string[];
+  role?: import("./notes.js").Role | null;
 }
 
 export async function pullEntries(input: PullInput): Promise<EntryRow[]> {

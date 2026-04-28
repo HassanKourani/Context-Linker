@@ -51,6 +51,7 @@ interface LocalMeta {
   id: string;
   name: string;
   created_at: string;
+  notes_session_id?: string;  // lazy: undefined until first note added
 }
 
 interface LocalEntryRef {
