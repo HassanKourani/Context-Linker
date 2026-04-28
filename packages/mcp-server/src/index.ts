@@ -91,6 +91,13 @@ let autoSyncHandle: AutoSyncHandle | null = null;
 let hasShownWelcome = false;
 let lastNameSyncAt = 0;
 
+// Staleness tracking — nudge the agent to call session_log when too much
+// work has happened without one. Reset whenever session_log fires.
+let lastSessionLogAt = Date.now();
+let toolCallsSinceLog = 0;
+const STALE_LOG_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+const STALE_LOG_THRESHOLD_CALLS = 6;            // or 6 MCP calls, whichever first
+
 const debugLog = (msg: string) => {
   if (process.env.CTX_LINK_DEBUG) process.stderr.write(`[ctx-link] ${msg}\n`);
 };
@@ -1271,6 +1278,10 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const session = getSession();
         if (!session) return fail("No active session. Open Claude Code in a project first.");
 
+        // Reset staleness counters whenever the agent logs.
+        lastSessionLogAt = Date.now();
+        toolCallsSinceLog = 0;
+
         // If a commit/PR stub is awaiting enrichment, merge into it instead
         // of creating a second entry — gives one clean record per commit.
         const stub = getPendingEnrichmentStub(session.session_id);
@@ -1623,22 +1634,54 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
   }
 
-  // Pending-enrichment reminder: nudge the agent to enrich any commit/PR stub
-  // before moving on. Self-triggers without an extra LLM call.
+  // Tool-call counter for staleness detection. session_log resets it inside
+  // its own case; here we just count anything else the agent calls.
+  if (name !== "session_log") {
+    toolCallsSinceLog += 1;
+  }
+
+  // Reminder system: prepend at most ONE [ctx-link] notice per response.
+  // Priority order:
+  //   1. Pending commit/PR enrichment stub (highest signal — there's a
+  //      placeholder in the entry log waiting to be filled in).
+  //   2. Staleness — too much time or too many tool calls since last log.
+  // The agent sees these as plain-text content blocks; they don't break
+  // the underlying tool result.
   try {
     const session = getSession();
     if (session) {
+      let reminder: string | null = null;
+
       const stub = getPendingEnrichmentStub(session.session_id);
       if (stub) {
         const which = stub.event_type === "pr_open" ? "PR" : "commit";
         const ref = stub.trigger_ref ? ` (${stub.trigger_ref.slice(0, 7)})` : "";
-        const reminder =
+        reminder =
           `[ctx-link] Pending handoff: a ${which}${ref} was logged as a stub. ` +
           `Call \`session_log\` now with handoff details — function/endpoint signatures, payload shapes, error format, dependencies. ` +
           `Your call will MERGE into the stub (one clean entry per ${which}). Avoid diffs; describe what now exists and how to use it.`;
-        if (Array.isArray(result?.content)) {
-          (result.content as any[]).unshift({ type: "text", text: reminder });
+      } else if (name !== "session_log") {
+        const elapsedMs = Date.now() - lastSessionLogAt;
+        const stale =
+          elapsedMs >= STALE_LOG_THRESHOLD_MS ||
+          toolCallsSinceLog >= STALE_LOG_THRESHOLD_CALLS;
+        if (stale) {
+          const minutes = Math.round(elapsedMs / 60000);
+          reminder =
+            `[ctx-link] You haven't called session_log in ${minutes} min / ${toolCallsSinceLog} tool calls. ` +
+            `If you've finished a logical unit of work since (a feature, bug fix, refactor, design decision, config change) — log it NOW. ` +
+            `Don't wait for a commit; commits create stub entries you can enrich, but mid-flight work disappears unless logged. ` +
+            `One handoff entry per logical unit; describe what now exists and how the next agent uses it.`;
+          // Re-arm so we don't fire on every single subsequent call. Reset
+          // the counter but leave lastSessionLogAt — the agent has been
+          // warned; if they ignore us, the time-based threshold will trip
+          // again later.
+          toolCallsSinceLog = 0;
         }
+      }
+
+      if (reminder && Array.isArray(result?.content)) {
+        (result.content as any[]).unshift({ type: "text", text: reminder });
       }
     }
   } catch {
