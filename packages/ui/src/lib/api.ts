@@ -155,6 +155,20 @@ export function removeEntryRefFromBundle(bundleId: string, entryId: string) {
   return apiDelete<{ ok: true }>(`/api/bundles/${bundleId}/entries/${entryId}`);
 }
 
+export type AddBundleNoteResult = {
+  bundle_id: string;
+  notes_session_id: string;
+  entry_id: string;
+  role: string;
+};
+
+export function addBundleNote(
+  bundleId: string,
+  body: { summary: string; role: string },
+) {
+  return apiPost<AddBundleNoteResult>(`/api/bundles/${bundleId}/notes`, body);
+}
+
 export function pullFromSessions(bundleId: string) {
   return apiPost<{ ok: true; pushed: number; skipped: number }>(
     `/api/bundles/${bundleId}/pull-from-sessions`,

@@ -2,10 +2,18 @@ import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Input } from "@/components/ui/input";
 import { usePushEntry } from "@/hooks/mutations/usePushEntry";
 import { useUIStore } from "@/stores/uiStore";
-import { useGraphData } from "@/hooks/useGraphData";
+
+const ROLE_OPTIONS: Array<{ value: string; label: string; hint: string }> = [
+  { value: "ticket",     label: "Ticket",      hint: "Goal/scope anchor — read first" },
+  { value: "constraint", label: "Constraint",  hint: "Hard rules: don't do X, must use Y" },
+  { value: "design",     label: "Design spec", hint: "UI/UX or behavior requirements" },
+  { value: "decision",   label: "Decision",    hint: "Prior architectural decision (don't relitigate)" },
+  { value: "bug",        label: "Bug",         hint: "Reported bug to investigate / fix" },
+  { value: "qa",         label: "QA",          hint: "Failed QA run — reproduce + fix" },
+  { value: "note",       label: "Note",        hint: "General context" },
+];
 
 export function PushEntryDialog() {
   const activeModal = useUIStore((s) => s.activeModal);
@@ -13,53 +21,19 @@ export function PushEntryDialog() {
   const selectedBundleId = useUIStore((s) => s.selectedBundleId);
   const open = activeModal === "push-entry" && !!selectedBundleId;
 
-  const [projectName, setProjectName] = useState("");
+  const [role, setRole] = useState("note");
   const [summary, setSummary] = useState("");
-  const { data: graphData } = useGraphData();
   const mutation = usePushEntry();
-
-  // Get available project names from cloud sessions, active sessions, and local bundles
-  const projectNames: string[] = [];
-  if (graphData && selectedBundleId) {
-    // From cloud sessions in teams
-    for (const team of graphData.teams) {
-      if (team.cloud_sessions) {
-        for (const cs of team.cloud_sessions) {
-          if (!projectNames.includes(cs.project_name)) projectNames.push(cs.project_name);
-        }
-      }
-    }
-    // From active sessions connected to this bundle
-    if (graphData.sessions) {
-      for (const s of graphData.sessions) {
-        if (s.bundles.some((b) => b.bundle_id === selectedBundleId)) {
-          if (!projectNames.includes(s.project_name)) projectNames.push(s.project_name);
-        }
-      }
-    }
-    // From local bundles
-    const lb = graphData.local.bundles.find((b) => b.bundle_id === selectedBundleId);
-    if (lb) {
-      for (const p of lb.projects) {
-        if (!projectNames.includes(p.project_name)) projectNames.push(p.project_name);
-      }
-    }
-  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedBundleId) return;
     mutation.mutate(
-      {
-        bundleId: selectedBundleId,
-        project_name: projectName,
-        event_type: "manual",
-        summary,
-      },
+      { bundleId: selectedBundleId, role, summary },
       {
         onSuccess: () => {
           closeModal();
-          setProjectName("");
+          setRole("note");
           setSummary("");
         },
       }
@@ -71,45 +45,40 @@ export function PushEntryDialog() {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Add Note</DialogTitle>
-          <DialogDescription>Add a manual context note to this bundle.</DialogDescription>
+          <DialogDescription>
+            Tag the note with a role so agents read it with the right intent.
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">Project</label>
-            {projectNames.length > 0 ? (
-              <select
-                className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground"
-                value={projectName}
-                onChange={(e) => setProjectName(e.target.value)}
-                required
-              >
-                <option value="">Select project...</option>
-                {projectNames.map((p) => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
-              </select>
-            ) : (
-              <Input
-                value={projectName}
-                onChange={(e) => setProjectName(e.target.value)}
-                placeholder="project-name"
-                required
-              />
-            )}
+            <label className="text-sm font-medium text-foreground">Role</label>
+            <select
+              className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground"
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+              required
+            >
+              {ROLE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground">
+              {ROLE_OPTIONS.find((r) => r.value === role)?.hint}
+            </p>
           </div>
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">Summary</label>
             <Textarea
               value={summary}
               onChange={(e) => setSummary(e.target.value)}
-              placeholder="Describe what changed or what context to share..."
+              placeholder="Describe the ticket / constraint / bug / note..."
               required
               rows={4}
             />
           </div>
           <DialogFooter>
-            <Button type="submit" disabled={mutation.isPending || !projectName || !summary}>
-              {mutation.isPending ? "Pushing..." : "Push"}
+            <Button type="submit" disabled={mutation.isPending || !summary}>
+              {mutation.isPending ? "Adding..." : "Add note"}
             </Button>
           </DialogFooter>
         </form>
