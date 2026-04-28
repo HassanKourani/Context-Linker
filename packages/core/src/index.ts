@@ -4,6 +4,7 @@ export * from "./entries.js";
 export * from "./rewind.js";
 export * from "./local-store.js";
 export * from "./teams.js";
+export * from "./auth.js";
 export * from "./cloud-sessions.js";
 export * from "./questions.js";
 export * from "./session-actions.js";

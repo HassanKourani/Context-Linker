@@ -218,12 +218,53 @@ export function fetchTeams() {
   return apiGet<TeamInfo[]>("/api/teams");
 }
 
-export function createTeam(body: { name: string; password: string }) {
+export function createTeam(body: { name: string; join_code: string }) {
   return apiPost<CreateTeamResult>("/api/teams", body);
 }
 
-export function joinTeam(body: { name: string; password: string }) {
+export function joinTeam(body: { name: string; join_code: string }) {
   return apiPost<CreateTeamResult>("/api/teams/join", body);
+}
+
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+
+export type AuthStatus =
+  | { signed_in: true; id: string; email: string | null }
+  | { signed_in: false };
+
+export function fetchAuthStatus() {
+  return apiGet<AuthStatus>("/api/auth/status");
+}
+
+export function authSignInPassword(body: { email: string; password: string }) {
+  return apiPost<{ user: { id: string; email: string | null } }>(
+    "/api/auth/signin",
+    body
+  );
+}
+
+export function authSignUp(body: { email: string; password: string }) {
+  return apiPost<{
+    requires_email_confirmation: boolean;
+    user: { id: string; email: string | null } | null;
+  }>("/api/auth/signup", body);
+}
+
+export function authSendCode(body: { email: string }) {
+  return apiPost<{ sent: true }>("/api/auth/send-code", body);
+}
+
+export function authVerifyCode(body: { email: string; code: string }) {
+  return apiPost<{ user: { id: string; email: string | null } }>(
+    "/api/auth/verify-code",
+    body
+  );
+}
+
+export function authSignOut() {
+  return apiPost<{ signed_out: true }>("/api/auth/signout", {});
 }
 
 // ---------------------------------------------------------------------------

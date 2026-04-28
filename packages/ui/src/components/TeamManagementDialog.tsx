@@ -15,7 +15,7 @@ export function TeamManagementDialog() {
 
   const [tab, setTab] = useState<"list" | "create" | "join">("list");
   const [name, setName] = useState("");
-  const [password, setPassword] = useState("");
+  const [joinCode, setJoinCode] = useState("");
   const { data: teams, isLoading } = useTeams();
   const createMutation = useCreateTeam();
   const joinMutation = useJoinTeam();
@@ -23,12 +23,12 @@ export function TeamManagementDialog() {
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
     createMutation.mutate(
-      { name, password },
+      { name, join_code: joinCode },
       {
         onSuccess: () => {
           setTab("list");
           setName("");
-          setPassword("");
+          setJoinCode("");
         },
       }
     );
@@ -37,12 +37,12 @@ export function TeamManagementDialog() {
   const handleJoin = (e: React.FormEvent) => {
     e.preventDefault();
     joinMutation.mutate(
-      { name, password },
+      { name, join_code: joinCode },
       {
         onSuccess: () => {
           setTab("list");
           setName("");
-          setPassword("");
+          setJoinCode("");
         },
       }
     );
@@ -86,7 +86,7 @@ export function TeamManagementDialog() {
         {tab === "create" && (
           <form onSubmit={handleCreate} className="space-y-3">
             <Input placeholder="Team name" value={name} onChange={(e) => setName(e.target.value)} required />
-            <Input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+            <Input type="password" placeholder="Join code" value={joinCode} onChange={(e) => setJoinCode(e.target.value)} required />
             <Button type="submit" className="w-full" disabled={createMutation.isPending}>
               {createMutation.isPending ? "Creating..." : "Create Team"}
             </Button>
@@ -96,7 +96,7 @@ export function TeamManagementDialog() {
         {tab === "join" && (
           <form onSubmit={handleJoin} className="space-y-3">
             <Input placeholder="Team name" value={name} onChange={(e) => setName(e.target.value)} required />
-            <Input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+            <Input type="password" placeholder="Join code" value={joinCode} onChange={(e) => setJoinCode(e.target.value)} required />
             <Button type="submit" className="w-full" disabled={joinMutation.isPending}>
               {joinMutation.isPending ? "Joining..." : "Join Team"}
             </Button>

@@ -1,4 +1,3 @@
-import argon2 from "argon2";
 import { customAlphabet } from "nanoid";
 import { getSupabase } from "./supabase.js";
 import {
@@ -16,18 +15,6 @@ const generateTokenBody = customAlphabet(tokenAlphabet, 32);
 
 export function generateJoinToken(): string {
   return `ctxl_${generateTokenBody()}`;
-}
-
-async function hashToken(token: string): Promise<string> {
-  return argon2.hash(token, { type: argon2.argon2id });
-}
-
-async function verifyToken(token: string, hash: string): Promise<boolean> {
-  try {
-    return await argon2.verify(hash, token);
-  } catch {
-    return false;
-  }
 }
 
 // ---------- Operations ----------

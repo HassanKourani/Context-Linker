@@ -58,6 +58,11 @@ import {
   ROLES,
   type Role,
   type RewindStrategy,
+  signInWithPassword,
+  signUpWithPassword,
+  signOut,
+  getCurrentUser,
+  refreshTeamsCache,
 } from "@ctx-link/core";
 
 const HELP_TEXT = `Usage: ctxl [command] [options]
@@ -75,6 +80,11 @@ Setup:
   init                             Create bundle, connect session, get join code
   ui                               Start the web dashboard
   info                             Show current project config
+
+Auth (cloud mode):
+  signin                           Sign in (password or one-time email code)
+  signout                          Sign out and clear local session
+  whoami                           Show the signed-in user
 
 Teams:
   create-team                      Create a new team (cloud mode)
@@ -219,48 +229,118 @@ program
 // Replace Commander's default help with our grouped layout (root command only)
 program.helpInformation = () => HELP_TEXT;
 
+// ==================== AUTH ====================
+
+program
+  .command("signin")
+  .description(
+    "Sign in to Supabase. Required for cloud mode (teams, cloud bundles).\n" +
+    "If the account doesn't exist, you'll be offered to create one.\n\n" +
+    "Example:\n" +
+    "  $ ctxl signin"
+  )
+  .action(async () => {
+    const existing = await getCurrentUser();
+    if (existing) {
+      console.log(`Already signed in as ${existing.email ?? existing.id}.`);
+      console.log("Run 'ctxl signout' first to switch accounts.");
+      return;
+    }
+
+    const email = await input({ message: "Email:" });
+    if (!email) { console.error("Email is required."); process.exit(1); }
+    const pw = await password({ message: "Password:" });
+    if (!pw) { console.error("Password is required."); process.exit(1); }
+
+    try {
+      const r = await signInWithPassword(email, pw);
+      console.log(`\nSigned in as ${r.user.email ?? r.user.id}.`);
+      await refreshTeamsCache();
+    } catch (e: any) {
+      const create = await confirm({
+        message: `Sign-in failed (${e.message}). Create a new account with this email?`,
+        default: false,
+      });
+      if (!create) process.exit(1);
+      const r = await signUpWithPassword(email, pw);
+      if (r.requires_email_confirmation) {
+        console.log(`\nAccount created. Check your email to confirm before signing in.`);
+      } else {
+        console.log(`\nAccount created and signed in as ${r.user?.email ?? email}.`);
+        await refreshTeamsCache();
+      }
+    }
+  });
+
+program
+  .command("signout")
+  .description("Sign out of Supabase. Clears the local session token.")
+  .action(async () => {
+    const existing = await getCurrentUser();
+    if (!existing) {
+      console.log("Not signed in.");
+      return;
+    }
+    await signOut();
+    await refreshTeamsCache();
+    console.log("Signed out.");
+  });
+
+program
+  .command("whoami")
+  .description("Show the currently signed-in user, if any.")
+  .action(async () => {
+    const user = await getCurrentUser();
+    if (!user) {
+      console.log("Not signed in. Run 'ctxl signin' to sign in.");
+      return;
+    }
+    console.log(`Signed in as ${user.email ?? user.id}`);
+    console.log(`User ID: ${user.id}`);
+  });
+
 // ==================== TEAMS (cloud mode only) ====================
 
 program
   .command("create-team")
   .description(
-    "Create a new team for cloud mode. Prompts for name and password.\n" +
-    "You are auto-joined as a member. Share the name + password with teammates.\n\n" +
+    "Create a new team for cloud mode. Requires sign-in (run 'ctxl signin' first).\n" +
+    "You are auto-joined as a member. Share the team name + join code with teammates.\n\n" +
     "Example:\n" +
     "  $ ctxl create-team\n" +
     "  Team name: my-team\n" +
-    "  Password: ****"
+    "  Join code: ****"
   )
   .action(async () => {
     const name = await input({ message: "Team name:" });
     if (!name) { console.error("Team name is required."); process.exit(1); }
-    const pw = await password({ message: "Password:" });
-    if (!pw) { console.error("Password is required."); process.exit(1); }
-    const r = await createTeam(name, pw);
+    const code = await password({ message: "Join code:" });
+    if (!code) { console.error("Join code is required."); process.exit(1); }
+    const r = await createTeam(name, code);
     console.log(`\nTeam created.`);
     console.log(`  Name: ${r.name}`);
     console.log(`  ID:   ${r.team_id}`);
     console.log("");
-    console.log("Others can join with:");
+    console.log("Others can join with (after signing in):");
     console.log(`  ctxl join-team`);
   });
 
 program
   .command("join-team")
   .description(
-    "Join an existing team. Prompts for the team name and password.\n" +
-    "Once joined, you can access all cloud bundles in that team.\n\n" +
+    "Join an existing team. Requires sign-in (run 'ctxl signin' first).\n" +
+    "Prompts for the team name and join code.\n\n" +
     "Example:\n" +
     "  $ ctxl join-team\n" +
     "  Team name: my-team\n" +
-    "  Password: ****"
+    "  Join code: ****"
   )
   .action(async () => {
     const name = await input({ message: "Team name:" });
     if (!name) { console.error("Team name is required."); process.exit(1); }
-    const pw = await password({ message: "Password:" });
-    if (!pw) { console.error("Password is required."); process.exit(1); }
-    const r = await joinTeam(name, pw);
+    const code = await password({ message: "Join code:" });
+    if (!code) { console.error("Join code is required."); process.exit(1); }
+    const r = await joinTeam(name, code);
     console.log(`\nJoined team ${r.name} (${r.team_id}).`);
   });
 

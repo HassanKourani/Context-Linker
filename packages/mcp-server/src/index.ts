@@ -66,6 +66,11 @@ import {
   ensureCloudCopy,
   writeFeedEvent,
   addBundleNote,
+  getCurrentUser,
+  sendEmailOtp,
+  verifyEmailOtp,
+  signOut,
+  refreshTeamsCache,
 } from "@ctx-link/core";
 import { z } from "zod";
 import { startChannelListener, broadcastToBundle, type ChannelMessage } from "./channel.js";
@@ -629,27 +634,78 @@ const tools = [
     name: "team_create",
     description:
       "Create a new team. Teams are access-control containers for cloud sessions and bundles. " +
-      "Returns team_id and name. Share the team name + password with collaborators so they can join.",
+      "Requires the user to be signed in (use auth_status / auth_signin_send_code first if needed). " +
+      "Returns team_id and name. Share the team name + join_code with collaborators so they can join.",
     inputSchema: {
       type: "object",
       properties: {
         name: { type: "string", description: "Team name (unique, used to join)" },
-        password: { type: "string", description: "Team password (hashed with argon2, needed to join)" },
+        join_code: { type: "string", description: "Team join code (a shared secret your collaborators will enter to join)" },
       },
-      required: ["name", "password"],
+      required: ["name", "join_code"],
     },
   },
   {
     name: "team_join",
     description:
-      "Join an existing team by name and password. Required before working with cloud bundles or pushing sessions to cloud.",
+      "Join an existing team by name and join_code. Requires the user to be signed in. " +
+      "Required before working with cloud bundles or pushing sessions to cloud.",
     inputSchema: {
       type: "object",
       properties: {
         name: { type: "string", description: "Team name" },
-        password: { type: "string", description: "Team password" },
+        join_code: { type: "string", description: "Team join code (the shared secret you were given)" },
       },
-      required: ["name", "password"],
+      required: ["name", "join_code"],
+    },
+  },
+  {
+    name: "auth_status",
+    description:
+      "Show the currently signed-in Supabase user (or 'not signed in'). " +
+      "Use this to check whether the user can perform cloud operations before suggesting team / cloud bundle actions.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "auth_send_code",
+    description:
+      "Send a one-time 6-digit sign-in code to the given email. " +
+      "Use this for cloud sign-in when the user doesn't already have a session. " +
+      "After they receive the code, call auth_verify_code with the email and the code. " +
+      "If the email isn't registered, an account is created automatically.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        email: { type: "string", description: "Email address that will receive the code" },
+      },
+      required: ["email"],
+    },
+  },
+  {
+    name: "auth_verify_code",
+    description:
+      "Verify the 6-digit code the user received in their email and complete sign-in. " +
+      "Run auth_send_code first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        email: { type: "string", description: "Same email passed to auth_send_code" },
+        code: { type: "string", description: "The 6-digit code from the email" },
+      },
+      required: ["email", "code"],
+    },
+  },
+  {
+    name: "auth_signout",
+    description:
+      "Sign the current user out of Supabase and clear the local session token. " +
+      "After this, cloud operations will fail until the user signs in again.",
+    inputSchema: {
+      type: "object",
+      properties: {},
     },
   },
   {
@@ -907,6 +963,10 @@ const CTX_LINK_AUTO_LOG: Record<string, (a: Record<string, any>) => string | nul
   session_push_to_bundle: (a) => a.bundle_id ? `Pushed entries to bundle ${a.bundle_id}` : null,
   team_create: (a) => `Created team "${a.name}"`,
   team_join: (a) => `Joined team "${a.name}"`,
+  auth_status: () => `Checked auth status`,
+  auth_send_code: (a) => `Sent sign-in code to ${a.email}`,
+  auth_verify_code: (a) => `Verified sign-in code for ${a.email}`,
+  auth_signout: () => `Signed out`,
   bundle_ask_question: (a) => `Asked question: "${(a.question ?? "").slice(0, 100)}"`,
   bundle_answer_question: () => `Answered a bundle question`,
   bundle_push_to_cloud: (a) => `Migrated bundle ${a.bundle_id} to cloud`,
@@ -1347,15 +1407,44 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
 
       case "team_create": {
-        const a = z.object({ name: z.string(), password: z.string() }).parse(args);
-        const r = await createTeam(a.name, a.password);
+        const a = z.object({ name: z.string(), join_code: z.string() }).parse(args);
+        const r = await createTeam(a.name, a.join_code);
         return ok(r);
       }
 
       case "team_join": {
-        const a = z.object({ name: z.string(), password: z.string() }).parse(args);
-        const r = await joinTeam(a.name, a.password);
+        const a = z.object({ name: z.string(), join_code: z.string() }).parse(args);
+        const r = await joinTeam(a.name, a.join_code);
         return ok(r);
+      }
+
+      case "auth_status": {
+        const user = await getCurrentUser();
+        if (!user) return ok({ signed_in: false });
+        return ok({ signed_in: true, user_id: user.id, email: user.email });
+      }
+
+      case "auth_send_code": {
+        const a = z.object({ email: z.string().email() }).parse(args);
+        await sendEmailOtp(a.email);
+        return ok({
+          sent: true,
+          email: a.email,
+          next: "Ask the user for the 6-digit code from their email and call auth_verify_code with it.",
+        });
+      }
+
+      case "auth_verify_code": {
+        const a = z.object({ email: z.string().email(), code: z.string() }).parse(args);
+        const r = await verifyEmailOtp(a.email, a.code.trim());
+        await refreshTeamsCache();
+        return ok({ signed_in: true, user_id: r.user.id, email: r.user.email });
+      }
+
+      case "auth_signout": {
+        await signOut();
+        await refreshTeamsCache();
+        return ok({ signed_out: true });
       }
 
       case "session_rename": {

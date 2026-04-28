@@ -1,15 +1,18 @@
-import { Plus, Users, EyeOff, Eye, LayoutGrid, MessageCircleQuestion, Radio } from "lucide-react";
+import { Plus, Users, EyeOff, Eye, LayoutGrid, MessageCircleQuestion, Radio, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useUIStore } from "@/stores/uiStore";
+import { useSignOut } from "@/hooks/useAuth";
 
 interface TopBarProps {
   machineId: string | undefined;
+  userEmail: string | null;
   isLoading: boolean;
   dataUpdatedAt: number;
   onTidyUp?: () => void;
 }
 
-export function TopBar({ machineId, isLoading, dataUpdatedAt, onTidyUp }: TopBarProps) {
+export function TopBar({ machineId, userEmail, isLoading, dataUpdatedAt, onTidyUp }: TopBarProps) {
+  const signOut = useSignOut();
   const openModal = useUIStore((s) => s.openModal);
   const openFeedPanel = useUIStore((s) => s.openFeedPanel);
   const hideEmptySessions = useUIStore((s) => s.hideEmptySessions);
@@ -97,6 +100,23 @@ export function TopBar({ machineId, isLoading, dataUpdatedAt, onTidyUp }: TopBar
           <span className="font-mono text-xs text-muted-foreground bg-card px-2 py-1 rounded">
             {machineId.slice(0, 8)}
           </span>
+        )}
+        {userEmail && (
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-muted-foreground" title={userEmail}>
+              {userEmail}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs text-muted-foreground hover:text-foreground"
+              onClick={() => signOut.mutate()}
+              disabled={signOut.isPending}
+              title="Sign out"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+            </Button>
+          </div>
         )}
       </div>
     </div>

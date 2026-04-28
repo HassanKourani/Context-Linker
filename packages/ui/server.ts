@@ -61,6 +61,13 @@ import {
   bundleRemoveEntryRef,
   readFeedEvents,
   addBundleNote,
+  getCurrentUser,
+  signInWithPassword,
+  signUpWithPassword,
+  sendEmailOtp,
+  verifyEmailOtp,
+  signOut,
+  refreshTeamsCache,
 } from "@ctx-link/core";
 
 // Broadcast Q&A events to active MCP sessions via their channel ports
@@ -236,6 +243,95 @@ const server = Bun.serve({
       }
     }
 
+    // ── GET /api/auth/status ──────────────────────────────────────────────────
+    if (url.pathname === "/api/auth/status" && req.method === "GET") {
+      try {
+        const user = await getCurrentUser();
+        return Response.json(
+          user ? { signed_in: true, ...user } : { signed_in: false },
+          { headers: corsHeaders }
+        );
+      } catch (err: any) {
+        return Response.json(
+          { error: err.message ?? String(err) },
+          { status: 500, headers: corsHeaders }
+        );
+      }
+    }
+
+    // ── POST /api/auth/signin ─────────────────────────────────────────────────
+    if (url.pathname === "/api/auth/signin" && req.method === "POST") {
+      try {
+        const { email, password } = await req.json();
+        const r = await signInWithPassword(email, password);
+        await refreshTeamsCache();
+        return Response.json(r, { headers: corsHeaders });
+      } catch (err: any) {
+        return Response.json(
+          { error: err.message ?? String(err) },
+          { status: 401, headers: corsHeaders }
+        );
+      }
+    }
+
+    // ── POST /api/auth/signup ─────────────────────────────────────────────────
+    if (url.pathname === "/api/auth/signup" && req.method === "POST") {
+      try {
+        const { email, password } = await req.json();
+        const r = await signUpWithPassword(email, password);
+        if (!r.requires_email_confirmation) await refreshTeamsCache();
+        return Response.json(r, { headers: corsHeaders });
+      } catch (err: any) {
+        return Response.json(
+          { error: err.message ?? String(err) },
+          { status: 400, headers: corsHeaders }
+        );
+      }
+    }
+
+    // ── POST /api/auth/send-code ──────────────────────────────────────────────
+    if (url.pathname === "/api/auth/send-code" && req.method === "POST") {
+      try {
+        const { email } = await req.json();
+        await sendEmailOtp(email);
+        return Response.json({ sent: true }, { headers: corsHeaders });
+      } catch (err: any) {
+        return Response.json(
+          { error: err.message ?? String(err) },
+          { status: 400, headers: corsHeaders }
+        );
+      }
+    }
+
+    // ── POST /api/auth/verify-code ────────────────────────────────────────────
+    if (url.pathname === "/api/auth/verify-code" && req.method === "POST") {
+      try {
+        const { email, code } = await req.json();
+        const r = await verifyEmailOtp(email, String(code).trim());
+        await refreshTeamsCache();
+        return Response.json(r, { headers: corsHeaders });
+      } catch (err: any) {
+        return Response.json(
+          { error: err.message ?? String(err) },
+          { status: 401, headers: corsHeaders }
+        );
+      }
+    }
+
+    // ── POST /api/auth/signout ────────────────────────────────────────────────
+    if (url.pathname === "/api/auth/signout" && req.method === "POST") {
+      try {
+        await signOut();
+        await refreshTeamsCache();
+        return Response.json({ signed_out: true }, { headers: corsHeaders });
+      } catch (err: any) {
+        return Response.json(
+          { error: err.message ?? String(err) },
+          { status: 500, headers: corsHeaders }
+        );
+      }
+    }
+
     // ── GET /api/teams ────────────────────────────────────────────────────────
     if (url.pathname === "/api/teams" && req.method === "GET") {
       try {
@@ -252,8 +348,8 @@ const server = Bun.serve({
     // ── POST /api/teams ───────────────────────────────────────────────────────
     if (url.pathname === "/api/teams" && req.method === "POST") {
       try {
-        const { name, password } = await req.json();
-        const result = await createTeam(name, password);
+        const { name, join_code } = await req.json();
+        const result = await createTeam(name, join_code);
         return Response.json(result, { headers: corsHeaders });
       } catch (err: any) {
         return Response.json(
@@ -266,8 +362,8 @@ const server = Bun.serve({
     // ── POST /api/teams/join ──────────────────────────────────────────────────
     if (url.pathname === "/api/teams/join" && req.method === "POST") {
       try {
-        const { name, password } = await req.json();
-        const result = await joinTeam(name, password);
+        const { name, join_code } = await req.json();
+        const result = await joinTeam(name, join_code);
         return Response.json(result, { headers: corsHeaders });
       } catch (err: any) {
         return Response.json(
