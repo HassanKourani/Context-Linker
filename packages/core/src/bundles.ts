@@ -154,6 +154,31 @@ export async function getBundleTeamId(bundleId: string): Promise<string | null> 
   return data.team_id ?? null;
 }
 
+/** Get the per-bundle hidden notes session id for a cloud bundle. */
+export async function getCloudBundleNotesSessionId(bundleId: string): Promise<string | null> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("bundles")
+    .select("notes_session_id")
+    .eq("id", bundleId)
+    .single();
+  if (error) return null;
+  return (data?.notes_session_id as string | null) ?? null;
+}
+
+/** Persist the per-bundle hidden notes session id on a cloud bundle. */
+export async function setCloudBundleNotesSessionId(
+  bundleId: string,
+  notesSessionId: string,
+): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("bundles")
+    .update({ notes_session_id: notesSessionId })
+    .eq("id", bundleId);
+  if (error) throw new Error(`setCloudBundleNotesSessionId failed: ${error.message}`);
+}
+
 export async function assertTokenValid(bundleId: string): Promise<void> {
   // For team-based bundles, check team membership instead of per-bundle token
   const { assertBundleTeamAccess } = await import("./teams.js");

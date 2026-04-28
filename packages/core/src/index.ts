@@ -11,4 +11,5 @@ export * from "./exclusions.js";
 export * from "./consolidate.js";
 export * from "./feed.js";
 export * from "./join-codes.js";
+export * from "./notes.js";
 export { getSupabase } from "./supabase.js";

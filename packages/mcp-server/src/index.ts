@@ -65,6 +65,7 @@ import {
   pushBundleToCloud,
   ensureCloudCopy,
   writeFeedEvent,
+  addBundleNote,
 } from "@ctx-link/core";
 import { z } from "zod";
 import { startChannelListener, broadcastToBundle, type ChannelMessage } from "./channel.js";
@@ -286,6 +287,25 @@ const tools = [
         },
       },
       required: ["name"],
+    },
+  },
+  {
+    name: "bundle_add_note",
+    description:
+      "Add a manual note to a bundle, tagged with a role so consumers read it with the right intent. " +
+      "Roles (priority order): ticket → constraint → design → decision → bug → qa → note. " +
+      "Use 'ticket' to anchor the agent in the goal, 'constraint' for hard rules, 'qa' for failed test cases.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        bundle_id: { type: "string" },
+        summary: { type: "string" },
+        role: {
+          type: "string",
+          enum: ["ticket", "constraint", "design", "decision", "bug", "qa", "note"],
+        },
+      },
+      required: ["bundle_id", "summary"],
     },
   },
   {
@@ -876,6 +896,7 @@ const CTX_LINK_AUTO_LOG: Record<string, (a: Record<string, any>) => string | nul
   bundle_join: (a) => `Joined bundle ${a.bundle_id}`,
   bundle_delete: (a) => `Deleted bundle ${a.bundle_id}`,
   bundle_remove_entry: (a) => `Removed entry ref from bundle ${a.bundle_id}`,
+  bundle_add_note: (a) => `Added ${a.role ?? "note"} to bundle ${a.bundle_id}`,
   context_push: (a) => a.summary ? null : `Pushed context to ${a.bundle_id ?? "connected bundles"}`,
   context_pull: (a) => `Pulled context from bundle ${a.bundle_id ?? "connected bundles"}`,
   context_rewind: (a) => `Rewound entries in bundle ${a.bundle_id}`,
@@ -960,6 +981,20 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const a = BundleStatusArgs.parse(args);
         const mode = isLocalBundle(a.bundle_id) ? "local" : "cloud";
         return ok(await bundleStatus(a.bundle_id, mode));
+      }
+
+      case "bundle_add_note": {
+        const a = z.object({
+          bundle_id: z.string(),
+          summary: z.string(),
+          role: z.enum(["ticket","constraint","design","decision","bug","qa","note"]).optional(),
+        }).parse(args);
+        const result = await addBundleNote({
+          bundle_id: a.bundle_id,
+          summary: a.summary,
+          role: a.role,
+        });
+        return ok(result);
       }
 
       case "context_push": {

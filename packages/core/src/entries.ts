@@ -1,5 +1,6 @@
 import { getSupabase } from "./supabase.js";
 import { assertTokenValid } from "./bundles.js";
+import { ROLES, rolePriority, type Role } from "./notes.js";
 
 export interface PullInput {
   bundle_id: string;
@@ -20,6 +21,7 @@ export interface EntryRow {
   files_touched: string[];
   decisions: Array<{ decision: string; rationale?: string; affects: string[] }>;
   bundle_refs?: string[];
+  role?: import("./notes.js").Role | null;
 }
 
 export async function pullEntries(input: PullInput): Promise<EntryRow[]> {
@@ -36,7 +38,7 @@ export async function pullEntries(input: PullInput): Promise<EntryRow[]> {
     .select(`
       entry_id,
       cloud_session_entries!inner (
-        id, created_at, event_type, trigger_ref, summary, files_touched, decisions, superseded_at,
+        id, created_at, event_type, trigger_ref, summary, files_touched, decisions, superseded_at, role,
         cloud_sessions!inner ( project_name )
       )
     `)
@@ -63,13 +65,20 @@ export async function pullEntries(input: PullInput): Promise<EntryRow[]> {
       summary: e.summary,
       files_touched: e.files_touched ?? [],
       decisions: e.decisions ?? [],
+      role: e.role ?? null,
     } as EntryRow;
   });
 
-  if (input.exclude_project) {
-    return rows.filter((r) => r.project_name !== input.exclude_project);
-  }
-  return rows;
+  const filtered = input.exclude_project
+    ? rows.filter((r) => r.project_name !== input.exclude_project)
+    : rows;
+
+  filtered.sort((a, b) => {
+    const dp = rolePriority(a.role) - rolePriority(b.role);
+    if (dp !== 0) return dp;
+    return b.created_at.localeCompare(a.created_at);
+  });
+  return filtered;
 }
 
 /**
@@ -210,31 +219,61 @@ export async function getUnpushedEntries(
   return allIds.filter((id: string) => !refIds.has(id));
 }
 
-// Human/LLM-readable rendering of entries for context injection.
+const ROLE_HEADINGS: Record<Role, string> = {
+  ticket:     "Ticket",
+  constraint: "Constraints",
+  design:     "Design spec",
+  decision:   "Decisions",
+  bug:        "Bugs",
+  qa:         "QA",
+  note:       "Notes",
+};
+
+function renderEntry(e: EntryRow): string {
+  const ts = new Date(e.created_at).toISOString();
+  const lines = [
+    `[${ts}] ${e.project_name || "—"} · ${e.event_type}${
+      e.trigger_ref ? ` (${e.trigger_ref})` : ""
+    }`,
+    e.summary,
+  ];
+  if (e.files_touched.length > 0) {
+    lines.push(`Files: ${e.files_touched.join(", ")}`);
+  }
+  if (e.decisions.length > 0) {
+    lines.push("Decisions:");
+    for (const d of e.decisions) {
+      lines.push(
+        `  - ${d.decision}${d.affects?.length ? ` [affects: ${d.affects.join(", ")}]` : ""}`
+      );
+    }
+  }
+  return lines.join("\n");
+}
+
+// Human/LLM-readable rendering of entries for context injection,
+// grouped by role priority so agents read tickets first, notes last.
 export function renderEntriesForClaude(entries: EntryRow[]): string {
   if (entries.length === 0) {
     return "No recent cross-project context.";
   }
-  const parts = entries.map((e) => {
-    const ts = new Date(e.created_at).toISOString();
-    const lines = [
-      `[${ts}] ${e.project_name} · ${e.event_type}${
-        e.trigger_ref ? ` (${e.trigger_ref})` : ""
-      }`,
-      e.summary,
-    ];
-    if (e.files_touched.length > 0) {
-      lines.push(`Files: ${e.files_touched.join(", ")}`);
-    }
-    if (e.decisions.length > 0) {
-      lines.push("Decisions:");
-      for (const d of e.decisions) {
-        lines.push(
-          `  - ${d.decision}${d.affects?.length ? ` [affects: ${d.affects.join(", ")}]` : ""}`
-        );
-      }
-    }
-    return lines.join("\n");
+
+  const groups = new Map<Role, EntryRow[]>();
+  for (const e of entries) {
+    const r: Role = (e.role ?? "note") as Role;
+    const arr = groups.get(r) ?? [];
+    arr.push(e);
+    groups.set(r, arr);
+  }
+
+  const orderedRoles = ROLES.filter((r) => groups.has(r));
+  const sections = orderedRoles.map((r) => {
+    const items = (groups.get(r) ?? [])
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .map(renderEntry)
+      .join("\n\n---\n\n");
+    return `## ${ROLE_HEADINGS[r]}\n\n${items}`;
   });
-  return parts.join("\n\n---\n\n");
+
+  return sections.join("\n\n");
 }

@@ -172,6 +172,7 @@ export interface ActiveSession {
   channel_port?: number | null;  // HTTP port for cross-session Q&A notifications
   claude_instance_id?: string | null;  // CLAUDE_CODE_SSE_PORT — stable per Claude Code instance
   claude_session_id?: string | null;  // Claude Code conversation UUID (for name sync)
+  kind?: "project" | "notes";  // synthetic per-bundle notes session when "notes"; default "project"
 }
 
 function activeSessionsDir(): string {
@@ -221,12 +222,14 @@ export function setActiveSessionId(sessionId: string, cwd: string = process.cwd(
   writeFileSync(join(cwd, ".ctx-link-active-session"), sessionId);
 }
 
-/** List all active sessions across all projects */
+/** List all active sessions across all projects (hides synthetic notes sessions) */
 export function listActiveSessions(): ActiveSession[] {
   const dir = activeSessionsDir();
   if (!existsSync(dir)) return [];
   const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
-  return files.map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")));
+  return files
+    .map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")) as ActiveSession)
+    .filter((s) => s.kind !== "notes");
 }
 
 /** Find an existing active session by Claude instance ID + project path */
@@ -414,6 +417,7 @@ export interface SessionEntry {
   pushed_at: string | null; // null = not yet pushed, ISO string = when consolidated
   superseded_at: string | null;  // soft-delete for rewind
   pending_enrichment?: boolean; // commit/PR stub awaiting agent-written handoff details
+  role?: import("./notes.js").Role;  // role tag for bundle notes
 }
 
 export function pushSessionEntry(sessionId: string, entry: Omit<SessionEntry, "id" | "created_at" | "pushed_at" | "superseded_at">): SessionEntry {
