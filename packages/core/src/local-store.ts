@@ -138,6 +138,18 @@ function readMeta(bundleId: string): LocalMeta {
   return JSON.parse(readFileSync(p, "utf8"));
 }
 
+export function getLocalNotesSessionId(bundleId: string): string | undefined {
+  if (!isLocalBundle(bundleId)) return undefined;
+  const meta = readMeta(bundleId);
+  return meta.notes_session_id;
+}
+
+export function setLocalNotesSessionId(bundleId: string, sessionId: string): void {
+  const meta = readMeta(bundleId);
+  meta.notes_session_id = sessionId;
+  writeFileSync(metaPath(bundleId), JSON.stringify(meta, null, 2));
+}
+
 /** Update a session entry's superseded_at field in the session-entries file */
 function setSessionEntrySuperseeded(sessionId: string, entryId: string, supersededAt: string | null): void {
   const entries = getSessionEntries(sessionId);

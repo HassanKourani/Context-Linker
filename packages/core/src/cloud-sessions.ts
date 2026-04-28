@@ -157,6 +157,34 @@ export async function renameCloudSession(cloudSessionId: string, name: string | 
 }
 
 /**
+ * Create a hidden per-bundle notes session in the cloud.
+ * Used by getOrCreateNotesSession on first note for a cloud bundle.
+ */
+export async function createNotesCloudSession(
+  teamId: string,
+  bundleId: string,
+): Promise<string> {
+  const config = loadGlobalConfig();
+  const sb = getSupabase();
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const { error } = await sb.from("cloud_sessions").insert({
+    id,
+    team_id: teamId,
+    project_name: "",
+    project_path: null,
+    machine_id: config.machine_id,
+    branch: null,
+    started_at: now,
+    last_active_at: now,
+    kind: "notes",
+    name: `notes:${bundleId.slice(0, 8)}`,
+  });
+  if (error) throw new Error(`createNotesCloudSession failed: ${error.message}`);
+  return id;
+}
+
+/**
  * List all cloud sessions for a team.
  */
 export async function listTeamSessions(teamId: string): Promise<CloudSession[]> {

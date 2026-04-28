@@ -1,5 +1,14 @@
-import { describe, test, expect } from "bun:test";
-import { ROLES, ROLE_PRIORITY, rolePriority, type Role } from "../notes.js";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { setupTestDir, cleanupTestDir } from "./helpers/mock-fs";
+import { localCreateBundle } from "../local-store.js";
+import {
+  ROLES,
+  ROLE_PRIORITY,
+  rolePriority,
+  getOrCreateNotesSession,
+  type Role,
+} from "../notes.js";
+import { loadActiveSession, deleteActiveSession } from "../config.js";
 
 describe("Role enum + priority", () => {
   test("ROLES contains the seven defined roles", () => {
@@ -19,5 +28,37 @@ describe("Role enum + priority", () => {
     expect(rolePriority(undefined)).toBe(ROLE_PRIORITY.note);
     expect(rolePriority(null)).toBe(ROLE_PRIORITY.note);
     expect(rolePriority("ticket" as Role)).toBe(ROLE_PRIORITY.ticket);
+  });
+});
+
+describe("getOrCreateNotesSession (local)", () => {
+  let testDir: string;
+  beforeEach(() => { testDir = setupTestDir(); });
+  afterEach(() => { cleanupTestDir(testDir); });
+
+  test("creates a hidden notes session and persists notes_session_id on the bundle", async () => {
+    const bundle = localCreateBundle("test-bundle");
+    const sessionId = await getOrCreateNotesSession(bundle.bundle_id);
+
+    expect(sessionId).toBeTruthy();
+    const session = loadActiveSession(sessionId);
+    expect(session?.kind).toBe("notes");
+  });
+
+  test("returns the same session id on subsequent calls", async () => {
+    const bundle = localCreateBundle("test-bundle");
+    const a = await getOrCreateNotesSession(bundle.bundle_id);
+    const b = await getOrCreateNotesSession(bundle.bundle_id);
+    expect(a).toBe(b);
+  });
+
+  test("recreates if the stored notes_session_id no longer exists on disk", async () => {
+    const bundle = localCreateBundle("test-bundle");
+    const a = await getOrCreateNotesSession(bundle.bundle_id);
+
+    deleteActiveSession(a);
+
+    const b = await getOrCreateNotesSession(bundle.bundle_id);
+    expect(b).not.toBe(a);
   });
 });
