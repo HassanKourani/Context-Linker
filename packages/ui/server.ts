@@ -535,19 +535,18 @@ const server = Bun.serve({
     }
 
     // ── POST /api/bundles/:id/notes ─────────────────────────────────────────
-    // Create a manual note entry hosted in a project session and ref it from the bundle.
+    // Create a role-tagged note hosted in the bundle's hidden notes session.
     {
       const match = url.pathname.match(/^\/api\/bundles\/([^/]+)\/notes$/);
       if (match && req.method === "POST") {
         try {
           const bundleId = match[1];
-          const { project_name, summary, event_type, trigger_ref, files_touched, decisions } =
+          const { summary, role, trigger_ref, files_touched, decisions } =
             await req.json();
           const result = await addBundleNote({
             bundle_id: bundleId,
-            project_name,
             summary,
-            event_type,
+            role,
             trigger_ref,
             files_touched,
             decisions,

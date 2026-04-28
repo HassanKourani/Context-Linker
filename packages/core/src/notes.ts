@@ -30,7 +30,7 @@ export function isRole(value: unknown): value is Role {
 }
 
 import { randomUUID } from "node:crypto";
-import { saveActiveSession, loadActiveSession, type ActiveSession } from "./config.js";
+import { saveActiveSession, loadActiveSession, pushSessionEntry, type ActiveSession } from "./config.js";
 import {
   isLocalBundle,
   getLocalNotesSessionId,
@@ -42,6 +42,8 @@ import {
   getBundleTeamId,
 } from "./bundles.js";
 import { createNotesCloudSession, getCloudSession } from "./cloud-sessions.js";
+import { pushSessionToBundle } from "./session-actions.js";
+import { getSupabase } from "./supabase.js";
 
 /**
  * Lazily get-or-create the hidden per-bundle notes session.
@@ -83,4 +85,79 @@ export async function getOrCreateNotesSession(bundleId: string): Promise<string>
   const newId = await createNotesCloudSession(teamId, bundleId);
   await setCloudBundleNotesSessionId(bundleId, newId);
   return newId;
+}
+
+export interface AddBundleNoteInput {
+  bundle_id: string;
+  summary: string;
+  role?: Role;
+  trigger_ref?: string | null;
+  files_touched?: string[];
+  decisions?: Array<{ decision: string; rationale?: string; affects: string[] }>;
+}
+
+export interface AddBundleNoteResult {
+  bundle_id: string;
+  notes_session_id: string;
+  entry_id: string;
+  role: Role;
+}
+
+/**
+ * Add a role-tagged manual note to a bundle.
+ * The entry is hosted in the bundle's hidden notes session (lazily created)
+ * and referenced from the bundle. Local bundles store the entry on disk;
+ * cloud bundles insert into cloud_session_entries directly.
+ */
+export async function addBundleNote(input: AddBundleNoteInput): Promise<AddBundleNoteResult> {
+  const summary = input.summary?.trim();
+  if (!summary) throw new Error("summary is required.");
+
+  const role: Role = input.role ?? "note";
+  if (!isRole(role)) throw new Error(`Unknown role: ${input.role}`);
+
+  const bundleId = input.bundle_id;
+  const notesSessionId = await getOrCreateNotesSession(bundleId);
+  const isCloudHost = !isLocalBundle(bundleId);
+
+  const triggerRef = input.trigger_ref ?? null;
+  const filesTouched = input.files_touched ?? [];
+  const decisions = input.decisions ?? [];
+
+  let entryId: string;
+  if (isCloudHost) {
+    const sb = getSupabase();
+    entryId = randomUUID();
+    const { error } = await sb.from("cloud_session_entries").insert({
+      id: entryId,
+      session_id: notesSessionId,
+      event_type: "manual",
+      trigger_ref: triggerRef,
+      summary,
+      files_touched: filesTouched,
+      decisions,
+      role,
+    });
+    if (error) throw new Error(`Failed to create note entry: ${error.message}`);
+  } else {
+    const entry = pushSessionEntry(notesSessionId, {
+      project_name: "",
+      event_type: "manual",
+      trigger_ref: triggerRef,
+      summary,
+      files_touched: filesTouched,
+      decisions,
+      role,
+    });
+    entryId = entry.id;
+  }
+
+  await pushSessionToBundle(notesSessionId, bundleId, [entryId]);
+
+  return {
+    bundle_id: bundleId,
+    notes_session_id: notesSessionId,
+    entry_id: entryId,
+    role,
+  };
 }

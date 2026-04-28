@@ -193,6 +193,7 @@ function resolveEntryRefs(refs: LocalEntryRef[]): EntryRow[] {
           summary: e.summary,
           files_touched: e.files_touched ?? [],
           decisions: e.decisions ?? [],
+          role: e.role ?? null,
         });
       }
     }

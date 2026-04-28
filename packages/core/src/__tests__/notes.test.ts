@@ -6,9 +6,11 @@ import {
   ROLE_PRIORITY,
   rolePriority,
   getOrCreateNotesSession,
+  addBundleNote,
   type Role,
 } from "../notes.js";
 import { loadActiveSession, deleteActiveSession } from "../config.js";
+import { localPullEntries } from "../local-store.js";
 
 describe("Role enum + priority", () => {
   test("ROLES contains the seven defined roles", () => {
@@ -60,5 +62,56 @@ describe("getOrCreateNotesSession (local)", () => {
 
     const b = await getOrCreateNotesSession(bundle.bundle_id);
     expect(b).not.toBe(a);
+  });
+});
+
+describe("addBundleNote (local)", () => {
+  let testDir: string;
+  beforeEach(() => { testDir = setupTestDir(); });
+  afterEach(() => { cleanupTestDir(testDir); });
+
+  test("creates the entry in the bundle's notes session and refs it", async () => {
+    const bundle = localCreateBundle("test-bundle");
+    const result = await addBundleNote({
+      bundle_id: bundle.bundle_id,
+      summary: "the goal: ship the dashboard",
+      role: "ticket",
+    });
+
+    expect(result.entry_id).toBeTruthy();
+    expect(result.role).toBe("ticket");
+    expect(result.notes_session_id).toBeTruthy();
+
+    const entries = localPullEntries({ bundle_id: bundle.bundle_id });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].summary).toBe("the goal: ship the dashboard");
+    expect(entries[0].role).toBe("ticket");
+  });
+
+  test("defaults role to 'note' when omitted", async () => {
+    const bundle = localCreateBundle("test-bundle");
+    const result = await addBundleNote({
+      bundle_id: bundle.bundle_id,
+      summary: "general background",
+    });
+    expect(result.role).toBe("note");
+  });
+
+  test("rejects empty summary", async () => {
+    const bundle = localCreateBundle("test-bundle");
+    await expect(addBundleNote({
+      bundle_id: bundle.bundle_id,
+      summary: "",
+    })).rejects.toThrow(/summary/);
+  });
+
+  test("rejects unknown role", async () => {
+    const bundle = localCreateBundle("test-bundle");
+    await expect(addBundleNote({
+      bundle_id: bundle.bundle_id,
+      summary: "ok",
+      // @ts-expect-error — testing runtime guard
+      role: "bogus",
+    })).rejects.toThrow(/role/);
   });
 });
