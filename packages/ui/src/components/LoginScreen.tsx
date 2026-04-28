@@ -1,11 +1,23 @@
 import { useState } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useSignInPassword, useSignUp } from "@/hooks/useAuth";
+import { useUIStore } from "@/stores/uiStore";
 
 type Mode = "signin" | "signup";
 
 export function LoginScreen() {
+  const activeModal = useUIStore((s) => s.activeModal);
+  const closeModal = useUIStore((s) => s.closeModal);
+  const open = activeModal === "signin";
+
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -15,23 +27,35 @@ export function LoginScreen() {
 
   const submitPassword = (e: React.FormEvent) => {
     e.preventDefault();
-    signIn.mutate({ email, password });
+    signIn.mutate({ email, password }, { onSuccess: () => closeModal() });
   };
 
   const submitSignup = (e: React.FormEvent) => {
     e.preventDefault();
-    signUp.mutate({ email, password });
+    signUp.mutate(
+      { email, password },
+      {
+        onSuccess: (data) => {
+          // If signup completes immediately (no email confirmation), close.
+          // Otherwise leave the dialog open with the toast message.
+          if (!data.requires_email_confirmation) closeModal();
+        },
+      }
+    );
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background">
-      <div className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-lg">
-        <h1 className="mb-1 text-lg font-bold">ctx-link</h1>
-        <p className="mb-6 text-xs text-muted-foreground">
-          Sign in to access cloud bundles and teams.
-        </p>
+    <Dialog open={open} onOpenChange={(o) => !o && closeModal()}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Sign in</DialogTitle>
+          <DialogDescription>
+            Required for cloud bundles, teams, and cross-machine sharing. Local
+            bundles work without signing in.
+          </DialogDescription>
+        </DialogHeader>
 
-        <div className="mb-4 flex gap-1 text-xs">
+        <div className="mb-2 flex gap-1 text-xs">
           <Button
             size="sm"
             variant={mode === "signin" ? "default" : "ghost"}
@@ -65,7 +89,11 @@ export function LoginScreen() {
               onChange={(e) => setPassword(e.target.value)}
               required
             />
-            <Button type="submit" className="w-full" disabled={signIn.isPending}>
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={signIn.isPending}
+            >
               {signIn.isPending ? "Signing in..." : "Sign in"}
             </Button>
           </form>
@@ -89,12 +117,16 @@ export function LoginScreen() {
               onChange={(e) => setPassword(e.target.value)}
               required
             />
-            <Button type="submit" className="w-full" disabled={signUp.isPending}>
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={signUp.isPending}
+            >
               {signUp.isPending ? "Creating..." : "Create account"}
             </Button>
           </form>
         )}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -11,17 +11,21 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useTeams } from "@/hooks/useTeams";
 import { useCreateBundle } from "@/hooks/mutations/useCreateBundle";
+import { useAuthStatus } from "@/hooks/useAuth";
 import { useUIStore } from "@/stores/uiStore";
 
 export function CreateBundleDialog() {
   const activeModal = useUIStore((s) => s.activeModal);
   const closeModal = useUIStore((s) => s.closeModal);
+  const openModal = useUIStore((s) => s.openModal);
   const open = activeModal === "create-bundle";
 
   const [name, setName] = useState("");
   const [mode, setMode] = useState<"local" | "cloud">("local");
   const [teamId, setTeamId] = useState("");
   const { data: teams } = useTeams();
+  const { data: auth } = useAuthStatus();
+  const isSignedIn = auth?.signed_in === true;
   const mutation = useCreateBundle();
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -79,7 +83,24 @@ export function CreateBundleDialog() {
               </Button>
             </div>
           </div>
-          {mode === "cloud" && (
+          {mode === "cloud" && !isSignedIn && (
+            <div className="rounded-md border border-border bg-card p-3 text-xs text-muted-foreground">
+              Cloud bundles require sign-in.
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="ml-2 text-xs"
+                onClick={() => {
+                  closeModal();
+                  openModal("signin");
+                }}
+              >
+                Sign in
+              </Button>
+            </div>
+          )}
+          {mode === "cloud" && isSignedIn && (
             <div className="space-y-2">
               <label className="text-sm font-medium text-foreground">Team</label>
               <select
@@ -98,7 +119,12 @@ export function CreateBundleDialog() {
             </div>
           )}
           <DialogFooter>
-            <Button type="submit" disabled={mutation.isPending || !name}>
+            <Button
+              type="submit"
+              disabled={
+                mutation.isPending || !name || (mode === "cloud" && !isSignedIn)
+              }
+            >
               {mutation.isPending ? "Creating..." : "Create"}
             </Button>
           </DialogFooter>

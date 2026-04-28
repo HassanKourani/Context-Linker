@@ -17,6 +17,7 @@ type ModalType =
   | "rewind"
   | "edge-action"
   | "push-bundle-to-cloud"
+  | "signin"
   | null;
 
 type PanelView =

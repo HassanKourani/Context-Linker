@@ -52,9 +52,9 @@ const edgeTypes: EdgeTypes = {
 };
 
 export function App() {
-  const { data: auth, isLoading: authLoading } = useAuthStatus();
+  const { data: auth } = useAuthStatus();
   const isSignedIn = auth?.signed_in === true;
-  const { data, isLoading, dataUpdatedAt } = useGraphData(isSignedIn);
+  const { data, isLoading, dataUpdatedAt } = useGraphData();
   const hoveredEdgeId = useUIStore((s) => s.hoveredEdgeId);
   const hoveredSessionId = useUIStore((s) => s.hoveredSessionId);
   const hoveredBundleId = useUIStore((s) => s.hoveredBundleId);
@@ -220,20 +220,11 @@ export function App() {
     unhoverEdge();
   }, []);
 
-  // Auth gate. While the initial /api/auth/status is in flight, render nothing
-  // to avoid flashing the login screen for already-signed-in users.
-  if (authLoading) {
-    return <div className="h-screen w-screen bg-[#11111b]" />;
-  }
-  if (!isSignedIn) {
-    return <LoginScreen />;
-  }
-
   return (
     <div className="h-screen w-screen bg-[#11111b] text-[#cdd6f4] flex flex-col">
       <TopBar
         machineId={data?.machine_id}
-        userEmail={auth?.signed_in ? auth.email : null}
+        userEmail={isSignedIn && auth?.signed_in ? auth.email : null}
         isLoading={isLoading}
         dataUpdatedAt={dataUpdatedAt}
         onTidyUp={tidyUp}
@@ -284,6 +275,7 @@ export function App() {
       <ConnectSessionDialog />
       <EdgeActionDialog />
       <PushBundleToCloudDialog />
+      <LoginScreen />
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { Plus, Users, EyeOff, Eye, LayoutGrid, MessageCircleQuestion, Radio, LogOut } from "lucide-react";
+import { Plus, Users, EyeOff, Eye, LayoutGrid, MessageCircleQuestion, Radio, LogOut, LogIn } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useUIStore } from "@/stores/uiStore";
 import { useSignOut } from "@/hooks/useAuth";
@@ -43,7 +43,8 @@ export function TopBar({ machineId, userEmail, isLoading, dataUpdatedAt, onTidyU
             variant="ghost"
             size="sm"
             className="text-xs text-muted-foreground hover:text-foreground"
-            onClick={() => openModal("team-management")}
+            onClick={() => openModal(userEmail ? "team-management" : "signin")}
+            title={userEmail ? "Manage teams" : "Sign in to manage teams"}
           >
             <Users className="w-3.5 h-3.5 mr-1" />
             Teams
@@ -101,7 +102,7 @@ export function TopBar({ machineId, userEmail, isLoading, dataUpdatedAt, onTidyU
             {machineId.slice(0, 8)}
           </span>
         )}
-        {userEmail && (
+        {userEmail ? (
           <div className="flex items-center gap-1">
             <span className="text-xs text-muted-foreground" title={userEmail}>
               {userEmail}
@@ -117,6 +118,17 @@ export function TopBar({ machineId, userEmail, isLoading, dataUpdatedAt, onTidyU
               <LogOut className="w-3.5 h-3.5" />
             </Button>
           </div>
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-xs text-muted-foreground hover:text-foreground"
+            onClick={() => openModal("signin")}
+            title="Sign in to access teams and cloud bundles"
+          >
+            <LogIn className="w-3.5 h-3.5 mr-1" />
+            Sign in
+          </Button>
         )}
       </div>
     </div>
