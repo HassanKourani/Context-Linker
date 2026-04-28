@@ -60,6 +60,7 @@ import {
   bundleListRewinds,
   bundleRemoveEntryRef,
   readFeedEvents,
+  addBundleNote,
 } from "@ctx-link/core";
 
 // Broadcast Q&A events to active MCP sessions via their channel ports
@@ -528,6 +529,34 @@ const server = Bun.serve({
           return Response.json(
             { error: err.message ?? String(err) },
             { status: 500, headers: corsHeaders }
+          );
+        }
+      }
+    }
+
+    // ── POST /api/bundles/:id/notes ─────────────────────────────────────────
+    // Create a manual note entry hosted in a project session and ref it from the bundle.
+    {
+      const match = url.pathname.match(/^\/api\/bundles\/([^/]+)\/notes$/);
+      if (match && req.method === "POST") {
+        try {
+          const bundleId = match[1];
+          const { project_name, summary, event_type, trigger_ref, files_touched, decisions } =
+            await req.json();
+          const result = await addBundleNote({
+            bundle_id: bundleId,
+            project_name,
+            summary,
+            event_type,
+            trigger_ref,
+            files_touched,
+            decisions,
+          });
+          return Response.json(result, { headers: corsHeaders });
+        } catch (err: any) {
+          return Response.json(
+            { error: err.message ?? String(err) },
+            { status: 400, headers: corsHeaders },
           );
         }
       }

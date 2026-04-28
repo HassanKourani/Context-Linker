@@ -16,7 +16,9 @@ import {
   getCloudSessionBundleConnections,
   resolveClaudeSessionId,
   getActiveSessionId,
+  pushSessionEntry,
 } from "./config.js";
+import { getSupabase } from "./supabase.js";
 import {
   addEntriesToBundle,
   removeEntryFromBundle,
@@ -294,6 +296,113 @@ export async function pushSessionToBundle(
     }
     return { pushed: ids.length, skipped: 0, total: ids.length };
   }
+}
+
+// ─── Add a manual note to a bundle ──────────────────────────────────────────
+
+export interface AddBundleNoteInput {
+  bundle_id: string;
+  project_name: string;
+  summary: string;
+  event_type?: string;
+  trigger_ref?: string | null;
+  files_touched?: string[];
+  decisions?: Array<{ decision: string; rationale?: string; affects: string[] }>;
+}
+
+export interface AddBundleNoteResult {
+  bundle_id: string;
+  session_id: string;
+  entry_id: string;
+}
+
+/**
+ * Add a manual note entry to a bundle from the UI/CLI.
+ * Entries live in sessions, so we resolve a session for the given project,
+ * create the entry there, and reference it from the bundle.
+ *
+ * Resolution order for the host session:
+ *  1. Active local session for `project_name` already connected to the bundle.
+ *  2. Any active local session for `project_name`.
+ *  3. (cloud bundle only) A cloud session for `project_name` in the bundle's team.
+ */
+export async function addBundleNote(
+  input: AddBundleNoteInput,
+): Promise<AddBundleNoteResult> {
+  const projectName = input.project_name?.trim();
+  const summary = input.summary?.trim();
+  if (!projectName) throw new Error("project_name is required.");
+  if (!summary) throw new Error("summary is required.");
+
+  const bundleId = input.bundle_id;
+  const mode = isLocalBundle(bundleId) ? "local" : "cloud";
+  const eventType = input.event_type ?? "manual";
+  const triggerRef = input.trigger_ref ?? null;
+  const filesTouched = input.files_touched ?? [];
+  const decisions = input.decisions ?? [];
+
+  const activeSessions = listActiveSessions();
+  const connected = activeSessions.find(
+    (s) =>
+      s.project_name === projectName &&
+      s.bundles.some((b) => b.bundle_id === bundleId),
+  );
+  let hostSessionId: string | null = connected?.session_id ?? null;
+  let useCloudHost = false;
+
+  if (!hostSessionId) {
+    const anyLocal = activeSessions.find((s) => s.project_name === projectName);
+    if (anyLocal) hostSessionId = anyLocal.session_id;
+  }
+
+  if (!hostSessionId && mode === "cloud") {
+    const teamId = await getBundleTeamId(bundleId);
+    if (teamId) {
+      const cloudSessions = await listTeamSessions(teamId);
+      const cs = cloudSessions.find((s) => s.project_name === projectName);
+      if (cs) {
+        hostSessionId = cs.id;
+        useCloudHost = true;
+      }
+    }
+  }
+
+  if (!hostSessionId) {
+    throw new Error(
+      `No session found for project "${projectName}". Start a session in that project first.`,
+    );
+  }
+
+  let entryId: string;
+  if (useCloudHost) {
+    const sb = getSupabase();
+    const newId = crypto.randomUUID();
+    const { error } = await sb.from("cloud_session_entries").insert({
+      id: newId,
+      session_id: hostSessionId,
+      event_type: eventType,
+      trigger_ref: triggerRef,
+      summary,
+      files_touched: filesTouched,
+      decisions,
+    });
+    if (error) throw new Error(`Failed to create note entry: ${error.message}`);
+    entryId = newId;
+  } else {
+    const entry = pushSessionEntry(hostSessionId, {
+      project_name: projectName,
+      event_type: eventType,
+      trigger_ref: triggerRef,
+      summary,
+      files_touched: filesTouched,
+      decisions,
+    });
+    entryId = entry.id;
+  }
+
+  await pushSessionToBundle(hostSessionId, bundleId, [entryId]);
+
+  return { bundle_id: bundleId, session_id: hostSessionId, entry_id: entryId };
 }
 
 // ─── Migrate Local Bundle to Cloud ──────────────────────────────────────────

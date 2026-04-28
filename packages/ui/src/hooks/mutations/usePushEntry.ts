@@ -2,32 +2,37 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { EntryRow } from "@/types";
 
-/**
- * Push a manual entry to a session (and optionally to a bundle via push-to-bundle).
- * NOTE: Direct push-to-bundle was removed when pushEntry was replaced by the
- * reference model (addEntriesToBundle). This hook is kept for potential future use
- * with session entry creation.
- */
+type AddNoteVars = {
+  bundleId: string;
+  project_name: string;
+  event_type: string;
+  summary: string;
+};
+
+type AddNoteResult = {
+  bundle_id: string;
+  session_id: string;
+  entry_id: string;
+};
+
 export function usePushEntry() {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({
-      bundleId,
-      project_name,
-      event_type,
-      summary,
-    }: {
-      bundleId: string;
-      project_name: string;
-      event_type: string;
-      summary: string;
-    }) => {
-      // POST to session entries is the new path; direct bundle push is removed
-      throw new Error("Direct push to bundle is no longer supported. Use push-to-bundle from a session.");
+  return useMutation<AddNoteResult, Error, AddNoteVars, { prev?: EntryRow[]; key: ["entries", string] }>({
+    mutationFn: async ({ bundleId, project_name, event_type, summary }) => {
+      const res = await fetch(`/api/bundles/${bundleId}/notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_name, event_type, summary }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error((data as { error?: string }).error ?? `API error: ${res.status}`);
+      }
+      return res.json();
     },
 
     onMutate: async ({ bundleId, project_name, event_type, summary }) => {
-      const key = ["entries", bundleId];
+      const key = ["entries", bundleId] as ["entries", string];
       await qc.cancelQueries({ queryKey: key });
       const prev = qc.getQueryData<EntryRow[]>(key);
 
@@ -49,13 +54,13 @@ export function usePushEntry() {
       return { prev, key };
     },
 
-    onError: (_err, _params, ctx) => {
+    onError: (err, _params, ctx) => {
       if (ctx?.prev) qc.setQueryData(ctx.key, ctx.prev);
-      toast.error(_err.message);
+      toast.error(err.message);
     },
 
     onSuccess: () => {
-      toast.success("Entry pushed");
+      toast.success("Note added");
     },
 
     onSettled: () => {
