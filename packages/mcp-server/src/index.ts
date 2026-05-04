@@ -95,8 +95,8 @@ let lastNameSyncAt = 0;
 // work has happened without one. Reset whenever session_log fires.
 let lastSessionLogAt = Date.now();
 let toolCallsSinceLog = 0;
-const STALE_LOG_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
-const STALE_LOG_THRESHOLD_CALLS = 6;            // or 6 MCP calls, whichever first
+const STALE_LOG_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+const STALE_LOG_THRESHOLD_CALLS = 3;           // or 3 MCP calls, whichever first
 
 const debugLog = (msg: string) => {
   if (process.env.CTX_LINK_DEBUG) process.stderr.write(`[ctx-link] ${msg}\n`);
@@ -247,29 +247,22 @@ const server = new Server(
       "- bundle_create: Create a new bundle.\n" +
       "- bundle_list: List all bundles.\n" +
       "Proactive behavior: call context_pull at session start if bundles are connected.\n\n" +
-      "**IMPORTANT: Call session_log after every meaningful piece of work.** Entries are read by other Claude sessions — both in OTHER repos and in the SAME repo (different sessions). " +
-      "Write entries that give the reader what they need without reading your code.\n\n" +
-      "**For cross-repo consumers** (e.g., frontend reading backend entries): what do they need to integrate?\n" +
-      "- Endpoints: method, path, request body shape, response shape, status codes\n" +
-      "- Schema changes: table/column names, types, constraints, indexes\n" +
-      "- Auth changes: what's required, token format, error responses\n" +
-      "- Config/env: new env vars, defaults, what needs to be set where\n" +
-      "- Breaking changes: what stopped working, what the migration path is\n\n" +
-      "**For same-repo sessions** (e.g., next session continuing your work): what do they need to understand?\n" +
-      "- Decisions: what you chose, what alternatives you considered, why\n" +
-      "- Architecture: how components connect, what depends on what\n" +
-      "- Side effects: what else this change touches, what might break\n" +
-      "- WIP state: what's done, what's left, known issues\n" +
-      "- Bug fixes: what the bug was, root cause, what the fix does, how to verify\n\n" +
-      "Examples of GOOD entries:\n" +
-      "- 'Added POST /api/users — body: { email: string, name: string, role?: \"admin\" | \"user\" }, returns 201 { id, email, name, role, created_at }. Validates email format, returns 400 { error: \"Email already exists\" } on duplicate.'\n" +
-      "- 'Refactored auth to use middleware pattern. All /api/* routes now check Bearer token (JWT with { user_id, role }). Added to: routes/api.ts, middleware/auth.ts. Tests in auth.test.ts. Decision: middleware over per-route checks because 12 routes share the same logic.'\n" +
-      "- 'Fixed race condition in session sync — two concurrent pushes could duplicate entries. Root cause: no upsert, just insert. Fix: switched to upsert on (bundle_id, entry_id). Affects: entries.ts:addEntriesToBundle.'\n\n" +
-      "Examples of BAD entries (no value):\n" +
-      "- 'Edited routes.ts' — what changed?\n" +
-      "- 'Fixed a bug' — what bug? what was the root cause?\n" +
-      "- 'Created pull request' — what does the PR accomplish?\n\n" +
-      "**One entry per logical change.** Ask yourself: if another session reads only this entry, can they understand what happened and act on it?",
+      "**Call session_log after each logical unit of work** (a feature, fix, refactor, decision). One entry per unit. Entries are read by other sessions in this repo or other repos.\n\n" +
+      "**Write the minimum viable handoff. Terse by default.** Aim for a few lines, not paragraphs. Just enough for the next agent to integrate. If a category below doesn't apply to your change, omit it — don't pad.\n\n" +
+      "Include only what applies:\n" +
+      "- Endpoint: method + path + body shape + response shape + error responses (status + meaning)\n" +
+      "- Schema: table/column + type + constraint\n" +
+      "- Breaking change: what broke + migration path\n" +
+      "- Decision: only if there was a real alternative + non-obvious tradeoff\n" +
+      "- Bug fix: root cause + fix in one line\n\n" +
+      "Do NOT include: business context, FE/UX copy, layout details, OUT OF SCOPE sections, file paths for cross-reference, prose paragraphs explaining preconditions, restated commit messages, what you did vs. what now exists.\n\n" +
+      "Good (terse, sufficient):\n" +
+      "- 'POST /api/users — body { email, name, role?: \"admin\"|\"user\" } → 201 { id, email, name, role, created_at }. 400 { error: \"Email already exists\" } on duplicate.'\n" +
+      "- 'GET /return_order_label/:id → 200 application/pdf. 400 \"order is not in return_to_origin state\" / \"return labels are not supported for external-carrier orders\". Single id only.'\n\n" +
+      "Bad:\n" +
+      "- 'Edited routes.ts' — useless, no signal\n" +
+      "- 'Fixed a bug' — what bug?\n" +
+      "- Multi-paragraph essay with PRECONDITIONS, BUSINESS CONTEXT, OUT OF SCOPE, FILES sections — drop all of it",
   }
 );
 
@@ -502,26 +495,23 @@ const tools = [
   {
     name: "session_log",
     description:
-      "Log a HANDOFF entry to the current session — written for another agent who will integrate against your work without reading the code.\n\n" +
-      "WHEN TO CALL: at intent boundaries — after `git commit`, after `gh pr create`, after finishing a logical unit of work. " +
-      "ONE entry per logical unit. Consolidate all related edits into a single call. Do NOT log per file edit.\n\n" +
-      "WHAT TO INCLUDE (when relevant):\n" +
-      "  • Function / endpoint / hook names with signatures (e.g. `getUser(id: string): Promise<User>`)\n" +
-      "  • Request and response payload shapes as inline objects (e.g. `{ id: string, status: 'open'|'closed' }`)\n" +
-      "  • Error format: status codes, error keys, throw types\n" +
-      "  • Where the new code is consumed from / what it depends on\n" +
-      "  • Configuration, env vars, feature flags introduced (with default values)\n" +
-      "  • Decisions with one-line rationale\n\n" +
-      "WHAT TO AVOID: diffs, before/after snippets, prose recaps of WHAT you changed, restated commit messages, code blocks longer than a signature or shape. " +
-      "Describe what NOW EXISTS and HOW TO USE IT, not what you did.\n\n" +
-      "ACCEPTANCE TEST: could another agent integrate against this entry without reading the code? If no, it's too thin.\n\n" +
-      "PENDING STUBS: if a commit/PR happened, a stub entry exists with `pending_enrichment: true`. Calling session_log will MERGE into that stub (one final entry per commit, not two).",
+      "Log a TERSE handoff entry to the current session — for another agent integrating against your work.\n\n" +
+      "WHEN: after each logical unit of work (a commit, a PR, a feature, a fix). ONE entry per unit. Never per file edit.\n\n" +
+      "STYLE: minimum viable handoff. A few lines, not paragraphs. Drop categories that don't apply — don't pad.\n\n" +
+      "INCLUDE ONLY WHAT APPLIES:\n" +
+      "  • Endpoint: method + path + body shape + response shape + error responses (status + meaning)\n" +
+      "  • Schema/migration: table/column + type + constraint\n" +
+      "  • Breaking change: what broke + migration path\n" +
+      "  • Decision: only if there was a real alternative with a non-obvious tradeoff\n" +
+      "  • Bug fix: root cause + fix in one line\n\n" +
+      "DO NOT INCLUDE: business context, FE/UX copy, layout details, OUT OF SCOPE sections, file paths for cross-reference, prose paragraphs of preconditions, restated commit messages, before/after diffs, what you did vs. what now exists.\n\n" +
+      "PENDING STUBS: if a commit/PR happened, a stub with `pending_enrichment: true` exists. session_log merges into it — still keep the entry terse.",
     inputSchema: {
       type: "object",
       properties: {
         summary: {
           type: "string",
-          description: "Handoff details — interface, payload shapes, errors, dependencies. Multi-paragraph is fine when warranted; aim for 'no-questions-asked' completeness without dumping diffs.",
+          description: "Terse handoff — interface, payload shapes, errors only. A few lines, not paragraphs. Omit categories that don't apply. No business context, OUT OF SCOPE sections, or file paths for cross-reference.",
         },
         files_touched: {
           type: "array",
@@ -1657,9 +1647,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const which = stub.event_type === "pr_open" ? "PR" : "commit";
         const ref = stub.trigger_ref ? ` (${stub.trigger_ref.slice(0, 7)})` : "";
         reminder =
-          `[ctx-link] Pending handoff: a ${which}${ref} was logged as a stub. ` +
-          `Call \`session_log\` now with handoff details — function/endpoint signatures, payload shapes, error format, dependencies. ` +
-          `Your call will MERGE into the stub (one clean entry per ${which}). Avoid diffs; describe what now exists and how to use it.`;
+          `[ctx-link] Pending handoff: ${which}${ref} stub waiting. ` +
+          `Call \`session_log\` now — TERSE handoff: interface/shape/errors only. A few lines. ` +
+          `No business context, no out-of-scope, no file paths. Your call merges into the stub.`;
       } else if (name !== "session_log") {
         const elapsedMs = Date.now() - lastSessionLogAt;
         const stale =
@@ -1668,10 +1658,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         if (stale) {
           const minutes = Math.round(elapsedMs / 60000);
           reminder =
-            `[ctx-link] You haven't called session_log in ${minutes} min / ${toolCallsSinceLog} tool calls. ` +
-            `If you've finished a logical unit of work since (a feature, bug fix, refactor, design decision, config change) — log it NOW. ` +
-            `Don't wait for a commit; commits create stub entries you can enrich, but mid-flight work disappears unless logged. ` +
-            `One handoff entry per logical unit; describe what now exists and how the next agent uses it.`;
+            `[ctx-link] No session_log in ${minutes} min / ${toolCallsSinceLog} ctx-link calls. ` +
+            `If you finished a logical unit (feature, fix, refactor, decision) — log it now. ` +
+            `Keep it TERSE: a few lines covering interface/shape/errors only. No business context, no out-of-scope, no file paths.`;
           // Re-arm so we don't fire on every single subsequent call. Reset
           // the counter but leave lastSessionLogAt — the agent has been
           // warned; if they ignore us, the time-based threshold will trip
