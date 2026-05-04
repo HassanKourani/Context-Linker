@@ -3,6 +3,7 @@ import {
   loadGlobalConfig,
   loadActiveSession,
   getSessionEntries,
+  deriveTitleFromSummary,
 } from "./config.js";
 import { assertTeamMember } from "./teams.js";
 
@@ -29,10 +30,12 @@ export interface CloudSessionEntry {
   session_id: string;
   event_type: string;
   trigger_ref: string | null;
+  title: string;
   summary: string;
   files_touched: string[];
   decisions: Array<{ decision: string; rationale?: string; affects: string[] }>;
   created_at: string;
+  updated_at: string | null;
   superseded_at: string | null;
   role?: import("./notes.js").Role | null;
 }
@@ -82,6 +85,7 @@ export async function copySessionToCloud(
         session_id: cloudSession.id,
         event_type: safeEventType(e.event_type),
         trigger_ref: e.trigger_ref,
+        title: e.title?.trim() || deriveTitleFromSummary(e.summary),
         summary: e.summary,
         files_touched: e.files_touched,
         decisions: e.decisions,
@@ -104,6 +108,69 @@ export async function copySessionToCloud(
     cloud_entry_ids: cloudEntryIds,
     entries_copied: localEntries.length,
   };
+}
+
+/**
+ * Edit a cloud session entry. Refuses to edit if `expectedSessionId` doesn't match the
+ * entry's session_id — that's the app-layer ownership check (an agent can only edit
+ * entries that live in a session it owns).
+ *
+ * Sets updated_at. Refuses to edit a rewound (superseded) entry — restore first.
+ * Bumps last_activity_at on every bundle that references the entry.
+ *
+ * Returns the updated entry shape (without the row trip-back), or null if not found.
+ */
+export async function editCloudSessionEntry(
+  expectedSessionId: string,
+  entryId: string,
+  fields: { title?: string; summary?: string },
+): Promise<CloudSessionEntry | null> {
+  const sb = getSupabase();
+
+  const { data: existing, error: readErr } = await sb
+    .from("cloud_session_entries")
+    .select("*")
+    .eq("id", entryId)
+    .maybeSingle();
+  if (readErr) throw new Error(`editCloudSessionEntry read failed: ${readErr.message}`);
+  if (!existing) return null;
+
+  if (existing.session_id !== expectedSessionId) {
+    throw new Error("Cannot edit an entry that belongs to a different session.");
+  }
+  if (existing.superseded_at) {
+    throw new Error(`Entry ${entryId} is rewound — restore it before editing.`);
+  }
+
+  const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (fields.title !== undefined) {
+    const t = fields.title.trim();
+    if (t.length === 0) throw new Error("Title cannot be empty.");
+    update.title = t;
+  }
+  if (fields.summary !== undefined) {
+    update.summary = fields.summary;
+  }
+  if (Object.keys(update).length === 1) {
+    throw new Error("Edit requires at least one of title or summary.");
+  }
+
+  const { data, error } = await sb
+    .from("cloud_session_entries")
+    .update(update)
+    .eq("id", entryId)
+    .select("*")
+    .single();
+  if (error) throw new Error(`editCloudSessionEntry failed: ${error.message}`);
+
+  const { bumpBundlesReferencingEntries } = await import("./bundles.js");
+  await bumpBundlesReferencingEntries([entryId]);
+
+  return {
+    ...data,
+    title: data.title ?? deriveTitleFromSummary(data.summary ?? ""),
+    updated_at: data.updated_at ?? null,
+  } as CloudSessionEntry;
 }
 
 /**
@@ -220,7 +287,12 @@ export async function getCloudSessionEntries(
 
   const { data, error } = await query;
   if (error) throw new Error(`getCloudSessionEntries failed: ${error.message}`);
-  return (data ?? []) as CloudSessionEntry[];
+  // Defensive: title may be absent on rows from a pre-0012 deployment.
+  return (data ?? []).map((e: any) => ({
+    ...e,
+    title: e.title ?? deriveTitleFromSummary(e.summary ?? ""),
+    updated_at: e.updated_at ?? null,
+  })) as CloudSessionEntry[];
 }
 
 /**
@@ -261,6 +333,7 @@ export async function syncSessionToCloud(
       session_id: cloudSessionId,
       event_type: safeEventType(e.event_type),
       trigger_ref: e.trigger_ref,
+      title: e.title?.trim() || deriveTitleFromSummary(e.summary),
       summary: e.summary,
       files_touched: e.files_touched,
       decisions: e.decisions,

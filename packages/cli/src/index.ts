@@ -671,10 +671,9 @@ program
 program
   .command("info")
   .description(
-    "Show this project's ctx-link config. Reads .ctx-link.json in the current directory.\n" +
-    "Shows: project name, mode, active bundle ID, auto-push settings."
+    "Show this project's ctx-link config + per-bundle sync status. Reads .ctx-link.json in the current directory."
   )
-  .action(() => {
+  .action(async () => {
     const sessionId = resolveCallerSessionId();
     const session = sessionId ? loadActiveSession(sessionId) : null;
 
@@ -684,7 +683,29 @@ program
     console.log(`Bundles:  ${!session || session.bundles.length === 0 ? "(none — run 'ctxl connect <bundle_id>')" : ""}`);
     if (session) {
       for (const b of session.bundles) {
-        console.log(`  - ${b.bundle_id} [${b.mode}]`);
+        let syncDisplay = "";
+        try {
+          const status = await bundleStatus(b.bundle_id, b.mode, true);
+          const seen = session.bundle_sync?.[b.bundle_id];
+          const lastActivityAt = status.last_activity_at;
+          const lastSeenAt = seen?.last_seen_at ?? null;
+          const inSync = !lastActivityAt || (!!lastSeenAt && lastSeenAt >= lastActivityAt);
+          if (inSync) {
+            syncDisplay = "  in_sync";
+          } else {
+            // Count headers since last_seen_at
+            const headers = await pullEntries({
+              bundle_id: b.bundle_id,
+              since: lastSeenAt ?? null,
+              limit: 100,
+              mode: b.mode,
+            });
+            syncDisplay = `  out_of_sync (${headers.length} new)`;
+          }
+        } catch {
+          syncDisplay = "  (sync state unavailable)";
+        }
+        console.log(`  - ${b.bundle_id} [${b.mode}]${syncDisplay}`);
       }
     }
   });
@@ -956,9 +977,10 @@ program
     "Log a context entry to the current session (local only, NOT pushed to bundles).\n" +
     "Entries accumulate until you run 'ctxl push --consolidate'.\n\n" +
     "Examples:\n" +
-    "  $ ctxl session-log --message 'Added GET /api/users endpoint'\n" +
-    "  $ ctxl session-log --event commit --ref $(git rev-parse HEAD) --diff"
+    "  $ ctxl session-log --title 'Added users endpoint' --message 'POST /api/users — { email, name }'\n" +
+    "  $ ctxl session-log --title 'release v0.4' --event commit --ref $(git rev-parse HEAD) --diff"
   )
+  .option("--title <text>", "short headline (≤120 chars). Required — what other sessions see in headers-first pulls.")
   .option("--event <type>", "event type", "manual")
   .option("--ref <ref>", "commit SHA, PR number, or reference")
   .option("--diff", "use git diff HEAD~1 as raw context for summary", false)
@@ -1001,16 +1023,23 @@ program
       summary = opts.message;
     }
 
+    if (!opts.title) {
+      console.error("Provide --title <text>. Required for headers-first pulls.");
+      process.exit(1);
+    }
+
     const entry = pushSessionEntry(sessionId, {
       project_name: session.project_name,
       event_type: opts.event,
       trigger_ref: opts.ref ?? null,
+      title: opts.title,
       summary,
       files_touched: [],
       decisions: [],
     });
 
     console.log(`Logged entry ${entry.id} to session ${sessionId.slice(0, 8)}...`);
+    console.log(`  ${entry.title}`);
     console.log(`  ${summary}`);
   });
 
@@ -1569,34 +1598,55 @@ program
 program
   .command("pull [bundle_id]")
   .description(
-    "Pull recent entries from a bundle. Reads bundle from .ctx-link.json if no ID given.\n" +
+    "Pull entry HEADERS from a bundle (no bodies). Use `ctxl read <id...>` to fetch full bodies.\n" +
     "By default, filters out your own project's entries (shows only cross-project context).\n\n" +
     "Examples:\n" +
-    "  $ ctxl pull                         Pull from current project's bundle\n" +
+    "  $ ctxl pull                         Pull headers from current project's bundle\n" +
     "  $ ctxl pull --include-self           Include your own entries\n" +
     "  $ ctxl pull abc-123                  Pull from a specific bundle\n" +
-    "  $ ctxl pull --since 2026-04-22T12:00:00Z --limit 50"
+    "  $ ctxl pull --since 2026-04-22T12:00:00Z --limit 50\n" +
+    "  $ ctxl pull --project backend        Headers from one project only"
   )
   .option("--since <iso>", "only entries newer than this ISO timestamp")
   .option("--limit <n>", "max entries to return", "20")
+  .option("--last-n <n>", "alias for --limit, in `n newest headers` style")
+  .option("--project <name>", "restrict to this project")
   .option("--include-self", "include your own project's entries", false)
   .action(async (bundleId: string | undefined, opts) => {
     const sessionId = resolveCallerSessionId();
     const session = sessionId ? loadActiveSession(sessionId) : null;
 
+    function renderHeaderTable(headers: any[]): string {
+      if (headers.length === 0) return "(no headers)";
+      return headers
+        .map((h) => {
+          const updated = h.updated_at && h.updated_at !== h.created_at
+            ? ` (edited ${new Date(h.updated_at).toISOString()})`
+            : "";
+          const ref = h.trigger_ref ? ` (${h.trigger_ref})` : "";
+          return `[${h.id}] ${h.title}\n    ${h.project_name} · ${h.event_type}${ref} · ${new Date(h.created_at).toISOString()}${updated}`;
+        })
+        .join("\n");
+    }
+
+    const limit = Number(opts.lastN ?? opts.limit);
+
     // If a specific bundle_id is given, pull just from that
     if (bundleId) {
       assertSessionConnectedTo(bundleId);
       const mode = isLocalBundle(bundleId) ? "local" : "cloud";
-      const rows = await pullEntries({
+      const headers = await pullEntries({
         bundle_id: bundleId,
         since: opts.since,
-        limit: Number(opts.limit),
+        limit,
+        last_n: opts.lastN ? Number(opts.lastN) : undefined,
+        project: opts.project,
         exclude_project: opts.includeSelf ? undefined : session?.project_name,
         mode,
       });
-      console.log(`=== ${bundleId} (${rows.length} entries) ===`);
-      console.log(renderEntriesForClaude(rows));
+      console.log(`=== ${bundleId} (${headers.length} headers) ===`);
+      console.log(renderHeaderTable(headers));
+      console.log("\nUse `ctxl read <entry-id>...` to fetch full bodies.");
       return;
     }
 
@@ -1607,17 +1657,101 @@ program
     }
 
     for (const b of session.bundles) {
-      const rows = await pullEntries({
+      const headers = await pullEntries({
         bundle_id: b.bundle_id,
         since: opts.since,
-        limit: Number(opts.limit),
+        limit,
+        last_n: opts.lastN ? Number(opts.lastN) : undefined,
+        project: opts.project,
         exclude_project: opts.includeSelf ? undefined : session.project_name,
         mode: b.mode,
       });
-      console.log(`=== ${b.bundle_id} (${rows.length} entries) ===`);
-      console.log(renderEntriesForClaude(rows));
+      console.log(`=== ${b.bundle_id} (${headers.length} headers) ===`);
+      console.log(renderHeaderTable(headers));
       console.log("");
     }
+    console.log("Use `ctxl read <entry-id>...` to fetch full bodies.");
+  });
+
+program
+  .command("read <bundle_id> <entry_ids...>")
+  .description(
+    "Fetch full bodies for specific entry IDs from a bundle. Pair with `ctxl pull` (which returns headers).\n\n" +
+    "Example:\n" +
+    "  $ ctxl pull                                # see headers + IDs\n" +
+    "  $ ctxl read abc-123 e7d8 e7d9              # fetch the bodies you want"
+  )
+  .action(async (bundleId: string, entryIds: string[]) => {
+    assertSessionConnectedTo(bundleId);
+    const mode = isLocalBundle(bundleId) ? "local" : "cloud";
+    const { readEntriesByIds } = await import("@ctx-link/core");
+    const rows = await readEntriesByIds(bundleId, entryIds, { mode });
+    if (rows.length === 0) {
+      console.log("(no entries found — they may not be in this bundle)");
+      return;
+    }
+    console.log(renderEntriesForClaude(rows));
+  });
+
+program
+  .command("edit-entry <entry_id>")
+  .description(
+    "Edit the title and/or summary of an entry you previously logged in this session.\n" +
+    "Permission: only the session that originally logged the entry can edit it."
+  )
+  .option("--title <text>", "new short headline")
+  .option("--summary <text>", "new body")
+  .action(async (entryId: string, opts) => {
+    if (opts.title === undefined && opts.summary === undefined) {
+      console.error("Provide --title and/or --summary.");
+      process.exit(1);
+    }
+    const sessionId = resolveCallerSessionId();
+    if (!sessionId) {
+      console.error("No active session.");
+      process.exit(1);
+    }
+    const { localEditSessionEntry, editCloudSessionEntry, getSessionEntries: getEntries } =
+      await import("@ctx-link/core");
+    const session = loadActiveSession(sessionId);
+    if (!session) {
+      console.error(`Session ${sessionId} not found.`);
+      process.exit(1);
+    }
+
+    // Local first
+    const localHit = getEntries(sessionId).find((e) => e.id === entryId);
+    if (localHit) {
+      const updated = localEditSessionEntry(sessionId, entryId, {
+        title: opts.title,
+        summary: opts.summary,
+      });
+      console.log(`Edited local entry ${updated?.id} — updated_at=${updated?.updated_at}`);
+      return;
+    }
+
+    // Cloud
+    for (const c of session.cloud_copies ?? []) {
+      try {
+        const updated = await editCloudSessionEntry(c.cloud_session_id, entryId, {
+          title: opts.title,
+          summary: opts.summary,
+        });
+        if (updated) {
+          console.log(
+            `Edited cloud entry ${updated.id} (cloud_session=${c.cloud_session_id}) — updated_at=${updated.updated_at}`
+          );
+          return;
+        }
+      } catch (err: any) {
+        if (typeof err?.message === "string" && err.message.includes("different session")) continue;
+        throw err;
+      }
+    }
+    console.error(
+      "Entry not found in any session you own. You can only edit entries you originally logged."
+    );
+    process.exit(1);
   });
 
 // ==================== REWIND / RESTORE ====================
@@ -2304,11 +2438,14 @@ program
     if (rows.length === 0) { console.log("No entries."); return; }
 
     for (const r of rows) {
-      console.log(`\n[${r.event_type}] ${r.project_name}  ${r.created_at}`);
+      const updated = r.updated_at && r.updated_at !== r.created_at
+        ? ` (edited ${new Date(r.updated_at).toISOString()})`
+        : "";
+      console.log(`\n[${r.event_type}] ${r.project_name}  ${r.created_at}${updated}`);
       console.log(`  ID: ${r.id}`);
-      console.log(`  ${r.summary}`);
+      console.log(`  ${r.title}`);
     }
-    console.log(`\n${rows.length} entries.`);
+    console.log(`\n${rows.length} headers. Use \`ctxl read ${bundleId} <id...>\` to fetch bodies.`);
   });
 
 program
@@ -2333,7 +2470,7 @@ program
       entryId = await select({
         message: "Which entry to remove?",
         choices: rows.map((r) => ({
-          name: `[${r.event_type}] ${r.project_name}: ${r.summary.slice(0, 60)}`,
+          name: `[${r.event_type}] ${r.project_name}: ${r.title}`,
           value: r.id,
           description: r.id,
         })),

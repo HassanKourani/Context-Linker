@@ -18,6 +18,7 @@ function makeEntry(
     project_name: "test-project",
     event_type: "edit",
     trigger_ref: null,
+    title: `entry ${_seq}`,
     summary: `entry ${_seq}`,
     files_touched: [],
     decisions: [],

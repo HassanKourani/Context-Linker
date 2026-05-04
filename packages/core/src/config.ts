@@ -157,6 +157,13 @@ export function loadSessionLog(): SessionLogEntry[] {
 
 // ---------- Active Sessions ----------
 
+export interface BundleSyncState {
+  /** ID of the most recent header the session has been shown for this bundle. */
+  last_seen_entry_id: string | null;
+  /** Bundle's last_activity_at the last time this session pulled headers — what we compare to detect new activity. */
+  last_seen_at: string;
+}
+
 export interface ActiveSession {
   session_id: string;
   name?: string | null;
@@ -173,6 +180,8 @@ export interface ActiveSession {
   claude_instance_id?: string | null;  // CLAUDE_CODE_SSE_PORT — stable per Claude Code instance
   claude_session_id?: string | null;  // Claude Code conversation UUID (for name sync)
   kind?: "project" | "notes";  // synthetic per-bundle notes session when "notes"; default "project"
+  /** Per-connected-bundle "last seen" state — populated by context_pull, surfaced via session_info. */
+  bundle_sync?: Record<string, BundleSyncState>;
 }
 
 function activeSessionsDir(): string {
@@ -322,6 +331,17 @@ export function connectSessionToBundle(
   }
 
   session.bundles.push({ bundle_id: bundleId, mode });
+
+  // Initialize sync state to "now" so a freshly-connected session is in_sync
+  // until a new activity event after this point.
+  if (!session.bundle_sync) session.bundle_sync = {};
+  if (!session.bundle_sync[bundleId]) {
+    session.bundle_sync[bundleId] = {
+      last_seen_entry_id: null,
+      last_seen_at: new Date().toISOString(),
+    };
+  }
+
   saveActiveSession(session);
   return session;
 }
@@ -334,6 +354,32 @@ export function disconnectSessionFromBundle(
   const session = loadActiveSession(sessionId);
   if (!session) return;
   session.bundles = session.bundles.filter((b) => b.bundle_id !== bundleId);
+  if (session.bundle_sync) delete session.bundle_sync[bundleId];
+  saveActiveSession(session);
+}
+
+/** Read the sync state a session has recorded for a bundle. */
+export function getBundleSyncState(
+  sessionId: string,
+  bundleId: string
+): BundleSyncState | null {
+  const session = loadActiveSession(sessionId);
+  if (!session) return null;
+  return session.bundle_sync?.[bundleId] ?? null;
+}
+
+/** Mark that a session has now seen a bundle up to a given entry/time.
+ *  Called by context_pull on success — implicit ack. */
+export function markBundleSeen(
+  sessionId: string,
+  bundleId: string,
+  lastSeenEntryId: string | null,
+  lastSeenAt: string
+): void {
+  const session = loadActiveSession(sessionId);
+  if (!session) return;
+  if (!session.bundle_sync) session.bundle_sync = {};
+  session.bundle_sync[bundleId] = { last_seen_entry_id: lastSeenEntryId, last_seen_at: lastSeenAt };
   saveActiveSession(session);
 }
 
@@ -411,21 +457,41 @@ export interface SessionEntry {
   project_name: string;
   event_type: string;
   trigger_ref: string | null;
-  summary: string;
+  title: string;       // headline returned by context_pull (no body)
+  summary: string;     // body fetched on demand by entry_read
   files_touched: string[];
   decisions: Array<{ decision: string; rationale?: string; affects: string[] }>;
   pushed_at: string | null; // null = not yet pushed, ISO string = when consolidated
   superseded_at: string | null;  // soft-delete for rewind
+  updated_at?: string | null;   // bumped on session_edit_entry; absent on never-edited entries
   pending_enrichment?: boolean; // commit/PR stub awaiting agent-written handoff details
   role?: import("./notes.js").Role;  // role tag for bundle notes
 }
 
-export function pushSessionEntry(sessionId: string, entry: Omit<SessionEntry, "id" | "created_at" | "pushed_at" | "superseded_at">): SessionEntry {
+/** Derive a short headline from a body when no explicit title was provided.
+ *  Used by the lazy backfill on read for entries written before the title field existed. */
+export function deriveTitleFromSummary(summary: string): string {
+  const firstLine = (summary ?? "").split(/\r?\n/).find((l) => l.trim().length > 0) ?? "";
+  const trimmed = firstLine.trim();
+  if (trimmed.length === 0) return "(untitled)";
+  return trimmed.length > 120 ? trimmed.slice(0, 120) : trimmed;
+}
+
+// Input type for pushSessionEntry — title is optional here; if absent we derive from summary.
+// This keeps internal callers (commit hooks, notes, syncs) ergonomic while the SessionEntry
+// shape itself guarantees title is always present once stored.
+export type SessionEntryInput =
+  Omit<SessionEntry, "id" | "created_at" | "pushed_at" | "superseded_at" | "title">
+  & { title?: string };
+
+export function pushSessionEntry(sessionId: string, entry: SessionEntryInput): SessionEntry {
   const dir = sessionEntriesDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
 
   const path = sessionEntriesPath(sessionId);
   const entries: SessionEntry[] = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : [];
+
+  const title = entry.title?.trim() || deriveTitleFromSummary(entry.summary);
 
   const newEntry: SessionEntry = {
     id: crypto.randomUUID(),
@@ -433,6 +499,7 @@ export function pushSessionEntry(sessionId: string, entry: Omit<SessionEntry, "i
     pushed_at: null,
     superseded_at: null,
     ...entry,
+    title,
   };
   entries.push(newEntry);
   writeFileSync(path, JSON.stringify(entries, null, 2));
@@ -442,7 +509,16 @@ export function pushSessionEntry(sessionId: string, entry: Omit<SessionEntry, "i
 export function getSessionEntries(sessionId: string): SessionEntry[] {
   const path = sessionEntriesPath(sessionId);
   if (!existsSync(path)) return [];
-  return JSON.parse(readFileSync(path, "utf8"));
+  const raw: SessionEntry[] = JSON.parse(readFileSync(path, "utf8"));
+
+  // Lazy backfill: pre-existing entries on disk have no title.
+  // Fill from the summary so headers-first pull always has something to render.
+  for (const e of raw) {
+    if (!e.title || e.title.length === 0) {
+      e.title = deriveTitleFromSummary(e.summary ?? "");
+    }
+  }
+  return raw;
 }
 
 export function getUnpushedSessionEntries(sessionId: string): SessionEntry[] {
@@ -474,6 +550,61 @@ export function deleteSessionEntry(sessionId: string, entryId: string): void {
   writeFileSync(path, JSON.stringify(filtered, null, 2));
 }
 
+/**
+ * Edit a local session entry's title and/or summary.
+ * Caller must already have verified that the entry belongs to this session
+ * (the session-entries file IS the ownership record — entries can only live in one session's file).
+ *
+ * Sets updated_at. Refuses to edit a rewound (superseded) entry — restore first.
+ * Returns the updated entry, or null if not found.
+ */
+export function localEditSessionEntry(
+  sessionId: string,
+  entryId: string,
+  fields: { title?: string; summary?: string },
+): SessionEntry | null {
+  const path = sessionEntriesPath(sessionId);
+  if (!existsSync(path)) return null;
+  const entries: SessionEntry[] = JSON.parse(readFileSync(path, "utf8"));
+  const target = entries.find((e) => e.id === entryId);
+  if (!target) return null;
+  if (target.superseded_at) {
+    throw new Error(`Entry ${entryId} is rewound — restore it before editing.`);
+  }
+
+  let touched = false;
+  if (fields.title !== undefined) {
+    const t = fields.title.trim();
+    if (t.length === 0) throw new Error("Title cannot be empty.");
+    target.title = t;
+    touched = true;
+  }
+  if (fields.summary !== undefined) {
+    target.summary = fields.summary;
+    // If no explicit title was provided, keep the existing title — don't auto-rederive.
+    touched = true;
+  }
+  if (!touched) {
+    throw new Error("Edit requires at least one of title or summary.");
+  }
+  target.updated_at = new Date().toISOString();
+  writeFileSync(path, JSON.stringify(entries, null, 2));
+
+  // Bump activity on every local bundle referencing this entry — sync signal to readers.
+  // Done lazily here (synchronous, no await) to keep the local edit path purely sync.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const ls = require("./local-store.js");
+    const bundleIds: string[] = ls.getLocalBundleIdsForEntries([entryId]);
+    const ts = target.updated_at;
+    for (const bid of bundleIds) ls.localSetBundleActivity(bid, ts);
+  } catch {
+    // best-effort: failing to bump activity should not undo a successful edit.
+  }
+
+  return target;
+}
+
 /** Most recent commit/PR stub still awaiting an agent-written handoff. */
 export function getPendingEnrichmentStub(sessionId: string): SessionEntry | null {
   const entries = getSessionEntries(sessionId);
@@ -487,7 +618,7 @@ export function getPendingEnrichmentStub(sessionId: string): SessionEntry | null
 export function enrichSessionEntry(
   sessionId: string,
   entryId: string,
-  fields: { summary: string; files_touched?: string[]; decisions?: SessionEntry["decisions"] },
+  fields: { title?: string; summary: string; files_touched?: string[]; decisions?: SessionEntry["decisions"] },
 ): SessionEntry | null {
   const path = sessionEntriesPath(sessionId);
   if (!existsSync(path)) return null;
@@ -495,6 +626,7 @@ export function enrichSessionEntry(
   const target = entries.find((e) => e.id === entryId);
   if (!target) return null;
   target.summary = fields.summary;
+  target.title = fields.title?.trim() || deriveTitleFromSummary(fields.summary);
   if (fields.files_touched && fields.files_touched.length > 0) {
     const merged = new Set([...target.files_touched, ...fields.files_touched]);
     target.files_touched = [...merged];

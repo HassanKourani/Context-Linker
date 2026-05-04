@@ -1,30 +1,41 @@
 import { getSupabase } from "./supabase.js";
-import { assertTokenValid } from "./bundles.js";
+import { assertTokenValid, bumpBundleActivity } from "./bundles.js";
 import { ROLES, rolePriority, type Role } from "./notes.js";
+import { deriveTitleFromSummary } from "./config.js";
 
 export interface PullInput {
   bundle_id: string;
   since?: string | null;    // ISO timestamp
   limit?: number;           // default 20
+  last_n?: number;          // alias for limit when caller wants to be explicit about "n newest"
   exclude_project?: string; // useful: "don't show me my own project's entries"
+  project?: string;         // restrict to entries from a single project
   mode?: "local" | "cloud";
   skipAuth?: boolean;       // trusted server-side calls can skip team membership check
 }
 
-export interface EntryRow {
+/** Slim shape returned by pullEntries — no body. Use readEntriesByIds to fetch bodies. */
+export interface EntryHeader {
   id: string;
-  created_at: string;
+  title: string;
   project_name: string;
   event_type: string;
   trigger_ref: string | null;
+  created_at: string;
+  updated_at: string | null;
+  role?: Role | null;
+}
+
+/** Full body shape — used by readEntriesByIds and renderEntriesForClaude. */
+export interface EntryRow extends EntryHeader {
   summary: string;
   files_touched: string[];
   decisions: Array<{ decision: string; rationale?: string; affects: string[] }>;
   bundle_refs?: string[];
-  role?: import("./notes.js").Role | null;
 }
 
-export async function pullEntries(input: PullInput): Promise<EntryRow[]> {
+/** Headers-first pull. Returns slim headers — call readEntriesByIds for full bodies. */
+export async function pullEntries(input: PullInput): Promise<EntryHeader[]> {
   if (input.mode === "local") {
     const { localPullEntries } = await import("./local-store.js");
     return localPullEntries(input);
@@ -33,19 +44,21 @@ export async function pullEntries(input: PullInput): Promise<EntryRow[]> {
   if (!input.skipAuth) await assertTokenValid(input.bundle_id);
   const sb = getSupabase();
 
+  const limit = input.last_n ?? input.limit ?? 20;
+
   let query = sb
     .from("bundle_entry_refs")
     .select(`
       entry_id,
       cloud_session_entries!inner (
-        id, created_at, event_type, trigger_ref, summary, files_touched, decisions, superseded_at, role,
+        id, created_at, updated_at, event_type, trigger_ref, title, summary, superseded_at, role,
         cloud_sessions!inner ( project_name )
       )
     `)
     .eq("bundle_id", input.bundle_id)
     .is("cloud_session_entries.superseded_at", null)
     .order("added_at", { ascending: false })
-    .limit(input.limit ?? 20);
+    .limit(limit);
 
   if (input.since) {
     query = query.gt("cloud_session_entries.created_at", input.since);
@@ -58,20 +71,23 @@ export async function pullEntries(input: PullInput): Promise<EntryRow[]> {
     const e = r.cloud_session_entries;
     return {
       id: e.id,
+      title: e.title ?? deriveTitleFromSummary(e.summary ?? ""),
       created_at: e.created_at,
+      updated_at: e.updated_at ?? null,
       project_name: e.cloud_sessions?.project_name ?? "unknown",
       event_type: e.event_type,
       trigger_ref: e.trigger_ref,
-      summary: e.summary,
-      files_touched: e.files_touched ?? [],
-      decisions: e.decisions ?? [],
       role: e.role ?? null,
-    } as EntryRow;
+    } as EntryHeader;
   });
 
-  const filtered = input.exclude_project
+  let filtered = input.exclude_project
     ? rows.filter((r) => r.project_name !== input.exclude_project)
     : rows;
+
+  if (input.project) {
+    filtered = filtered.filter((r) => r.project_name === input.project);
+  }
 
   filtered.sort((a, b) => {
     const dp = rolePriority(a.role) - rolePriority(b.role);
@@ -79,6 +95,132 @@ export async function pullEntries(input: PullInput): Promise<EntryRow[]> {
     return b.created_at.localeCompare(a.created_at);
   });
   return filtered;
+}
+
+/**
+ * Pull entries WITH full bodies. Use only where token cost doesn't matter
+ * (UI rendering, scripted reports). Tools facing the agent should use the
+ * headers-first `pullEntries` instead.
+ */
+export async function pullEntriesWithBodies(input: PullInput): Promise<EntryRow[]> {
+  if (input.mode === "local") {
+    const { localPullEntriesWithBodies } = await import("./local-store.js");
+    return localPullEntriesWithBodies(input);
+  }
+
+  if (!input.skipAuth) await assertTokenValid(input.bundle_id);
+  const sb = getSupabase();
+
+  const limit = input.last_n ?? input.limit ?? 20;
+
+  let query = sb
+    .from("bundle_entry_refs")
+    .select(`
+      entry_id,
+      cloud_session_entries!inner (
+        id, created_at, updated_at, event_type, trigger_ref,
+        title, summary, files_touched, decisions, superseded_at, role,
+        cloud_sessions!inner ( project_name )
+      )
+    `)
+    .eq("bundle_id", input.bundle_id)
+    .is("cloud_session_entries.superseded_at", null)
+    .order("added_at", { ascending: false })
+    .limit(limit);
+
+  if (input.since) query = query.gt("cloud_session_entries.created_at", input.since);
+
+  const { data, error } = await query;
+  if (error) throw new Error(`pullEntriesWithBodies failed: ${error.message}`);
+
+  const rows = (data ?? []).map((r: any) => {
+    const e = r.cloud_session_entries;
+    return {
+      id: e.id,
+      title: e.title ?? deriveTitleFromSummary(e.summary ?? ""),
+      created_at: e.created_at,
+      updated_at: e.updated_at ?? null,
+      project_name: e.cloud_sessions?.project_name ?? "unknown",
+      event_type: e.event_type,
+      trigger_ref: e.trigger_ref,
+      summary: e.summary ?? "",
+      files_touched: e.files_touched ?? [],
+      decisions: e.decisions ?? [],
+      role: e.role ?? null,
+    } as EntryRow;
+  });
+
+  let filtered = input.exclude_project ? rows.filter((r) => r.project_name !== input.exclude_project) : rows;
+  if (input.project) filtered = filtered.filter((r) => r.project_name === input.project);
+
+  filtered.sort((a, b) => {
+    const dp = rolePriority(a.role) - rolePriority(b.role);
+    if (dp !== 0) return dp;
+    return b.created_at.localeCompare(a.created_at);
+  });
+  return filtered;
+}
+
+/**
+ * Fetch full bodies for specific entry IDs in a bundle.
+ * Caller-side rule: each entry must be referenced by the bundle.
+ * Authentication: same `assertTokenValid` check pullEntries uses.
+ * Auto-detects local vs cloud bundles.
+ */
+export async function readEntriesByIds(
+  bundleId: string,
+  entryIds: string[],
+  options?: { mode?: "local" | "cloud"; skipAuth?: boolean }
+): Promise<EntryRow[]> {
+  if (entryIds.length === 0) return [];
+
+  // Auto-detect local
+  const mode = options?.mode;
+  if (mode === "local") {
+    const { localReadEntriesByIds } = await import("./local-store.js");
+    return localReadEntriesByIds(bundleId, entryIds);
+  }
+  if (!mode) {
+    const { isLocalBundle, localReadEntriesByIds } = await import("./local-store.js");
+    if (isLocalBundle(bundleId)) return localReadEntriesByIds(bundleId, entryIds);
+  }
+
+  if (!options?.skipAuth) await assertTokenValid(bundleId);
+  const sb = getSupabase();
+
+  // Restrict to entries actually referenced by this bundle.
+  const { data, error } = await sb
+    .from("bundle_entry_refs")
+    .select(`
+      entry_id,
+      cloud_session_entries!inner (
+        id, created_at, updated_at, event_type, trigger_ref,
+        title, summary, files_touched, decisions, superseded_at, role,
+        cloud_sessions!inner ( project_name )
+      )
+    `)
+    .eq("bundle_id", bundleId)
+    .in("entry_id", entryIds)
+    .is("cloud_session_entries.superseded_at", null);
+
+  if (error) throw new Error(`readEntriesByIds failed: ${error.message}`);
+
+  return (data ?? []).map((r: any) => {
+    const e = r.cloud_session_entries;
+    return {
+      id: e.id,
+      title: e.title ?? deriveTitleFromSummary(e.summary ?? ""),
+      created_at: e.created_at,
+      updated_at: e.updated_at ?? null,
+      project_name: e.cloud_sessions?.project_name ?? "unknown",
+      event_type: e.event_type,
+      trigger_ref: e.trigger_ref,
+      summary: e.summary ?? "",
+      files_touched: e.files_touched ?? [],
+      decisions: e.decisions ?? [],
+      role: e.role ?? null,
+    } as EntryRow;
+  });
 }
 
 /**
@@ -115,6 +257,8 @@ export async function addEntriesToBundle(
   const { error } = await sb.from("bundle_entry_refs").insert(rows);
   if (error) throw new Error(`addEntriesToBundle failed: ${error.message}`);
 
+  await bumpBundleActivity(bundleId);
+
   // Fire feed event (non-blocking)
   if (newIds.length > 0) {
     try {
@@ -149,6 +293,8 @@ export async function removeEntryFromBundle(
     .eq("entry_id", entryId);
   if (error) throw new Error(`removeEntryFromBundle failed: ${error.message}`);
 
+  await bumpBundleActivity(bundleId);
+
   if (options?.exclude) {
     const { excludeEntryFromBundle } = await import("./exclusions.js");
     await excludeEntryFromBundle(bundleId, entryId, options.machineId);
@@ -182,6 +328,11 @@ export async function removeSessionEntriesFromBundle(
     .in("entry_id", entryIds);
 
   if (error) throw new Error(`removeSessionEntriesFromBundle delete failed: ${error.message}`);
+
+  if ((count ?? 0) > 0) {
+    await bumpBundleActivity(bundleId);
+  }
+
   return count ?? 0;
 }
 
@@ -231,8 +382,12 @@ const ROLE_HEADINGS: Record<Role, string> = {
 
 function renderEntry(e: EntryRow): string {
   const ts = new Date(e.created_at).toISOString();
+  const updated = e.updated_at && e.updated_at !== e.created_at
+    ? ` · edited ${new Date(e.updated_at).toISOString()}`
+    : "";
   const lines = [
-    `[${ts}] ${e.project_name || "—"} · ${e.event_type}${
+    `[${e.id}] ${e.title}`,
+    `${ts}${updated} · ${e.project_name || "—"} · ${e.event_type}${
       e.trigger_ref ? ` (${e.trigger_ref})` : ""
     }`,
     e.summary,
@@ -249,6 +404,41 @@ function renderEntry(e: EntryRow): string {
     }
   }
   return lines.join("\n");
+}
+
+/** Compact text listing of entry headers for context_pull.
+ *  One line per header. Lets the agent triage by id+title+project+role
+ *  without spending tokens on bodies. */
+export function renderHeadersForClaude(headers: EntryHeader[]): string {
+  if (headers.length === 0) return "No recent cross-project context.";
+
+  const groups = new Map<Role, EntryHeader[]>();
+  for (const h of headers) {
+    const r: Role = (h.role ?? "note") as Role;
+    const arr = groups.get(r) ?? [];
+    arr.push(h);
+    groups.set(r, arr);
+  }
+
+  const orderedRoles = ROLES.filter((r) => groups.has(r));
+  const sections = orderedRoles.map((r) => {
+    const items = (groups.get(r) ?? [])
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .map((h) => {
+        const ts = new Date(h.created_at).toISOString();
+        const updated = h.updated_at && h.updated_at !== h.created_at
+          ? ` (edited ${new Date(h.updated_at).toISOString()})`
+          : "";
+        const ref = h.trigger_ref ? ` (${h.trigger_ref})` : "";
+        return `- [${h.id}] ${h.title} — ${h.project_name} · ${h.event_type}${ref} · ${ts}${updated}`;
+      })
+      .join("\n");
+    return `## ${ROLE_HEADINGS[r]}\n\n${items}`;
+  });
+
+  const footer =
+    "\n\n_Headers only — call `entry_read` with the IDs you want to read in full._";
+  return sections.join("\n\n") + footer;
 }
 
 // Human/LLM-readable rendering of entries for context injection,

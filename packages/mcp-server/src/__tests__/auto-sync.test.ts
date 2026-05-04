@@ -69,6 +69,7 @@ function makeEntry(id: string): SessionEntry {
     project_name: "test-project",
     event_type: "edit",
     trigger_ref: null,
+    title: `entry ${id}`,
     summary: `entry ${id}`,
     files_touched: ["src/a.ts"],
     decisions: [],

@@ -14,6 +14,9 @@ import {
   getBundleToken,
   isLocalBundle,
   pullEntries,
+  pullEntriesWithBodies,
+  localEditSessionEntry,
+  editCloudSessionEntry,
   addEntriesToBundle,
   removeSessionEntriesFromBundle,
   includeEntryInBundle,
@@ -154,7 +157,7 @@ const server = Bun.serve({
           teams.map(async (team) => {
             const [{ data: bundleRows }, cloudSessions] = await Promise.all([
               sb.from("bundles")
-                .select("id, name, created_at")
+                .select("id, name, created_at, last_activity_at")
                 .eq("team_id", team.team_id)
                 .order("created_at", { ascending: false }),
               listTeamSessions(team.team_id),
@@ -204,13 +207,14 @@ const server = Bun.serve({
         const teamData = teamRawData.map(({ team, bundles, cloudSessions }) => ({
           team_id: team.team_id,
           team_name: team.name,
-          bundles: bundles.map((b) => {
+          bundles: bundles.map((b: any) => {
             const stats = bundleStats.get(b.id);
             return {
               bundle_id: b.id,
               bundle_name: b.name,
               entry_count: stats?.count ?? 0,
               last_entry_at: stats?.last_entry_at ?? null,
+              last_activity_at: b.last_activity_at ?? stats?.last_entry_at ?? null,
             };
           }),
           cloud_sessions: cloudSessions.map((cs) => ({
@@ -221,9 +225,43 @@ const server = Bun.serve({
         }));
 
         const localBundles = listAllLocalBundleDetails();
-        const sessions = listActiveSessions().map((s) => ({
+
+        // Per-active-session sync state: which connected bundles are out_of_sync, and by how much.
+        const activeSessions = listActiveSessions();
+
+        function syncForSession(sessionId: string, bundleId: string, mode: "local" | "cloud") {
+          const session = activeSessions.find((s) => s.session_id === sessionId);
+          if (!session) return null;
+          const seen = session.bundle_sync?.[bundleId];
+          // Look up bundle activity from the assembled data above
+          let last_activity_at: string | null = null;
+          if (mode === "local") {
+            const lb = localBundles.find((b) => b.bundle_id === bundleId);
+            last_activity_at = lb?.last_activity_at ?? null;
+          } else {
+            for (const t of teamData) {
+              const cb = t.bundles.find((b) => b.bundle_id === bundleId);
+              if (cb) { last_activity_at = cb.last_activity_at ?? null; break; }
+            }
+          }
+          const lastSeenAt = seen?.last_seen_at ?? null;
+          const inSync = !last_activity_at || (!!lastSeenAt && lastSeenAt >= last_activity_at);
+          return {
+            last_seen_at: lastSeenAt,
+            last_seen_entry_id: seen?.last_seen_entry_id ?? null,
+            last_activity_at,
+            in_sync: inSync,
+          };
+        }
+
+        const sessions = activeSessions.map((s) => ({
           ...s,
           entry_count: getSessionEntries(s.session_id).length,
+          bundle_sync: s.bundles.map((b) => ({
+            bundle_id: b.bundle_id,
+            mode: b.mode,
+            ...(syncForSession(s.session_id, b.bundle_id, b.mode) ?? {}),
+          })),
         }));
 
         return Response.json(
@@ -524,7 +562,8 @@ const server = Bun.serve({
           const limit = parseInt(url.searchParams.get("limit") || "50");
           const exclude_project = url.searchParams.get("exclude_project") || undefined;
           const mode = resolveBundleMode(bundleId);
-          const entries = await pullEntries({
+          // UI gets full bodies — token-cost concerns only apply to agent-facing tools.
+          const entries = await pullEntriesWithBodies({
             bundle_id: bundleId,
             since,
             limit,
@@ -952,6 +991,60 @@ const server = Bun.serve({
           const entryId = match[2];
           await deleteSessionEntryAndCopies(sessionId, entryId);
           return Response.json({ ok: true }, { headers: corsHeaders });
+        } catch (err: any) {
+          return Response.json(
+            { error: err.message ?? String(err) },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+      }
+    }
+
+    // ── PATCH /api/sessions/:id/entries/:entryId ────────────────────────────
+    // Edit an entry's title and/or summary. Tries local first, then any cloud copies the session owns.
+    {
+      const match = url.pathname.match(/^\/api\/sessions\/([^/]+)\/entries\/([^/]+)$/);
+      if (match && req.method === "PATCH") {
+        try {
+          const sessionId = match[1];
+          const entryId = match[2];
+          const body = await req.json();
+          const fields = { title: body.title as string | undefined, summary: body.summary as string | undefined };
+          if (fields.title === undefined && fields.summary === undefined) {
+            return Response.json(
+              { error: "Provide title and/or summary." },
+              { status: 400, headers: corsHeaders }
+            );
+          }
+
+          // Local first
+          const localEntries = getSessionEntries(sessionId);
+          if (localEntries.some((e) => e.id === entryId)) {
+            const updated = localEditSessionEntry(sessionId, entryId, fields);
+            return Response.json({ ok: true, scope: "local", entry: updated }, { headers: corsHeaders });
+          }
+
+          // Cloud: find which cloud session this active session owns and try each
+          const session = loadActiveSession(sessionId);
+          const copies = session?.cloud_copies ?? [];
+          for (const c of copies) {
+            try {
+              const updated = await editCloudSessionEntry(c.cloud_session_id, entryId, fields);
+              if (updated) {
+                return Response.json(
+                  { ok: true, scope: "cloud", cloud_session_id: c.cloud_session_id, entry: updated },
+                  { headers: corsHeaders }
+                );
+              }
+            } catch (err: any) {
+              if (typeof err?.message === "string" && err.message.includes("different session")) continue;
+              throw err;
+            }
+          }
+          return Response.json(
+            { error: "Entry not found in this session or any of its cloud copies." },
+            { status: 404, headers: corsHeaders }
+          );
         } catch (err: any) {
           return Response.json(
             { error: err.message ?? String(err) },

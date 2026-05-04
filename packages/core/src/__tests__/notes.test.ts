@@ -84,7 +84,7 @@ describe("addBundleNote (local)", () => {
 
     const entries = localPullEntries({ bundle_id: bundle.bundle_id });
     expect(entries).toHaveLength(1);
-    expect(entries[0].summary).toBe("the goal: ship the dashboard");
+    expect(entries[0].title).toBe("the goal: ship the dashboard");
     expect(entries[0].role).toBe("ticket");
   });
 
@@ -136,10 +136,10 @@ describe("renderEntriesForClaude groups by role", () => {
   test("renders sections in priority order", async () => {
     const { renderEntriesForClaude } = await import("../entries.js");
     const md = renderEntriesForClaude([
-      { id: "1", created_at: "2026-04-28T00:00:00Z", project_name: "p", event_type: "manual",
-        trigger_ref: null, summary: "general", files_touched: [], decisions: [], role: "note" },
-      { id: "2", created_at: "2026-04-28T00:01:00Z", project_name: "p", event_type: "manual",
-        trigger_ref: null, summary: "scope anchor", files_touched: [], decisions: [], role: "ticket" },
+      { id: "1", created_at: "2026-04-28T00:00:00Z", updated_at: null, project_name: "p", event_type: "manual",
+        trigger_ref: null, title: "general", summary: "general", files_touched: [], decisions: [], role: "note" },
+      { id: "2", created_at: "2026-04-28T00:01:00Z", updated_at: null, project_name: "p", event_type: "manual",
+        trigger_ref: null, title: "scope anchor", summary: "scope anchor", files_touched: [], decisions: [], role: "ticket" },
     ]);
 
     expect(md.indexOf("## Ticket")).toBeLessThan(md.indexOf("## Notes"));

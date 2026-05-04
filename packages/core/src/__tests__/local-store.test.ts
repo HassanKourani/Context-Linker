@@ -262,7 +262,7 @@ describe("localPullEntries", () => {
     const entries = localPullEntries({ bundle_id: bundle.bundle_id });
     expect(entries).toHaveLength(1);
     expect(entries[0].id).toBe(e1.id);
-    expect(entries[0].summary).toBe("pull me");
+    expect(entries[0].title).toBe("pull me");
     expect(entries[0].project_name).toBe("proj-a");
   });
 
@@ -278,8 +278,8 @@ describe("localPullEntries", () => {
 
     const entries = localPullEntries({ bundle_id: bundle.bundle_id });
     expect(entries).toHaveLength(2);
-    const summaries = entries.map((e) => e.summary).sort();
-    expect(summaries).toEqual(["from s1", "from s2"]);
+    const titles = entries.map((e) => e.title).sort();
+    expect(titles).toEqual(["from s1", "from s2"]);
   });
 
   test("respects exclude_project filter", () => {
@@ -448,7 +448,7 @@ describe("localRemoveSessionRefsFromBundle", () => {
 
     const entries = localPullEntries({ bundle_id: bundle.bundle_id });
     expect(entries).toHaveLength(1);
-    expect(entries[0].summary).toBe("B1");
+    expect(entries[0].title).toBe("B1");
   });
 
   test("no-op when session has no refs in bundle", () => {

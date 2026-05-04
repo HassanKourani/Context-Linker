@@ -13,7 +13,9 @@ import {
   listLocalBundles,
   listAllLocalBundleDetails,
   pullEntries,
+  readEntriesByIds,
   renderEntriesForClaude,
+  renderHeadersForClaude,
   bundleRewind,
   bundleRestore,
   bundleListRewinds,
@@ -34,6 +36,9 @@ import {
   getUnpushedSessionEntries,
   getPendingEnrichmentStub,
   enrichSessionEntry,
+  localEditSessionEntry,
+  editCloudSessionEntry,
+  markBundleSeen,
   includeEntryInBundle,
   localIncludeEntryInBundle,
   localRemoveSessionRefsFromBundle,
@@ -238,15 +243,17 @@ const server = new Server(
       "You are connected to ctx-link, a context-sharing system for Claude Code sessions. " +
       "The CLI command is `ctxl`. If you need help with available commands, run `ctxl --help`.\n" +
       "A session is auto-created on boot. Key tools:\n" +
-      "- session_log: Log a context entry to the current session. Use for any 'log entry' requests.\n" +
+      "- session_log: Log a context entry to the current session. Use for any 'log entry' requests. Provide both a short `title` and a terse `summary`.\n" +
       "- session_entries: List accumulated session entries.\n" +
-      "- session_info: Show current session details and connected bundles.\n" +
+      "- session_info: Show current session details + per-bundle sync status (in_sync / out_of_sync).\n" +
       "- context_push: Push session entries to connected bundles.\n" +
-      "- context_pull: Pull entries from bundles (use at session start).\n" +
+      "- context_pull: HEADERS-FIRST. Returns slim entry headers from bundles. No bodies — call `entry_read` with the IDs you actually need.\n" +
+      "- entry_read: Fetch full bodies for specific entry IDs. Pair with context_pull.\n" +
+      "- session_edit_entry: Edit the title and/or summary of an entry YOU previously logged. Use when your understanding of your own change has updated.\n" +
       "- session_connect: Connect session to a bundle.\n" +
       "- bundle_create: Create a new bundle.\n" +
       "- bundle_list: List all bundles.\n" +
-      "Proactive behavior: call context_pull at session start if bundles are connected.\n\n" +
+      "Proactive behavior: at session start, call session_info to see which bundles are out_of_sync, then context_pull only those, then entry_read only the entries that look relevant.\n\n" +
       "**Call session_log after each logical unit of work** (a feature, fix, refactor, decision). One entry per unit. Entries are read by other sessions in this repo or other repos.\n\n" +
       "**Write the minimum viable handoff. Terse by default.** Aim for a few lines, not paragraphs. Just enough for the next agent to integrate. If a category below doesn't apply to your change, omit it — don't pad.\n\n" +
       "Include only what applies:\n" +
@@ -371,24 +378,60 @@ const tools = [
   {
     name: "context_pull",
     description:
-      "Pull recent cross-project context from the session's connected bundles. " +
-      "PROACTIVE USE: You SHOULD call this at the start of a session if bundles are connected, " +
-      "to see what other projects/sessions have done. This gives you cross-project awareness. " +
-      "If bundle_id is omitted, pulls from ALL connected bundles (aggregated and sorted by time).",
+      "HEADERS-ONLY pull. Returns slim entry headers (id, title, project, role, event_type, trigger_ref, created_at, updated_at) — NO bodies. " +
+      "Triage by header, then call `entry_read` with the IDs you actually need. This keeps the per-pull token cost low even on large bundles. " +
+      "PROACTIVE USE: call at session start when bundles are connected. " +
+      "Successful header pulls auto-advance this session's bundle_sync state — `session_info` will report the bundle as `in_sync` until new activity arrives.",
     inputSchema: {
       type: "object",
       properties: {
         bundle_id: { type: "string", description: "Specific bundle to pull from. Omit to pull from ALL connected bundles." },
         since: {
           type: "string",
-          description: "ISO timestamp; only return entries newer than this.",
+          description: "ISO timestamp; only return headers for entries created after this.",
         },
         limit: { type: "number", description: "Default 20." },
+        last_n: { type: "number", description: "Alias for limit when you want to be explicit about \"the n newest headers\"." },
+        project: {
+          type: "string",
+          description: "Restrict to headers from this project name.",
+        },
         exclude_project: {
           type: "string",
           description: "Skip entries from this project (usually your own).",
         },
       },
+    },
+  },
+  {
+    name: "entry_read",
+    description:
+      "Fetch full bodies for specific entry IDs from a bundle. Pair with `context_pull` (headers-only) to avoid pulling bodies you won't read. " +
+      "Each entry must be referenced by the bundle and the calling session must be connected to it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bundle_id: { type: "string" },
+        entry_ids: { type: "array", items: { type: "string" }, minItems: 1 },
+      },
+      required: ["bundle_id", "entry_ids"],
+    },
+  },
+  {
+    name: "session_edit_entry",
+    description:
+      "Edit the title and/or summary of an entry YOU ALREADY LOGGED in the current session. " +
+      "Use this when your understanding of your own change has updated — fix the existing entry instead of logging a contradiction. " +
+      "Permission: only the session that originally created the entry can edit it. Cross-session corrections are what `bundle_ask_question` is for. " +
+      "Sets `updated_at` and bumps `last_activity_at` on every bundle that references the entry, so other sessions can see the change.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        entry_id: { type: "string" },
+        title: { type: "string", description: "New short headline. Optional — supply if you want to change it." },
+        summary: { type: "string", description: "New body. Optional — supply if you want to change it." },
+      },
+      required: ["entry_id"],
     },
   },
   {
@@ -498,6 +541,7 @@ const tools = [
       "Log a TERSE handoff entry to the current session — for another agent integrating against your work.\n\n" +
       "WHEN: after each logical unit of work (a commit, a PR, a feature, a fix). ONE entry per unit. Never per file edit.\n\n" +
       "STYLE: minimum viable handoff. A few lines, not paragraphs. Drop categories that don't apply — don't pad.\n\n" +
+      "TITLE: every entry needs a short headline (≤120 chars). Other sessions see the title in headers-first pulls before deciding whether to read the body — make it scannable.\n\n" +
       "INCLUDE ONLY WHAT APPLIES:\n" +
       "  • Endpoint: method + path + body shape + response shape + error responses (status + meaning)\n" +
       "  • Schema/migration: table/column + type + constraint\n" +
@@ -509,6 +553,10 @@ const tools = [
     inputSchema: {
       type: "object",
       properties: {
+        title: {
+          type: "string",
+          description: "Short headline (≤120 chars). What another agent sees in headers-first pulls before deciding to read the body.",
+        },
         summary: {
           type: "string",
           description: "Terse handoff — interface, payload shapes, errors only. A few lines, not paragraphs. Omit categories that don't apply. No business context, OUT OF SCOPE sections, or file paths for cross-reference.",
@@ -539,7 +587,7 @@ const tools = [
           description: "Commit SHA, PR number, etc.",
         },
       },
-      required: ["summary"],
+      required: ["title", "summary"],
     },
   },
   {
@@ -868,7 +916,20 @@ const ContextPullArgs = z.object({
   bundle_id: z.string().optional(),
   since: z.string().optional(),
   limit: z.number().optional(),
+  last_n: z.number().optional(),
+  project: z.string().optional(),
   exclude_project: z.string().optional(),
+});
+
+const EntryReadArgs = z.object({
+  bundle_id: z.string(),
+  entry_ids: z.array(z.string()).min(1),
+});
+
+const SessionEditEntryArgs = z.object({
+  entry_id: z.string(),
+  title: z.string().optional(),
+  summary: z.string().optional(),
 });
 
 const RewindStrategySchema = z.discriminatedUnion("kind", [
@@ -902,6 +963,7 @@ const RewindHistoryArgs = z.object({
 });
 
 const SessionLogArgs = z.object({
+  title: z.string().min(1, "title is required — short headline for headers-first pull"),
   summary: z.string(),
   files_touched: z.array(z.string()).optional(),
   decisions: z.array(z.object({
@@ -1114,6 +1176,28 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           return rendered + "\n\n--- Open Questions ---\n" + qLines.join("\n\n");
         }
 
+        // After a successful header pull, advance the session's bundle_sync state.
+        async function advanceSync(bundleId: string, headers: { id: string; created_at: string }[]) {
+          if (!session) return;
+          let lastSeenAt: string;
+          let lastSeenEntryId: string | null = null;
+          if (headers.length > 0) {
+            const newest = headers[0];
+            lastSeenAt = newest.created_at;
+            lastSeenEntryId = newest.id;
+          } else {
+            // No headers came back — still ack: use the bundle's last_activity_at so we
+            // don't get stuck reporting "out_of_sync" with a 0-count delta forever.
+            try {
+              const status = await bundleStatus(bundleId, isLocalBundle(bundleId) ? "local" : "cloud");
+              lastSeenAt = status.last_activity_at ?? new Date().toISOString();
+            } catch {
+              lastSeenAt = new Date().toISOString();
+            }
+          }
+          markBundleSeen(session.session_id, bundleId, lastSeenEntryId, lastSeenAt);
+        }
+
         // If bundle_id is provided, pull from that specific bundle
         if (a.bundle_id) {
           const session2 = getSession();
@@ -1122,51 +1206,116 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
             return fail(`Not connected to bundle ${a.bundle_id}. Use session_connect first.`);
           }
           const mode = isLocalBundle(a.bundle_id) ? "local" : "cloud";
-          const rows = await pullEntries({
+          const headers = await pullEntries({
             bundle_id: a.bundle_id,
             since: a.since ?? null,
             limit: a.limit,
+            last_n: a.last_n,
+            project: a.project,
             exclude_project: a.exclude_project,
             mode,
           });
-          let rendered = renderEntriesForClaude(rows);
+          let rendered = renderHeadersForClaude(headers);
           rendered = appendQuestions(rendered, [a.bundle_id], session?.project_name);
-          if (!hasShownWelcome && rows.length > 0) {
+          if (!hasShownWelcome && headers.length > 0) {
             hasShownWelcome = true;
-            const projects = new Set(rows.map(r => r.project_name));
-            const header = `--- Context shared via ctx-link — ${rows.length} entries from ${projects.size} project(s) ---\n\n`;
+            const projects = new Set(headers.map(r => r.project_name));
+            const header = `--- Context shared via ctx-link — ${headers.length} headers from ${projects.size} project(s) ---\n\n`;
             rendered = header + rendered;
           }
-          return ok({ count: rows.length, rendered, entries: rows });
+          await advanceSync(a.bundle_id, headers);
+          return ok({ count: headers.length, rendered, headers, mode: "headers-first", note: "Call entry_read with the IDs you want to read in full." });
         }
 
         // Otherwise pull from ALL session bundles (aggregated)
         if (!session || session.bundles.length === 0) {
           return fail("No bundles connected to this session. Use session_connect first.");
         }
-        const allRows = [];
+        const allHeaders: Array<{ id: string; created_at: string; project_name: string; bundle_id: string } & Record<string, any>> = [];
         for (const b of session.bundles) {
-          const rows = await pullEntries({
+          const headers = await pullEntries({
             bundle_id: b.bundle_id,
             since: a.since ?? null,
             limit: a.limit,
+            last_n: a.last_n,
+            project: a.project,
             exclude_project: a.exclude_project,
             mode: b.mode,
           });
-          allRows.push(...rows);
+          for (const h of headers) allHeaders.push({ ...h, bundle_id: b.bundle_id });
+          await advanceSync(b.bundle_id, headers);
         }
         // Sort by created_at descending and limit
-        allRows.sort((x, y) => y.created_at.localeCompare(x.created_at));
-        const limited = allRows.slice(0, a.limit ?? 20);
-        let rendered = renderEntriesForClaude(limited);
+        allHeaders.sort((x, y) => y.created_at.localeCompare(x.created_at));
+        const cap = a.last_n ?? a.limit ?? 20;
+        const limited = allHeaders.slice(0, cap);
+        let rendered = renderHeadersForClaude(limited as any);
         rendered = appendQuestions(rendered, session.bundles.map((b) => b.bundle_id), session.project_name);
         if (!hasShownWelcome && limited.length > 0) {
           hasShownWelcome = true;
           const projects = new Set(limited.map(r => r.project_name));
-          const header = `--- Context shared via ctx-link — ${limited.length} entries from ${projects.size} project(s) ---\n\n`;
+          const header = `--- Context shared via ctx-link — ${limited.length} headers from ${projects.size} project(s) ---\n\n`;
           rendered = header + rendered;
         }
-        return ok({ count: limited.length, rendered, entries: limited });
+        return ok({ count: limited.length, rendered, headers: limited, mode: "headers-first", note: "Call entry_read with the IDs you want to read in full." });
+      }
+
+      case "entry_read": {
+        const a = EntryReadArgs.parse(args);
+        const session = getSession();
+        const isConnected = session?.bundles.some((b) => b.bundle_id === a.bundle_id);
+        if (!isConnected) {
+          return fail(`Not connected to bundle ${a.bundle_id}. Use session_connect first.`);
+        }
+        const mode = isLocalBundle(a.bundle_id) ? "local" : "cloud";
+        const rows = await readEntriesByIds(a.bundle_id, a.entry_ids, { mode });
+        const rendered = renderEntriesForClaude(rows);
+        return ok({ count: rows.length, requested: a.entry_ids.length, entries: rows, rendered });
+      }
+
+      case "session_edit_entry": {
+        const a = SessionEditEntryArgs.parse(args);
+        const session = getSession();
+        if (!session) return fail("No active session.");
+        if (a.title === undefined && a.summary === undefined) {
+          return fail("session_edit_entry requires at least one of `title` or `summary`.");
+        }
+
+        // Try local first — entry living in this session's local file is the common case.
+        const localEntries = getSessionEntries(session.session_id);
+        const localHit = localEntries.find((e) => e.id === a.entry_id);
+        if (localHit) {
+          const updated = localEditSessionEntry(session.session_id, a.entry_id, {
+            title: a.title,
+            summary: a.summary,
+          });
+          if (!updated) return fail("Entry not found in this session.");
+          return ok({ edited: true, scope: "local", entry: updated });
+        }
+
+        // Cloud path: try every cloud copy this session owns.
+        const copies = session.cloud_copies ?? [];
+        if (copies.length === 0) {
+          return fail(
+            "Entry not found in this session's local entries, and this session has no cloud copies. Only entries you originally logged are editable."
+          );
+        }
+        for (const c of copies) {
+          try {
+            const updated = await editCloudSessionEntry(c.cloud_session_id, a.entry_id, {
+              title: a.title,
+              summary: a.summary,
+            });
+            if (updated) {
+              return ok({ edited: true, scope: "cloud", cloud_session_id: c.cloud_session_id, entry: updated });
+            }
+          } catch (err: any) {
+            // If it's specifically the "different session" error, keep trying other copies.
+            if (typeof err?.message === "string" && err.message.includes("different session")) continue;
+            return fail(err);
+          }
+        }
+        return fail("Entry not found in any session you own. You can only edit entries you originally logged.");
       }
 
       case "context_rewind": {
@@ -1255,11 +1404,54 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const session = getSession();
         if (!session) return ok({ active: false, hint: "Session may still be initializing. The SessionStart hook creates it — try again in a moment, or use session_rename to name it." });
         const pending = getUnpushedSessionEntries(session.session_id);
+
+        // Per-bundle sync status: compare last_activity_at vs the session's last_seen_at for each connected bundle.
+        const sync = await Promise.all(session.bundles.map(async (b) => {
+          let bundleName: string | null = null;
+          let lastActivityAt: string | null = null;
+          let newSinceLastSeen = 0;
+          let lastSeenAt: string | null = null;
+          let lastSeenEntryId: string | null = null;
+          try {
+            const status = await bundleStatus(b.bundle_id, b.mode, true);
+            bundleName = status.name;
+            lastActivityAt = status.last_activity_at;
+          } catch {}
+          const seen = session.bundle_sync?.[b.bundle_id];
+          if (seen) {
+            lastSeenAt = seen.last_seen_at;
+            lastSeenEntryId = seen.last_seen_entry_id;
+          }
+          // Count headers strictly newer than last_seen_at as a heads-up signal.
+          if (lastActivityAt && (!lastSeenAt || lastActivityAt > lastSeenAt)) {
+            try {
+              const newer = await pullEntries({
+                bundle_id: b.bundle_id,
+                since: lastSeenAt ?? null,
+                limit: 50,
+                mode: b.mode,
+              });
+              newSinceLastSeen = newer.length;
+            } catch { newSinceLastSeen = 0; }
+          }
+          const inSync = !lastActivityAt || (!!lastSeenAt && lastSeenAt >= lastActivityAt);
+          return {
+            bundle_id: b.bundle_id,
+            mode: b.mode,
+            name: bundleName,
+            last_activity_at: lastActivityAt,
+            last_seen_at: lastSeenAt,
+            last_seen_entry_id: lastSeenEntryId,
+            sync: inSync ? "in_sync" : { state: "out_of_sync", new_since_last_seen: newSinceLastSeen },
+          };
+        }));
+
         return ok({
           active: true,
           ...session,
           pending_entries_count: pending.length,
           pending_entries: pending,
+          bundle_sync_status: sync,
         });
       }
 
@@ -1277,6 +1469,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const stub = getPendingEnrichmentStub(session.session_id);
         if (stub) {
           const merged = enrichSessionEntry(session.session_id, stub.id, {
+            title: a.title,
             summary: a.summary,
             files_touched: a.files_touched,
             decisions: a.decisions,
@@ -1296,6 +1489,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           project_name: session.project_name,
           event_type: a.event_type,
           trigger_ref: a.trigger_ref ?? null,
+          title: a.title,
           summary: a.summary,
           files_touched: a.files_touched ?? [],
           decisions: a.decisions ?? [],
@@ -1776,8 +1970,8 @@ if (bootSession) {
           skipAuth: true,
         });
         if (rows.length > 0) {
-          const rendered = renderEntriesForClaude(rows);
-          process.stderr.write(`[auto-sync] Auto-pulled ${rows.length} entries from bundle ${b.bundle_id}\n`);
+          const rendered = renderHeadersForClaude(rows);
+          process.stderr.write(`[auto-sync] Auto-pulled ${rows.length} headers from bundle ${b.bundle_id}\n`);
           try {
             await server.sendLoggingMessage({
               level: "info",

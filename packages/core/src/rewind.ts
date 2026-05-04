@@ -196,6 +196,9 @@ export async function rewindProject(input: RewindInput): Promise<RewindResult> {
     .select("id")
     .single();
 
+  // Bump bundle activity on every bundle that referenced any of these entries.
+  await bumpBundlesContainingEntries(ids);
+
   if (logErr) {
     return {
       applied: true,
@@ -213,6 +216,19 @@ export async function rewindProject(input: RewindInput): Promise<RewindResult> {
     affected_entries: candidates,
     rewind_log_id: log.id,
   };
+}
+
+/** Look up the bundles that reference each entry id and bump their last_activity_at. */
+async function bumpBundlesContainingEntries(entryIds: string[]): Promise<void> {
+  if (entryIds.length === 0) return;
+  const sb = getSupabase();
+  const { data: refs } = await sb
+    .from("bundle_entry_refs")
+    .select("bundle_id")
+    .in("entry_id", entryIds);
+  const bundleIds = Array.from(new Set((refs ?? []).map((r: any) => r.bundle_id).filter(Boolean)));
+  const { bumpBundlesActivity } = await import("./bundles.js");
+  await bumpBundlesActivity(bundleIds);
 }
 
 // ---------- Restore ----------
@@ -291,6 +307,8 @@ export async function restoreRewound(input: RestoreInput): Promise<RestoreResult
     .in("id", toRestore);
 
   if (error) throw new Error(`restore failed: ${error.message}`);
+
+  await bumpBundlesContainingEntries(toRestore);
 
   return { restored_count: toRestore.length, restored_ids: toRestore };
 }

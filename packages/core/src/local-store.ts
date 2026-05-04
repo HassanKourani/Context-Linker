@@ -7,10 +7,10 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { globalConfigDir, getSessionEntries } from "./config.js";
+import { globalConfigDir, getSessionEntries, deriveTitleFromSummary } from "./config.js";
 import type { SessionEntry } from "./config.js";
 import { loadGlobalConfig } from "./config.js";
-import type { PullInput, EntryRow } from "./entries.js";
+import type { PullInput, EntryRow, EntryHeader } from "./entries.js";
 import type { CreateBundleResult, JoinBundleResult, BundleStatus } from "./bundles.js";
 import type { RewindInput, RewindResult, RewindCandidate, RestoreInput, RestoreResult, RewindLogRow } from "./rewind.js";
 import { rolePriority } from "./notes.js";
@@ -52,6 +52,7 @@ interface LocalMeta {
   id: string;
   name: string;
   created_at: string;
+  last_activity_at?: string;  // bumped on add/edit/rewind/restore/ref-removal
   notes_session_id?: string;  // lazy: undefined until first note added
 }
 
@@ -113,9 +114,11 @@ function legacyEntriesToRows(entries: LegacyLocalEntry[]): EntryRow[] {
       project_name: e.project_name,
       event_type: e.event_type,
       trigger_ref: e.trigger_ref,
+      title: deriveTitleFromSummary(e.summary),
       summary: e.summary,
       files_touched: e.files_touched ?? [],
       decisions: e.decisions ?? [],
+      updated_at: null,
     }));
 }
 
@@ -163,7 +166,7 @@ function setSessionEntrySuperseeded(sessionId: string, entryId: string, supersed
 }
 
 /**
- * Resolve entry refs to actual EntryRow objects by loading from session-entries files.
+ * Resolve entry refs to full EntryRow objects by loading from session-entries files.
  * Filters out superseded entries.
  */
 function resolveEntryRefs(refs: LocalEntryRef[]): EntryRow[] {
@@ -175,7 +178,6 @@ function resolveEntryRefs(refs: LocalEntryRef[]): EntryRow[] {
     bySession.set(ref.session_id, arr);
   }
 
-  const refEntryIds = new Set(refs.map(r => r.entry_id));
   const results: EntryRow[] = [];
 
   for (const [sessionId, sessionRefs] of bySession) {
@@ -188,9 +190,11 @@ function resolveEntryRefs(refs: LocalEntryRef[]): EntryRow[] {
         results.push({
           id: e.id,
           created_at: e.created_at,
+          updated_at: e.updated_at ?? null,
           project_name: e.project_name,
           event_type: e.event_type,
           trigger_ref: e.trigger_ref,
+          title: e.title ?? deriveTitleFromSummary(e.summary ?? ""),
           summary: e.summary,
           files_touched: e.files_touched ?? [],
           decisions: e.decisions ?? [],
@@ -201,6 +205,20 @@ function resolveEntryRefs(refs: LocalEntryRef[]): EntryRow[] {
   }
 
   return results;
+}
+
+/** Strip an EntryRow down to header-only — used by localPullEntries to keep payloads small. */
+function toHeader(e: EntryRow): EntryHeader {
+  return {
+    id: e.id,
+    title: e.title,
+    project_name: e.project_name,
+    event_type: e.event_type,
+    trigger_ref: e.trigger_ref,
+    created_at: e.created_at,
+    updated_at: e.updated_at,
+    role: e.role ?? null,
+  };
 }
 
 // ---------- Public API ----------
@@ -241,6 +259,7 @@ export function localBundleStatus(bundleId: string): BundleStatus {
       session_count: 0,
       entry_count: entries.length,
       last_entry_at: sorted[0]?.created_at ?? null,
+      last_activity_at: meta.last_activity_at ?? sorted[0]?.created_at ?? meta.created_at,
     };
   }
 
@@ -255,7 +274,16 @@ export function localBundleStatus(bundleId: string): BundleStatus {
     session_count: sessionIds.size,
     entry_count: resolved.length,
     last_entry_at: sorted[0]?.created_at ?? null,
+    last_activity_at: meta.last_activity_at ?? sorted[0]?.created_at ?? meta.created_at,
   };
+}
+
+/** Bump local bundle's last_activity_at. */
+export function localSetBundleActivity(bundleId: string, isoTimestamp: string): void {
+  if (!isLocalBundle(bundleId)) return;
+  const meta = readMeta(bundleId);
+  meta.last_activity_at = isoTimestamp;
+  writeFileSync(metaPath(bundleId), JSON.stringify(meta, null, 2));
 }
 
 /**
@@ -287,10 +315,11 @@ export function localAddEntriesToBundle(
   }
 
   writeEntryRefs(bundleId, refs);
+  if (added > 0) localSetBundleActivity(bundleId, now);
   return { added, skipped };
 }
 
-export function localPullEntries(input: PullInput): EntryRow[] {
+export function localPullEntries(input: PullInput): EntryHeader[] {
   readMeta(input.bundle_id); // validate bundle exists
 
   // Legacy fallback: read from old entries.json if no entry_refs.json
@@ -317,8 +346,58 @@ export function localPullEntries(input: PullInput): EntryRow[] {
     entries = entries.filter((e) => e.project_name !== input.exclude_project);
   }
 
-  const limit = input.limit ?? 20;
+  if (input.project) {
+    entries = entries.filter((e) => e.project_name === input.project);
+  }
+
+  const limit = input.last_n ?? input.limit ?? 20;
+  return entries.slice(0, limit).map(toHeader);
+}
+
+/** Local equivalent of pullEntriesWithBodies — for UI server. Returns full bodies. */
+export function localPullEntriesWithBodies(input: PullInput): EntryRow[] {
+  readMeta(input.bundle_id);
+  let entries: EntryRow[];
+  if (isLegacyBundle(input.bundle_id)) {
+    entries = legacyEntriesToRows(readLegacyEntries(input.bundle_id));
+  } else {
+    entries = resolveEntryRefs(readEntryRefs(input.bundle_id));
+  }
+
+  entries.sort((a, b) => {
+    const dp = rolePriority(a.role) - rolePriority(b.role);
+    if (dp !== 0) return dp;
+    return b.created_at.localeCompare(a.created_at);
+  });
+
+  if (input.since) entries = entries.filter((e) => e.created_at > input.since!);
+  if (input.exclude_project) entries = entries.filter((e) => e.project_name !== input.exclude_project);
+  if (input.project) entries = entries.filter((e) => e.project_name === input.project);
+
+  const limit = input.last_n ?? input.limit ?? 20;
   return entries.slice(0, limit);
+}
+
+/** Local equivalent of readEntriesByIds — returns full bodies for a known set of entry IDs.
+ *  Restricts results to entries actually referenced by this bundle (or, for legacy bundles,
+ *  living in the bundle's entries.json). */
+export function localReadEntriesByIds(bundleId: string, entryIds: string[]): EntryRow[] {
+  if (entryIds.length === 0) return [];
+  readMeta(bundleId); // validate bundle exists
+  const idSet = new Set(entryIds);
+
+  if (isLegacyBundle(bundleId)) {
+    const rows = legacyEntriesToRows(readLegacyEntries(bundleId));
+    return rows.filter((r) => idSet.has(r.id));
+  }
+
+  const refs = readEntryRefs(bundleId);
+  const refIdSet = new Set(refs.map((r) => r.entry_id));
+  // Limit to refs actually in this bundle, matching the bundle/connection contract.
+  const wantedRefs = refs.filter((r) => idSet.has(r.entry_id) && refIdSet.has(r.entry_id));
+  if (wantedRefs.length === 0) return [];
+  const rows = resolveEntryRefs(wantedRefs);
+  return rows.filter((r) => idSet.has(r.id));
 }
 
 /**
@@ -328,6 +407,9 @@ export function localRemoveEntryFromBundle(bundleId: string, entryId: string, op
   const refs = readEntryRefs(bundleId);
   const filtered = refs.filter(r => r.entry_id !== entryId);
   writeEntryRefs(bundleId, filtered);
+  if (filtered.length !== refs.length) {
+    localSetBundleActivity(bundleId, new Date().toISOString());
+  }
 
   if (options?.exclude) {
     localExcludeEntryFromBundle(bundleId, entryId);
@@ -341,6 +423,9 @@ export function localRemoveSessionRefsFromBundle(bundleId: string, sessionId: st
   const refs = readEntryRefs(bundleId);
   const filtered = refs.filter(r => r.session_id !== sessionId);
   writeEntryRefs(bundleId, filtered);
+  if (filtered.length !== refs.length) {
+    localSetBundleActivity(bundleId, new Date().toISOString());
+  }
 }
 
 /** Remove entry refs from a local bundle by entry IDs. */
@@ -349,6 +434,9 @@ export function localRemoveEntryRefsFromBundleByIds(bundleId: string, entryIds: 
   const refs = readEntryRefs(bundleId);
   const filtered = refs.filter(r => !idSet.has(r.entry_id));
   writeEntryRefs(bundleId, filtered);
+  if (filtered.length !== refs.length) {
+    localSetBundleActivity(bundleId, new Date().toISOString());
+  }
 }
 
 /**
@@ -369,11 +457,28 @@ export function getLocalBundleIdsForSession(sessionId: string): string[] {
   return bundleIds;
 }
 
+/** Local bundles that reference any of the given entry IDs. */
+export function getLocalBundleIdsForEntries(entryIds: string[]): string[] {
+  if (entryIds.length === 0) return [];
+  const idSet = new Set(entryIds);
+  const localBase = localDir();
+  if (!existsSync(localBase)) return [];
+  const bundleIds: string[] = [];
+  for (const dir of readdirSync(localBase)) {
+    const refsPath = entryRefsPath(dir);
+    if (!existsSync(refsPath)) continue;
+    const refs: LocalEntryRef[] = JSON.parse(readFileSync(refsPath, "utf8"));
+    if (refs.some(r => idSet.has(r.entry_id))) bundleIds.push(dir);
+  }
+  return bundleIds;
+}
+
 export interface LocalBundleDetail {
   bundle_id: string;
   bundle_name: string;
   entry_count: number;
   last_entry_at: string | null;
+  last_activity_at: string | null;
   projects: Array<{
     project_name: string;
     last_entry_at: string | null;
@@ -409,6 +514,7 @@ export function listAllLocalBundleDetails(): LocalBundleDetail[] {
       bundle_name: meta.name,
       entry_count: entries.length,
       last_entry_at: sorted[0]?.created_at ?? null,
+      last_activity_at: meta.last_activity_at ?? sorted[0]?.created_at ?? meta.created_at,
       projects: Array.from(projectMap.entries()).map(([name, lastAt]) => ({
         project_name: name,
         last_entry_at: lastAt,
@@ -438,9 +544,11 @@ function findLocalCandidates(refs: LocalEntryRef[], input: RewindInput): Array<E
         allEntries.push({
           id: e.id,
           created_at: e.created_at,
+          updated_at: e.updated_at ?? null,
           project_name: e.project_name,
           event_type: e.event_type,
           trigger_ref: e.trigger_ref,
+          title: e.title ?? deriveTitleFromSummary(e.summary ?? ""),
           summary: e.summary,
           files_touched: e.files_touched ?? [],
           decisions: e.decisions ?? [],
@@ -516,6 +624,9 @@ export function localRewindProject(input: RewindInput): RewindResult {
     setSessionEntrySuperseeded(candidate._sessionId, candidate.id, now);
   }
 
+  // Activity bump — readers comparing last_seen_at will see "out_of_sync"
+  localSetBundleActivity(input.bundle_id, now);
+
   // Audit log
   const ids = candidates.map(c => c.id);
   const cfg = loadGlobalConfig();
@@ -580,6 +691,10 @@ export function localRestoreRewound(input: RestoreInput): RestoreResult {
       setSessionEntrySuperseeded(sessionId, e.id, null);
       restoredIds.push(e.id);
     }
+  }
+
+  if (restoredIds.length > 0) {
+    localSetBundleActivity(input.bundle_id, new Date().toISOString());
   }
 
   return { restored_count: restoredIds.length, restored_ids: restoredIds };

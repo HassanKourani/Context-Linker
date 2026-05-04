@@ -178,6 +178,8 @@ export interface BundleStatus {
   session_count: number;
   entry_count: number;
   last_entry_at: string | null;
+  /** Bumped on add/edit/rewind/restore/ref-removal — drives per-session sync state. */
+  last_activity_at: string | null;
 }
 
 export async function bundleStatus(bundleId: string, mode: "local" | "cloud" = "cloud", skipAuth = false): Promise<BundleStatus> {
@@ -191,7 +193,7 @@ export async function bundleStatus(bundleId: string, mode: "local" | "cloud" = "
 
   const [{ data: bundle }, { count: eCount }, { data: latestRef }, { data: sessionRefs }] =
     await Promise.all([
-      sb.from("bundles").select("id, name").eq("id", bundleId).single(),
+      sb.from("bundles").select("id, name, last_activity_at").eq("id", bundleId).single(),
       sb
         .from("bundle_entry_refs")
         .select("*", { count: "exact", head: true })
@@ -225,7 +227,55 @@ export async function bundleStatus(bundleId: string, mode: "local" | "cloud" = "
     session_count: sessionIds.size,
     entry_count: eCount ?? 0,
     last_entry_at: lastEntryAt,
+    last_activity_at: (bundle as any).last_activity_at ?? lastEntryAt,
   };
+}
+
+/**
+ * Bump a bundle's last_activity_at to "now". Auto-detects local vs cloud.
+ * Called on add/edit/rewind/restore/ref-removal so connected sessions can detect
+ * out-of-sync state by comparing against their own last_seen_at.
+ */
+export async function bumpBundleActivity(bundleId: string): Promise<void> {
+  const now = new Date().toISOString();
+  const { isLocalBundle } = await import("./local-store.js");
+  if (isLocalBundle(bundleId)) {
+    const { localSetBundleActivity } = await import("./local-store.js");
+    localSetBundleActivity(bundleId, now);
+    return;
+  }
+  const sb = getSupabase();
+  // Best-effort — never fail a write because activity bookkeeping failed.
+  await sb.from("bundles").update({ last_activity_at: now }).eq("id", bundleId).then(
+    () => {},
+    () => {}
+  );
+}
+
+export async function bumpBundlesActivity(bundleIds: string[]): Promise<void> {
+  if (bundleIds.length === 0) return;
+  await Promise.all(bundleIds.map((id) => bumpBundleActivity(id)));
+}
+
+/**
+ * Bump last_activity_at on every bundle (local or cloud) that references any of the given entry IDs.
+ * Used after session_edit_entry / rewind / restore to surface activity to readers.
+ */
+export async function bumpBundlesReferencingEntries(entryIds: string[]): Promise<void> {
+  if (entryIds.length === 0) return;
+  const ls = await import("./local-store.js");
+  const localBundleIds = ls.getLocalBundleIdsForEntries(entryIds);
+  await bumpBundlesActivity(localBundleIds);
+
+  const sb = getSupabase();
+  const { data: refs } = await sb
+    .from("bundle_entry_refs")
+    .select("bundle_id")
+    .in("entry_id", entryIds);
+  const cloudBundleIds = Array.from(
+    new Set((refs ?? []).map((r: any) => r.bundle_id).filter(Boolean))
+  );
+  await bumpBundlesActivity(cloudBundleIds);
 }
 
 export async function deleteBundle(bundleId: string, mode: "local" | "cloud" = "cloud"): Promise<void> {
